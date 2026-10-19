@@ -117,7 +117,7 @@ function createOpenSpecPlugin(require) {
 
   /** Plugin-scoped styles; only --dsw-alias-* / --dsw-radius-* / --dsh-content-* tokens. */
   const CSS = [
-    '.dshspec-root{color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;min-height:0;flex:auto;}',
+    '.dshspec-root{color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;min-height:0;height:100%;overflow-y:auto;}',
     '.dshspec-page{max-width:880px;width:100%;margin:0 auto;padding:20px 24px 48px;display:flex;flex-direction:column;gap:16px;}',
     '.dshspec-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;}',
     '.dshspec-title{font-size:18px;font-weight:600;}',
