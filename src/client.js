@@ -57,7 +57,13 @@ function createOpenSpecPlugin(require) {
       noChanges: '没有进行中的变更。用输入框上方的 /opsx-propose 或下方快捷条开始一个。',
       archived: '已归档 {count} 个变更',
       explore: '探索',
+      explorePlaceholder: '想探索什么？可留空，让我帮你选下一步',
+      exploreHint: '纯思考模式：调查代码、比较方案，不写任何文件。',
       propose: '提案',
+      proposePlaceholder: 'change-name（可附说明，如：add-dark-mode 支持深色主题）',
+      proposeHint: '写完计划会停下等你评审；名字用小写连字符，如 add-dark-mode。',
+      proposeGo: '发送',
+      fillComposer: '填入输入框',
       apply: '实施',
       archive: '归档',
       status: '状态',
@@ -93,7 +99,13 @@ function createOpenSpecPlugin(require) {
       noChanges: 'No change in motion. Start one with /opsx-propose or the quick bar under the composer.',
       archived: '{count} archived changes',
       explore: 'Explore',
+      explorePlaceholder: 'What to explore? Leave empty and I will help pick the next step',
+      exploreHint: 'Thinking mode: investigate, compare options, write nothing.',
       propose: 'Propose',
+      proposePlaceholder: 'change-name (optional note, e.g. add-dark-mode)',
+      proposeHint: 'Stops after the plan for your review; kebab-case name, e.g. add-dark-mode.',
+      proposeGo: 'Send',
+      fillComposer: 'Fill composer',
       apply: 'Apply',
       archive: 'Archive',
       status: 'Status',
@@ -147,6 +159,14 @@ function createOpenSpecPlugin(require) {
     '.dshspec-dot{width:8px;height:8px;border-radius:50%;flex:none;}',
     '.dshspec-dockName{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--dsw-alias-label-primary);}',
     '.dshspec-actwrap{display:contents;}',
+    '.dshspec-popanchor{position:relative;}',
+    '.dshspec-popover{position:absolute;right:0;bottom:calc(100% + 8px);z-index:60;width:min(440px,calc(100vw - 64px));background:var(--dsw-alias-bg-overlay);border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md,10px);box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:12px;display:flex;flex-direction:column;gap:8px;}',
+    '.dshspec-popTitle{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}',
+    '.dshspec-popActions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}',
+    '.dshspec-popRow{cursor:pointer;text-align:left;width:100%;background:transparent;border:0.5px solid transparent;color:inherit;font:inherit;font-size:12px;border-radius:var(--dsw-radius-sm,6px);padding:6px 8px;display:flex;gap:8px;align-items:center;}',
+    '.dshspec-popRow:hover{background:var(--dsw-alias-interactive-bg-hover,var(--dsw-alias-bg-layer-2));border-color:var(--dsw-alias-border-l1);}',
+    '.dshspec-input{width:100%;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm,6px);padding:5px 8px;font:inherit;font-size:12px;}',
+    '.dshspec-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary);}',
   ].join('\n')
 
   /** Inject the stylesheet once, tagged like shipped plugin CSS. */
@@ -628,14 +648,44 @@ function createOpenSpecPlugin(require) {
   }
 
   /**
-   * Shared phase action row. In the dock the buttons INSERT the command into
-   * the composer draft — the user reviews, completes the arguments and sends
-   * it themselves; the row never reflows and no result text appears. In the
-   * panel they execute against the row's session. `statusSlot` leads the row
-   * (the dock's status badge) and `extraSlot` trails it (the panel button).
+   * Shared phase action row. `statusSlot` leads the row and `extraSlot`
+   * trails it; the row itself never reflows — 探索/提案/multi-实施 open a
+   * styled popover ABOVE the row (absolutely positioned, zero layout impact)
+   * with the format hints, an input, and a choice between sending now or
+   * filling the composer draft. Everything else inserts/executes directly.
    */
   function Actions({ t, state, run, insert, refresh, primary, change, rowClass = 'dshspec-actions', statusSlot, extraSlot, marker }) {
+    const [mode, setMode] = useState('none') // none | explore | propose | pick
+    const [draft, setDraft] = useState('')
+    const [popoverError, setPopoverError] = useState(null)
+    const [result, setResult] = useState(null)
+    const resultTimer = useRef(null)
+
+    useEffect(() => () => {
+      if (resultTimer.current !== null) clearTimeout(resultTimer.current)
+    }, [])
+
+    const closePopover = () => {
+      setMode('none')
+      setDraft('')
+      setPopoverError(null)
+    }
+
+    const runLine = async (line) => {
+      const outcome = await run(line)
+      if (outcome.ok) {
+        closePopover()
+        if (typeof refresh === 'function') void refresh()
+        return true
+      }
+      setPopoverError(outcome.text)
+      return false
+    }
+
+    const changes = state.status === 'ready' ? state.changes : []
     const target = change ?? primary
+    const multiple = changes.length > 1
+    const hasInsert = typeof insert === 'function'
     const applyLine = target !== undefined ? `/opsx-apply ${target.name}` : '/opsx-apply '
     const archiveLine = target !== undefined ? `/opsx-archive ${target.name}` : '/opsx-archive '
 
@@ -644,18 +694,119 @@ function createOpenSpecPlugin(require) {
       else void run(line)
     }
 
+    const toggle = (next) => {
+      setPopoverError(null)
+      setDraft('')
+      setMode((value) => (value === next ? 'none' : next))
+    }
+
+    const submit = (line) => {
+      if (typeof insert === 'function') {
+        insert(line)
+        closePopover()
+        return
+      }
+      void runLine(line)
+    }
+
+    const popover = mode === 'none' ? null : h('div', { className: 'dshspec-popover', role: 'dialog' },
+      mode === 'explore' && [
+        h('div', { key: 'title', className: 'dshspec-popTitle' }, '/opsx-explore [主题]'),
+        h('input', {
+          key: 'input',
+          className: 'dshspec-input',
+          value: draft,
+          placeholder: t('explorePlaceholder'),
+          autoFocus: true,
+          onChange: (event) => setDraft(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === 'Escape') closePopover()
+            if (event.key === 'Enter') submit(draft.trim() === '' ? '/opsx-explore' : `/opsx-explore ${draft.trim()}`)
+          },
+        }),
+        h('div', { key: 'hint', className: 'dshspec-note' }, t('exploreHint')),
+        h('div', { key: 'acts', className: 'dshspec-popActions' },
+          h('button', { type: 'button', className: 'dshspec-btn dshspec-btnPrimary', onClick: () => submit(draft.trim() === '' ? '/opsx-explore' : `/opsx-explore ${draft.trim()}`) }, hasInsert ? t('fillComposer') : t('explore')),
+          h('button', { key: 'cancel', type: 'button', className: 'dshspec-btn', onClick: closePopover }, t('cancel')),
+        ),
+      ],
+      mode === 'propose' && [
+        h('div', { key: 'title', className: 'dshspec-popTitle' }, '/opsx-propose <change-name> [说明]'),
+        h('input', {
+          key: 'input',
+          className: 'dshspec-input',
+          value: draft,
+          placeholder: t('proposePlaceholder'),
+          autoFocus: true,
+          onChange: (event) => setDraft(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === 'Escape') closePopover()
+            if (event.key === 'Enter' && draft.trim() !== '') submit(`/opsx-propose ${draft.trim()}`)
+          },
+        }),
+        h('div', { key: 'hint', className: 'dshspec-note' }, t('proposeHint')),
+        h('div', { key: 'acts', className: 'dshspec-popActions' },
+          h('button', { type: 'button', className: 'dshspec-btn dshspec-btnPrimary', disabled: draft.trim() === '', onClick: () => submit(`/opsx-propose ${draft.trim()}`) }, hasInsert ? t('fillComposer') : t('proposeGo')),
+          h('button', { key: 'cancel', type: 'button', className: 'dshspec-btn', onClick: closePopover }, t('cancel')),
+        ),
+      ],
+      mode === 'pick' && [
+        h('div', { key: 'title', className: 'dshspec-popTitle' }, t('pickChange')),
+        changes.map((candidate) => h('button', {
+          key: candidate.name,
+          type: 'button',
+          className: 'dshspec-popRow',
+          title: `/opsx-apply ${candidate.name}`,
+          onClick: () => { closePopover(); act(`/opsx-apply ${candidate.name}`) },
+        },
+        h('span', { className: 'dshspec-changeName' }, candidate.name),
+        h(PhaseChip, { t, phase: candidate.phase }),
+        h('span', { className: 'dshspec-space' }),
+        h('span', { className: 'dshspec-note', style: { fontVariantNumeric: 'tabular-nums' } }, candidate.tasks !== null && candidate.tasks.total > 0 ? `${candidate.tasks.done}/${candidate.tasks.total}` : ''),
+        )),
+      ],
+      popoverError !== null && h('div', { key: 'error', className: 'dshspec-note dshspec-noteError' }, popoverError),
+    )
+
     return h('div', { className: 'dshspec-actwrap', 'data-dshspec-actions': true },
-      h('div', { className: rowClass, ...(marker !== undefined ? { 'data-dshspec-quickbar': marker } : {}) },
+      h('div', { className: `${rowClass} dshspec-popanchor`, ...(marker !== undefined ? { 'data-dshspec-quickbar': marker } : {}) },
         statusSlot,
         h('div', { className: 'dshspec-actions' },
-          h('button', { type: 'button', title: '/opsx-explore [主题]', onClick: () => act('/opsx-explore ') }, t('explore')),
-          h('button', { type: 'button', title: '/opsx-propose <change-name> [说明]', onClick: () => act('/opsx-propose ') }, t('propose')),
-          h('button', { type: 'button', title: applyLine, disabled: target === undefined && typeof insert !== 'function', onClick: () => act(applyLine) }, t('apply')),
-          h('button', { type: 'button', title: archiveLine, disabled: target === undefined && typeof insert !== 'function', onClick: () => act(archiveLine) }, t('archive')),
+          h('button', { type: 'button', title: '/opsx-explore [主题]', onClick: () => toggle('explore') }, t('explore')),
+          h('button', {
+            type: 'button',
+            className: mode === 'propose' ? 'dshspec-btn dshspec-btnPrimary' : 'dshspec-btn',
+            title: '/opsx-propose <change-name> [说明]',
+            onClick: () => toggle('propose'),
+          }, t('propose')),
+          h('button', {
+            type: 'button',
+            className: 'dshspec-btn',
+            disabled: target === undefined,
+            title: applyLine,
+            onClick: () => {
+              if (change !== undefined) {
+                act(applyLine)
+                return
+              }
+              if (multiple) {
+                toggle('pick')
+                return
+              }
+              act(applyLine)
+            },
+          }, t('apply')),
+          h('button', {
+            type: 'button',
+            title: archiveLine,
+            disabled: target === undefined,
+            onClick: () => act(archiveLine),
+          }, t('archive')),
           h('button', { type: 'button', title: '/opsx-status', onClick: () => act('/opsx-status') }, t('status')),
         ),
         h('span', { className: 'dshspec-space' }),
         extraSlot,
+        popover,
       ),
     )
   }
@@ -739,7 +890,7 @@ function createOpenSpecPlugin(require) {
   }
 
   /** Build marker for served-bundle verification. */
-  const BUILD = '20261019e'
+  const BUILD = '20261019f'
 
   /** The monitoring page: one card per known workspace. */
   function OpenspecPanel({ t, rowsSource, sourceFor, dispatchFor, initFor, onRefreshSessions }) {
