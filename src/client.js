@@ -160,13 +160,13 @@ function createOpenSpecPlugin(require) {
     '.dshspec-dockName{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--dsw-alias-label-primary);}',
     '.dshspec-actwrap{display:contents;}',
     '.dshspec-popanchor{position:relative;}',
-    '.dshspec-popover{position:absolute;right:0;bottom:calc(100% + 8px);z-index:60;width:min(440px,calc(100vw - 64px));background:var(--dsw-alias-bg-overlay);border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md,10px);box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:12px;display:flex;flex-direction:column;gap:8px;}',
-    '.dshspec-popTitle{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}',
-    '.dshspec-popActions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}',
+    '.dshspec-popover{position:absolute;right:0;bottom:calc(100% + 128px);z-index:60;width:min(430px,calc(100vw - 64px));background:var(--dsw-alias-bg-overlay);border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md,10px);box-shadow:0 12px 32px rgba(0,0,0,0.22);padding:14px;display:flex;flex-direction:column;gap:10px;}',
+    '.dshspec-popTitle{font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}',
+    '.dshspec-popActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}',
     '.dshspec-popRow{cursor:pointer;text-align:left;width:100%;background:transparent;border:0.5px solid transparent;color:inherit;font:inherit;font-size:12px;border-radius:var(--dsw-radius-sm,6px);padding:6px 8px;display:flex;gap:8px;align-items:center;}',
     '.dshspec-popRow:hover{background:var(--dsw-alias-interactive-bg-hover,var(--dsw-alias-bg-layer-2));border-color:var(--dsw-alias-border-l1);}',
-    '.dshspec-input{width:100%;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm,6px);padding:5px 8px;font:inherit;font-size:12px;}',
-    '.dshspec-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary);}',
+    '.dshspec-input{width:100%;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm,6px);padding:6px 10px;font:inherit;font-size:13px;}',
+    '.dshspec-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary);}',
   ].join('\n')
 
   /** Inject the stylesheet once, tagged like shipped plugin CSS. */
