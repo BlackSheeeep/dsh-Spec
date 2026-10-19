@@ -1,0 +1,12 @@
+# dsh-spec — OpenSpec 工作流适配插件。
+#
+# One row registers BOTH halves: the Host plugin below, and (derived by the
+# client-modules scan from this package's `dsh.client`) the browser half
+# `lib/client.js`. Adding this bundle to a profile needs a restart of the
+# serving process; after that a page refresh is enough.
+#
+# No config: the plugin derives everything from the session workspace's
+# `openspec/` directory.
+- insert:
+    - id: openspec
+      name: dsh-spec

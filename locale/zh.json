@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "OpenSpec 工作流",
+    "description": "OpenSpec 规格驱动开发适配：openspec/ 目录实时监控面板、会话输入框下方的阶段快捷命令条，以及 /opsx-* 命令桥接。"
+  }
+}

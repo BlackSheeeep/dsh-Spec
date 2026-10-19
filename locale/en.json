@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "OpenSpec Workflow",
+    "description": "OpenSpec spec-driven development for DSH: a live openspec/ monitoring panel, quick phase commands under the composer, and /opsx-* command bridging."
+  }
+}
