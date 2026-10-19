@@ -67,11 +67,32 @@
 
 ## 安装
 
+仓库已提交构建产物 `lib/`，**从 GitHub 面板安装不需要任何构建**；只有本地开发改代码后才需要：
+
 ```powershell
 node tools/build.mjs
 ```
 
-然后在 DSH Web 插件页把本目录作为本地 bundle 安装（或 `dsh plugin --profile <name> add <本目录>`）。安装后 Host 进程重启一次；此后改代码只需重新构建 + 刷新页面。
+### 方式一：插件面板安装（推荐）
+
+侧栏 **插件 → 添加插件**，同一个输入框接受三种写法：
+
+| 填什么 | 示例 | 适合 |
+|---|---|---|
+| 本地目录（绝对路径） | `D:\DSHarness\dsh-Spec` | 本机开发：目录以 link 方式接入，改代码后 `node tools/build.mjs` + 刷新页面即可生效 |
+| Git 仓库地址 | `https://github.com/space-spacee-clamation/dsh-Spec.git` | 分发到其他机器：仓库已自带构建产物 `lib/`，装完即用，无需本地构建 |
+| npm 包名 | 暂未发布，发布后直接填 `dsh-spec` | — |
+
+旁边可选镜像（官方 npm / npmmirror / 自定义）。安装即默认启用；**首次安装需要重启 DSH 进程一次**，之后（本地目录方式）改代码只需重新构建 + 刷新页面。本插件没有任何依赖和安装脚本，pnpm 不会请求构建脚本批准。
+
+注意：同一 profile 里已装了同名 bundle（例如先前 link 过本地目录，现在想换 GitHub 源），面板会走「卸载重装」完成切换；全新安装则直接生效。
+
+### 方式二：CLI
+
+```powershell
+dsh plugin --profile <profile> add D:\DSHarness\dsh-Spec
+dsh plugin --profile <profile> add https://github.com/space-spacee-clamation/dsh-Spec.git
+```
 
 要求：DSH 0.2.x（web bundle），无需 Node CLI、无需安装 openspec。
 
