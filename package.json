@@ -25,6 +25,8 @@
     "lib",
     "src",
     "tools",
+    "tests",
+    "docs",
     "locale",
     "icon.svg",
     "cordis.patch.yml",

@@ -148,10 +148,8 @@ function createOpenSpecPlugin(require) {
     '.dshspec-dock{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 2px 6px;font-size:12px;color:var(--dsw-alias-label-secondary);}',
     '.dshspec-dot{width:8px;height:8px;border-radius:50%;flex:none;}',
     '.dshspec-dockName{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--dsw-alias-label-primary);}',
-    '.dshspec-pop{position:relative;display:inline-flex;}',
-    '.dshspec-menu{position:absolute;bottom:calc(100% + 6px);left:0;z-index:30;background:var(--dsw-alias-bg-overlay);border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-md,10px);box-shadow:0 8px 24px rgba(0,0,0,0.18);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:220px;}',
-    '.dshspec-menuRow{cursor:pointer;text-align:left;background:transparent;border:0;color:inherit;font:inherit;font-size:12px;border-radius:var(--dsw-radius-sm,6px);padding:6px 8px;display:flex;gap:8px;align-items:center;}',
-    '.dshspec-menuRow:hover{background:var(--dsw-alias-interactive-bg-hover,var(--dsw-alias-bg-layer-2));}',
+    '.dshspec-actwrap{display:contents;}',
+    '.dshspec-inline{display:flex;gap:6px;width:100%;align-items:center;flex-wrap:wrap;background:var(--dsw-alias-bg-layer-2);border:0.5px solid var(--dsw-alias-border-l1);border-radius:var(--dsw-radius-sm,6px);padding:6px 8px;}',
     '.dshspec-input{flex:1;min-width:220px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:0.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm,6px);padding:4px 8px;font:inherit;font-size:12px;}',
     '.dshspec-input:focus{outline:none;border-color:var(--dsw-alias-brand-primary);}',
   ].join('\n')
@@ -391,11 +389,11 @@ function createOpenSpecPlugin(require) {
       },
       refresh,
       /** Run one /command line in this session and normalize the outcome.
-      * The wire binds the agent from the client's current session scope, so
-      * this only ever targets the session this source was created for. */
+      * The wire takes the exact receiving agent id plus the line; the dock
+      * renders inside the session it targets. */
       async run(line) {
         try {
-          const outcome = await ctx.remote.commands.execute(line, [])
+          const outcome = await ctx.remote.commands.execute(sessionId, line, [])
           if (outcome === undefined) return { ok: false, text: `${line} 不是可用命令` }
           if (!outcome.ok) return { ok: false, text: outcome.error?.message ?? `${line} 执行失败（${outcome.error?.code ?? 'unknown'}）` }
           const execution = outcome.value
@@ -600,11 +598,10 @@ function createOpenSpecPlugin(require) {
     return 'var(--dsw-alias-state-idle-primary)'
   }
 
-  /** Shared phase action row: explore / propose / apply / archive + status. */
+  /** Shared phase action block: a buttons row, an inline expand row (propose input or change picker), and the result line. */
   function Actions({ t, state, run, refresh, primary, change, compact }) {
-    const [proposing, setProposing] = useState(false)
+    const [mode, setMode] = useState('none') // none | propose | pick
     const [draft, setDraft] = useState('')
-    const [picking, setPicking] = useState(false)
     const [result, setResult] = useState(null)
     const resultTimer = useRef(null)
 
@@ -621,6 +618,7 @@ function createOpenSpecPlugin(require) {
     const runLine = async (line) => {
       const outcome = await run(line)
       report(outcome)
+      setMode('none')
       if (typeof refresh === 'function') void refresh()
     }
 
@@ -628,101 +626,84 @@ function createOpenSpecPlugin(require) {
     const target = change ?? primary
     const multiple = changes.length > 1
 
-    const pickMenu = picking && multiple
-      ? h('div', { className: 'dshspec-menu', role: 'menu' },
-        h('div', { className: 'dshspec-note', style: { padding: '2px 8px' } }, t('pickChange')),
-        changes.map((candidate) => h('button', {
-          key: candidate.name,
-          type: 'button',
-          className: 'dshspec-menuRow',
-          role: 'menuitem',
-          onClick: () => {
-            setPicking(false)
-            void runLine(`/opsx-apply ${candidate.name}`)
+    const submitPropose = () => {
+      if (draft.trim() === '') return
+      const line = `/opsx-propose ${draft.trim()}`
+      setDraft('')
+      void runLine(line)
+    }
+
+    const expanded = mode === 'propose'
+      ? h('div', { className: 'dshspec-inline', role: 'group', 'aria-label': t('propose') },
+        h('input', {
+          className: 'dshspec-input',
+          value: draft,
+          placeholder: t('proposePlaceholder'),
+          autoFocus: true,
+          onChange: (event) => setDraft(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === 'Escape') setMode('none')
+            if (event.key === 'Enter') submitPropose()
           },
-        },
-        h('span', { className: 'dshspec-changeName' }, candidate.name),
-        h(PhaseChip, { t, phase: candidate.phase }),
-        ))
+        }),
+        h('button', { type: 'button', className: 'dshspec-btn dshspec-btnPrimary', disabled: draft.trim() === '', onClick: submitPropose }, t('proposeGo')),
+        h('button', { type: 'button', className: 'dshspec-btn', onClick: () => setMode('none') }, t('cancel')),
       )
-      : proposing
-        ? h('div', { className: 'dshspec-menu', style: { minWidth: 280 }, role: 'dialog' },
-          h('div', { className: 'dshspec-row', style: { flexWrap: 'nowrap' } },
-            h('input', {
-              className: 'dshspec-input',
-              value: draft,
-              placeholder: t('proposePlaceholder'),
-              autoFocus: true,
-              onChange: (event) => setDraft(event.target.value),
-              onKeyDown: (event) => {
-                if (event.key === 'Escape') setProposing(false)
-                if (event.key === 'Enter' && draft.trim() !== '') {
-                  const line = `/opsx-propose ${draft.trim()}`
-                  setProposing(false)
-                  setDraft('')
-                  void runLine(line)
-                }
-              },
-            }),
-            h('button', {
-              type: 'button',
-              className: 'dshspec-btn dshspec-btnPrimary',
-              disabled: draft.trim() === '',
-              onClick: () => {
-                const line = `/opsx-propose ${draft.trim()}`
-                setProposing(false)
-                setDraft('')
-                void runLine(line)
-              },
-            }, t('proposeGo')),
-            h('button', { type: 'button', className: 'dshspec-btn', onClick: () => setProposing(false) }, t('cancel')),
-          ),
+      : mode === 'pick'
+        ? h('div', { className: 'dshspec-inline', role: 'group', 'aria-label': t('pickChange') },
+          h('span', { className: 'dshspec-note' }, t('pickChange')),
+          changes.map((candidate) => h('button', {
+            key: candidate.name,
+            type: 'button',
+            className: 'dshspec-btn',
+            title: `/opsx-apply ${candidate.name}`,
+            onClick: () => void runLine(`/opsx-apply ${candidate.name}`),
+          }, `${candidate.name} · ${t((PHASE_META[candidate.phase] ?? PHASE_META.draft).key)}`)),
+          h('button', { type: 'button', className: 'dshspec-btn', onClick: () => setMode('none') }, t('cancel')),
         )
         : null
 
-    return h('div', { className: 'dshspec-actions', 'data-dshspec-actions': true },
-      h('button', { type: 'button', className: 'dshspec-btn', title: '/opsx-explore', onClick: () => void runLine('/opsx-explore') }, t('explore')),
-      h('span', { className: 'dshspec-pop' },
+    return h('div', { className: 'dshspec-actwrap', 'data-dshspec-actions': true },
+      h('div', { className: 'dshspec-actions' },
+        h('button', { type: 'button', className: 'dshspec-btn', title: '/opsx-explore', onClick: () => void runLine('/opsx-explore') }, t('explore')),
         h('button', {
           type: 'button',
-          className: 'dshspec-btn dshspec-btnPrimary',
+          className: mode === 'propose' ? 'dshspec-btn dshspec-btnPrimary' : 'dshspec-btn',
           title: '/opsx-propose',
-          onClick: () => {
-            setPicking(false)
-            setProposing((value) => !value)
-          },
+          onClick: () => setMode((value) => (value === 'propose' ? 'none' : 'propose')),
         }, t('propose')),
-        pickMenu,
-      ),
-      h('span', { className: 'dshspec-pop' },
         h('button', {
           type: 'button',
           className: 'dshspec-btn',
           disabled: target === undefined,
           title: '/opsx-apply',
           onClick: () => {
-            if (multiple && target !== undefined && change === undefined) {
-              setProposing(false)
-              setPicking((value) => !value)
+            if (change !== undefined) {
+              void runLine(`/opsx-apply ${target.name}`)
+              return
+            }
+            if (multiple) {
+              setMode((value) => (value === 'pick' ? 'none' : 'pick'))
               return
             }
             if (target !== undefined) void runLine(`/opsx-apply ${target.name}`)
           },
         }, t('apply')),
+        h('button', {
+          type: 'button',
+          className: 'dshspec-btn',
+          disabled: target === undefined,
+          title: '/opsx-archive',
+          onClick: () => {
+            if (target !== undefined) void runLine(`/opsx-archive ${target.name}`)
+          },
+        }, t('archive')),
+        h('button', { type: 'button', className: 'dshspec-btn', title: '/opsx-status', onClick: () => void runLine('/opsx-status') }, t('status')),
       ),
-      h('button', {
-        type: 'button',
-        className: 'dshspec-btn',
-        disabled: target === undefined,
-        title: '/opsx-archive',
-        onClick: () => {
-          if (target !== undefined) void runLine(`/opsx-archive ${target.name}`)
-        },
-      }, t('archive')),
-      h('button', { type: 'button', className: 'dshspec-btn', title: '/opsx-status', onClick: () => void runLine('/opsx-status') }, t('status')),
-      result !== null && h('span', {
+      expanded,
+      result !== null && h('div', {
         className: result.ok ? 'dshspec-note' : 'dshspec-note dshspec-noteError',
-        style: { maxWidth: 420, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: compact ? 'nowrap' : 'normal' },
+        style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: compact ? 'nowrap' : 'normal' },
         title: result.text,
       }, result.ok ? result.text : `${t('commandFailed')}: ${result.text}`),
     )
