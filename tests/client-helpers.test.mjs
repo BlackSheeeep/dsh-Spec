@@ -342,7 +342,7 @@ test('deriveNextAction: native artifact state, not the legacy phase order', () =
   assert.deepEqual(deriveNextAction({ name: 'add-dark-mode', isPlanningComplete: true, listStatus: 'complete' }), {
     kind: 'archive',
     labelKey: 'nextActionArchive',
-    line: '/opsx-archive add-dark-mode',
+    line: '/opsx-archive add-dark-mode --yes',
   })
 })
 

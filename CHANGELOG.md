@@ -15,6 +15,7 @@
 ### Changed
 
 - `/opsx-sync`、`/opsx-archive` 不带 `--yes` 时的默认行为从「确定性预览」改为「提交 OPSX AI 工作流」；预览改用 `--dry-run`。
+- 面板/快捷条的「归档」按钮默认填入 `/opsx-archive <name> --yes`（确定性一键收尾）；手动输入不带 `--yes` 的 `/opsx-archive` 仍走 OPSX AI 归档工作流。
 - 归档未完成任务：确定性 `--yes` 路径对齐上游 CLI，改为**警告后继续**（校验 ERROR 仍一律拒绝）；AI 路径要求先向用户确认。
 - 面板同步预览文案更新为「`--yes` 确定性写入，或直接执行让 AI 智能合并」；构建产物新增 `lib/native-snapshot/skills/**` 与 `lib/native/skill-adaptation.js`。
 - 插件版本 `0.2.0` → `0.3.0`。
