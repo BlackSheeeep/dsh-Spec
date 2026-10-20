@@ -414,7 +414,138 @@ when any native `openspec-*` skill was detected in that cwd; `get` returns the s
 - Your modules export exactly these signatures; your unit tests pass with
   `node --test --test-isolation=none "tests/*.test.mjs"` (run your own files too); no writes
   outside your scope; no new dependencies; JSDoc on exports.
-- Report to the Lead: task ids from `openspec/changes/align-native-openspec/tasks.md` completed,
+- Report to the Lead: task ids from `openspec/changes/bundle-native-opsx-skills/tasks.md` completed,
   files added/changed, exact test command + pass/fail counts, deviations from this contract, and
   anything the Lead must wire (host/route/build) or verify.
 - The Lead owns `tasks.md` checkboxes, `lib/` builds, final spec review and the DSH web smoke test.
+
+## 10. Phase 2 — bundled OPSX workflow skills and AI sync/archive
+
+The change `openspec/changes/bundle-native-opsx-skills/` supersedes §8's simplified six-skill
+fallback. It vendors all 12 upstream OPSX skills (MIT) and makes `/opsx-sync` / `/opsx-archive`
+default to OPSX-style AI workflows. Read that change's proposal/design/specs/tasks first.
+
+### 10.1 Vendored snapshot (workstream G)
+
+Vendor the 12 upstream `skills/<name>/SKILL.md` files verbatim (LF-normalized) from the extracted
+OpenSpec 1.14.3 tree (`C:\Users\yaoyefeng\AppData\Local\Temp\dsh-ZdfUZx\openspec-src\skills`) into:
+
+```
+src/native-snapshot/skills/<name>/SKILL.md   # 12 skills, exact names below
+src/native-snapshot/ATTRIBUTION.md           # extend with a "Vendored workflow skills" section
+```
+
+Names: `openspec-explore`, `openspec-propose`, `openspec-apply-change`, `openspec-update-change`,
+`openspec-sync-specs`, `openspec-archive-change`, `openspec-new-change`, `openspec-continue-change`,
+`openspec-ff-change`, `openspec-verify-change`, `openspec-bulk-archive-change`, `openspec-onboard`.
+Extend `tools/sync-native-snapshot.mjs` so its planner also covers these 12 files and refreshes the
+attribution version/commit markers (the script already handles schema+templates; keep its pure
+`planSnapshot`-style testability and missing-source failure).
+
+### 10.2 Adaptation module (`src/native/skill-adaptation.js`, workstream G)
+
+```js
+export const VENDORED_SKILLS = [ ...12 names in upstream order... ]
+export const UPSTREAM_VERSION = '1.14.3'
+export const UPSTREAM_COMMIT = 'c794978f4f8845ce59693373c9dd882ee776588c'
+export const ADAPTATION_MARKER = '## DSH adaptation'   // exact heading of the injected section
+export function adaptationSection()                    // fixed markdown mapping table (see below)
+export function parseSkillFrontmatter(text)            // { data, body, warnings } tolerant parser
+export function adaptSkillContent(name, rawText)       // -> { name, description, content, metadata }
+export async function loadVendoredSkill(name)          // reads snapshot via new URL('../native-snapshot/skills/<name>/SKILL.md', import.meta.url)
+export async function loadAdaptedSkill(name)           // loadVendoredSkill + adaptSkillContent
+```
+
+`adaptSkillContent` keeps the upstream body verbatim, rewrites frontmatter to add
+`license: MIT`, `metadata: { vendoredFrom: 'Fission-AI/OpenSpec', upstreamVersion, upstreamCommit,
+license: 'MIT', adaptedFor: 'dsh-spec' }`, replaces `allowed-tools` / `compatibility` with the DSH
+file-semantics equivalents, and inserts `ADAPTATION_MARKER` + `adaptationSection()` between the
+frontmatter and the upstream body. `adaptationSection()` is English markdown and maps at least:
+
+| upstream command | DSH file-semantics action |
+|---|---|
+| `openspec status/list --json` | read `.openspec.yaml` + `openspec/changes/**` files, or `/opsx-status` |
+| `openspec validate` | `/opsx-validate` |
+| `openspec instructions <artifact>` | read `openspec/changes/<name>/<artifact>` + project `config.yaml` (+ bundled schema instructions) |
+| `openspec show` | read the spec/change file directly |
+| `openspec archive <name> [--yes]` | `/opsx-archive <name> --yes` (deterministic) or `--yes --skip-specs` after an AI merge |
+| `openspec new change <name>` | `/opsx-propose <name>` or create `openspec/changes/<name>/.openspec.yaml` by hand |
+| `openspec sync specs` | no CLI: edit `openspec/specs/**/spec.md` directly per the sync contract, or `/opsx-sync --yes` |
+| `openspec update` | `/opsx-update` |
+| `openspec instructions archive` | project `config.yaml` `context` + `operations.archive.guidance` |
+
+It must also state: the `openspec` CLI is not installed in DSH, store/workspace/initiative features
+are unavailable (treat everything as the current workspace), and a command's JSON fields should be
+derived from reading workspace files instead. No network, no subprocess.
+
+### 10.3 Fallback provider (`src/native/skills.js`, workstream G)
+
+`createFallbackProvider(detect)` lists the 12 adapted vendored skills as candidates when no native
+`openspec-*` skill exists for the cwd; `get()` loads `loadAdaptedSkill(name)` and returns
+`{ ...candidate, description, content }`. Native detection / suppression / non-mutation rules are
+unchanged from §8. `FALLBACK_WORKFLOWS` becomes the 12 upstream workflow suffixes; keep
+`workflowForSkillName` (extend it to new/continue/ff/verify/bulk-archive/onboard). `skills.js` may
+read snapshot files with `node:fs/promises`; it must tolerate a missing snapshot directory (warn,
+return no candidates) and never write.
+
+### 10.4 AI workflow prompts (`src/prompts.js`, workstream H)
+
+```js
+export async function buildSyncWorkflowPrompt({ cwd, changeName, schema, config, change, facts })
+export async function buildArchiveWorkflowPrompt({ cwd, changeName, schema, config, change, facts })
+```
+`facts` is prepared by the caller (commands/host) and has shape:
+```js
+{
+  validation: { errors, warnings, infos, issues },
+  artifacts: [{ id, status }],
+  tasks: { total, done, pending: [text] } | null,
+  deltas: [{ path, capability, added, modified, removed, renamed }],
+  mainSpecs: [{ path, exists, requirementCount }],
+  isPlanningComplete: boolean,
+  archiveTarget: string|null,
+}
+```
+Each prompt = adapted vendored skill body (`loadAdaptedSkill('openspec-sync-specs')` /
+`'openspec-archive-change'`) + a `Current facts` markdown block + project context/rules and
+`operations.sync|archive.guidance` when configured + explicit finish contract:
+- sync: before any edit stop when `validation.errors > 0`; perform the OPSX intelligent merge by
+  editing `openspec/specs/**/spec.md`; verify title/Purpose/no delta headers/requirement+scenario
+  structure/ADDED-MODIFIED-REMOVED-RENAMED results; then `/opsx-validate`.
+- archive: confirm artifact/task state with the user first; stop on validation errors; either
+  intelligent-merge then `/opsx-archive <name> --yes --skip-specs`, or skip sync and use
+  `/opsx-archive <name> --yes --skip-specs` (specs untouched); validate before finalizing.
+`prompts.js` stays I/O-free except reading the vendored skill text via the adaptation module.
+
+### 10.5 Commands (`src/commands.js`, workstream H)
+
+Flag parsing: `--yes`, `--dry-run`, `--skip-specs` (archive only), tokens stripped before change
+name parsing. Behaviour:
+- `/opsx-sync [name]` default: compose `buildSyncWorkflowPrompt`, `agent.followup`, return
+  `{kind:'success', text}`; no writes.
+- `/opsx-sync [name] --yes`: current deterministic merge / apply path; no model message.
+- `/opsx-sync [name] --dry-run`: current preview-only path; no writes; no model message.
+- `/opsx-archive [name]` default: compose `buildArchiveWorkflowPrompt`, followup, no writes.
+- `/opsx-archive [name] --yes`: deterministic plan+execute; incomplete tasks → WARNING text and
+  continue (upstream CLI parity), validation ERROR still refuses; no model message.
+- `/opsx-archive [name] --yes --skip-specs`: plan with `metadata: { ...metadata, skip_specs: true }`
+  and `syncPlan: null`, execute move only.
+- `/opsx-archive [name] --dry-run`: preview only.
+- Change selection / validation gate / target-exists refusal logic is shared with the current code.
+
+### 10.6 Host + panel (Lead)
+
+`/dsh-spec` `instructions` supports `kind: 'sync' | 'archive'` (compose the same prompts from
+engine-derived facts, read-only). Panel/quick-bar copy is updated to explain "default = OPSX AI
+workflow, `--yes` = deterministic fast path, `--dry-run` = preview"; no client logic changes.
+
+### 10.7 Ownership and tests
+
+| Workstream | Files |
+|---|---|
+| G (vendor+adaptation+provider) | `src/native-snapshot/skills/**`, `src/native-snapshot/ATTRIBUTION.md`, `tools/sync-native-snapshot.mjs`, `src/native/skill-adaptation.js`, `src/native/skills.js`, `tests/skills.test.mjs`, `tests/snapshot.test.mjs` |
+| H (prompts+commands) | `src/prompts.js`, `src/commands.js`, `tests/prompts.test.mjs`, `tests/commands.test.mjs` |
+| Lead | `src/host.js`, `src/client.js` copy, `tests/host.test.mjs`, README/CHANGELOG/package.json, build, web smoke, `tasks.md` |
+
+Tests must not write real files. Workstream H may stub `loadAdaptedSkill` for prompt tests but must
+also run against G's real module once it lands. Report per §9.

@@ -15,9 +15,16 @@
  *   from the project's effective schema and submit it through
  *   `agent.followup()`, exactly like the shipped `/plan` command;
  * - direct commands (init / validate / status) return the deterministic
- *   engine output and never submit a model message. sync / archive delegate
- *   to the deterministic merge + archive engine: without `--yes` they return
- *   a preview and write nothing; with `--yes` they apply the preview.
+ *   engine output and never submit a model message.
+ *
+ * `/opsx-sync` and `/opsx-archive` have two paths (§10.5):
+ * - default: compose the vendored OPSX AI workflow prompt (adapted
+ *   `sync-specs` / `archive-change` skill + engine facts + finish contract),
+ *   submit it through `agent.followup()` and write nothing;
+ * - deterministic: `--dry-run` returns the merge/archive preview only, `--yes`
+ *   runs the deterministic merge / plan+execute path. Neither submits a model
+ *   message, and `--skip-specs` (archive only) moves the change without writing
+ *   the main specs.
  *
  * All handlers are wrapped so a thrown error becomes a direct
  * `{ kind: 'error', text: 'OpenSpec 命令失败：…' }` result instead of a
@@ -30,8 +37,10 @@ import { randomUUID } from 'node:crypto'
 
 import {
   buildApplyPrompt,
+  buildArchiveWorkflowPrompt,
   buildExplorePrompt,
   buildProposePrompt,
+  buildSyncWorkflowPrompt,
   buildUpdatePrompt,
   firstToken,
   restAfterFirstToken,
@@ -92,8 +101,10 @@ const realDeps = {
   archive: { executeArchive, planArchive, previewArchive },
   prompts: {
     buildApplyPrompt,
+    buildArchiveWorkflowPrompt,
     buildExplorePrompt,
     buildProposePrompt,
+    buildSyncWorkflowPrompt,
     buildUpdatePrompt,
     firstToken,
     restAfterFirstToken,
@@ -131,19 +142,39 @@ async function resolveCwd(ctx, agent) {
   throw new Error('无法确定当前会话的工作目录')
 }
 
-/** `--yes` confirmation token, matched as a standalone word. */
-const YES_PATTERN = /(^|\s)--yes(?=\s|$)/
-
-/** Whether the raw command input carries the `--yes` confirmation token. */
-function hasYesToken(rawInput) {
-  return YES_PATTERN.test(String(rawInput ?? ''))
+/**
+ * Standalone command flags (§10.5). They are stripped from the raw input before
+ * the change-name parse, so `/opsx-sync --dry-run -- add-x`-style ordering and
+ * `--yes` anywhere in the string are safe.
+ */
+const FLAG_PATTERNS = {
+  yes: /(^|\s)--yes(?=\s|$)/,
+  dryRun: /(^|\s)--dry-run(?=\s|$)/,
+  skipSpecs: /(^|\s)--skip-specs(?=\s|$)/,
 }
 
-/** Remove `--yes` tokens so change-name parsing never sees them. */
-function stripYes(rawInput) {
-  return String(rawInput ?? '')
-    .replace(/(^|\s)--yes(?=\s|$)/g, '$1')
-    .trim()
+/** All known flag tokens, for stripping from raw input. */
+const ALL_FLAGS_PATTERN = /(^|\s)--(?:yes|dry-run|skip-specs)(?=\s|$)/g
+
+/**
+ * Parse the command flags and return the remaining input (flags removed).
+ *
+ * @param {unknown} rawInput raw command input
+ * @returns {{yes: boolean, dryRun: boolean, skipSpecs: boolean, rest: string}}
+ */
+function parseCommandFlags(rawInput) {
+  const raw = String(rawInput ?? '')
+  return {
+    yes: FLAG_PATTERNS.yes.test(raw),
+    dryRun: FLAG_PATTERNS.dryRun.test(raw),
+    skipSpecs: FLAG_PATTERNS.skipSpecs.test(raw),
+    rest: raw.replace(ALL_FLAGS_PATTERN, '$1').trim(),
+  }
+}
+
+/** Raw command input without any known flag token (for change-name parsing). */
+function stripFlags(rawInput) {
+  return parseCommandFlags(rawInput).rest
 }
 
 /** One ordinary user message carrying a phase prompt (same shape as the shipped `/plan`). */
@@ -314,7 +345,7 @@ function unknownChangeText(state, asked) {
  */
 export function selectChange(state, rawInput, prompts = realDeps.prompts) {
   const changes = Array.isArray(state?.changes) ? state.changes : []
-  const cleaned = stripYes(rawInput)
+  const cleaned = stripFlags(rawInput)
   const asked = prompts.slugify(prompts.firstToken(cleaned))
   if (asked) {
     const match = changes.find((change) => change?.name === asked)
@@ -452,6 +483,207 @@ async function collectMergeInput(deps, cwd, state, validated, changeName) {
   return { mainSpecs, deltas }
 }
 
+/**
+ * Normalize one engine delta into a workflow fact row: the workspace-relative
+ * path, the capability it targets and the parsed ADDED/MODIFIED/REMOVED/RENAMED
+ * counts (docs/native-module-contract §10.4).
+ *
+ * @param {string} changeName change name
+ * @param {{path?: string, parsed?: {operations?: object}}} delta engine delta row
+ * @returns {{path: string, capability: string|null, added: number, modified: number, removed: number, renamed: number}|null}
+ */
+function deltaFactOf(changeName, delta) {
+  const raw = String(delta?.path ?? '')
+  if (raw.length === 0) return null
+  const prefix = `openspec/changes/${changeName}/`
+  const inner = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw.replace(/^\.\//, '')
+  const path = inner.startsWith('openspec/') ? inner : `${prefix}${inner}`
+  const match = inner.match(/(?:^|\/)specs\/([^/]+)\/spec\.md$/)
+  const operations = delta?.parsed?.operations ?? {}
+  const count = (operation) => (Array.isArray(operations?.[operation]) ? operations[operation].length : 0)
+  return {
+    path,
+    capability: match ? match[1] : null,
+    added: count('ADDED'),
+    modified: count('MODIFIED'),
+    removed: count('REMOVED'),
+    renamed: count('RENAMED'),
+  }
+}
+
+/**
+ * Main spec facts for the capabilities touched by the deltas: the deterministic
+ * main spec path, whether it exists yet (a new capability starts absent) and its
+ * current requirement count when the workspace state already knows it.
+ *
+ * @param {Array<{capability: string|null}>} deltaFacts
+ * @param {object|null} state WorkspaceState (§4)
+ * @returns {Array<{path: string, capability: string, exists: boolean, requirementCount: number}>}
+ */
+function mainSpecFactsOf(deltaFacts, state) {
+  const known = new Map()
+  for (const spec of Array.isArray(state?.specs) ? state.specs : []) {
+    const path = typeof spec === 'string' ? spec : spec?.path
+    if (typeof path !== 'string' || path.length === 0) continue
+    known.set(path, {
+      path,
+      exists: true,
+      requirementCount: Number.isFinite(Number(spec?.requirementCount)) ? Number(spec.requirementCount) : 0,
+    })
+  }
+  const rows = []
+  const seen = new Set()
+  for (const delta of deltaFacts) {
+    if (delta.capability === null) continue
+    const path = `openspec/specs/${delta.capability}/spec.md`
+    if (seen.has(path)) continue
+    seen.add(path)
+    const existing = known.get(path)
+    rows.push({
+      path,
+      capability: delta.capability,
+      exists: existing !== undefined,
+      requirementCount: existing === undefined ? 0 : existing.requirementCount,
+    })
+  }
+  return rows
+}
+
+/**
+ * Task progress facts: total/done plus the pending task texts the workflow must
+ * ask the user about (`null` when the change has no tasks file yet).
+ *
+ * @param {object|null} validated result of `validateChangeByName`
+ * @returns {{total: number, done: number, pending: string[]}|null}
+ */
+function workflowTaskFacts(validated) {
+  const parsed = validated?.tasks
+  if (parsed === null || parsed === undefined || typeof parsed !== 'object') return null
+  const items = Array.isArray(parsed.items) ? parsed.items : []
+  return {
+    total: Number.isFinite(Number(parsed.total)) ? Number(parsed.total) : 0,
+    done: Number.isFinite(Number(parsed.done)) ? Number(parsed.done) : 0,
+    pending: items
+      .filter((item) => item && item.done !== true)
+      .map((item) => String(item.text ?? ''))
+      .filter((text) => text.length > 0),
+  }
+}
+
+/**
+ * Build the engine-derived facts injected into the AI sync/archive workflow
+ * prompts (docs/native-module-contract §10.4).
+ *
+ * Pure: it only reads the engine state handed in, so both the commands and the
+ * read-only host `instructions` route can reuse it. The caller supplies the
+ * archive target (`openspec/changes/archive/<local-date>-<name>`) and whether it
+ * already exists; everything else derives from the change, workspace state and
+ * `validateChangeByName` result.
+ *
+ * @param {object} [options]
+ * @param {object} [options.change] ChangeState from the native engine
+ * @param {object} [options.state] WorkspaceState from the native engine
+ * @param {object} [options.validated] `validateChangeByName` result (validation, deltas, tasks)
+ * @param {string|null} [options.archiveTarget] deterministic archive target path
+ * @param {boolean|null} [options.archiveTargetExists] whether the archive target already exists
+ * @returns {{validation: object, artifacts: Array<{id: string, status: string}>, tasks: object|null, deltas: Array<object>, mainSpecs: Array<object>, isPlanningComplete: boolean, archiveTarget: string|null, archiveTargetExists: boolean|null}}
+ */
+export function collectWorkflowFacts({
+  change = null,
+  state = null,
+  validated = null,
+  archiveTarget = null,
+  archiveTargetExists = null,
+} = {}) {
+  const changeName = typeof validated?.name === 'string'
+    ? validated.name
+    : typeof change?.name === 'string' ? change.name : ''
+  const deltaFacts = (Array.isArray(validated?.deltas) ? validated.deltas : [])
+    .map((delta) => deltaFactOf(changeName, delta))
+    .filter((delta) => delta !== null)
+  const validation = validated?.validation ?? change?.validation ?? { errors: 0, warnings: 0, infos: 0, issues: [] }
+  return {
+    validation,
+    artifacts: (Array.isArray(change?.artifacts) ? change.artifacts : [])
+      .filter((artifact) => artifact && typeof artifact.id === 'string')
+      .map((artifact) => ({ id: artifact.id, status: typeof artifact.status === 'string' ? artifact.status : 'unknown' })),
+    tasks: workflowTaskFacts(validated),
+    deltas: deltaFacts,
+    mainSpecs: mainSpecFactsOf(deltaFacts, state),
+    isPlanningComplete: change?.isPlanningComplete === true,
+    archiveTarget: typeof archiveTarget === 'string' && archiveTarget.length > 0 ? archiveTarget : null,
+    archiveTargetExists: typeof archiveTargetExists === 'boolean' ? archiveTargetExists : null,
+  }
+}
+
+/** Compose + submit the OPSX sync AI workflow; the command itself writes nothing. */
+async function submitSyncWorkflow(deps, invocation, { cwd, autoNote, change, state, validated }) {
+  const schemaName = change?.schemaName || state?.config?.schema || 'spec-driven'
+  const resolvedSchema = await resolveEffectiveSchema(deps, cwd, schemaName)
+  if (!resolvedSchema?.schema) {
+    return { kind: 'error', text: `无法解析变更 ${change.name} 的 schema "${schemaName}"，无法组合 sync 工作流提示词。` }
+  }
+  const prompt = await deps.prompts.buildSyncWorkflowPrompt({
+    cwd,
+    changeName: change.name,
+    schema: schemaForPrompts(resolvedSchema),
+    config: state?.config ?? {},
+    change,
+    facts: collectWorkflowFacts({ change, state, validated }),
+  })
+  const counts = validationCounts(validated?.validation ?? change.validation)
+  const warningNote = counts.warnings > 0 ? `（校验有 ${counts.warnings} 个 WARNING，AI 会一并评估）` : ''
+  return submit(
+    invocation.agent,
+    prompt,
+    `${autoNote}已发送 OPSX 同步工作流：${change.name}。命令本身没有写入任何文件。AI 会先评估 delta 与主 specs 并向你确认，再按 OPSX 智能合并、按 canonical 契约验证，最后运行 /opsx-validate${warningNote}。`,
+  )
+}
+
+/** Compose + submit the OPSX archive AI workflow; the command itself writes/moves nothing. */
+async function submitArchiveWorkflow(deps, invocation, { cwd, autoNote, change, state, validated, archiveRel, targetExists, skipSpecsRequested = false }) {
+  const schemaName = change?.schemaName || state?.config?.schema || 'spec-driven'
+  const resolvedSchema = await resolveEffectiveSchema(deps, cwd, schemaName)
+  if (!resolvedSchema?.schema) {
+    return { kind: 'error', text: `无法解析变更 ${change.name} 的 schema "${schemaName}"，无法组合 archive 工作流提示词。` }
+  }
+  const prompt = await deps.prompts.buildArchiveWorkflowPrompt({
+    cwd,
+    changeName: change.name,
+    schema: schemaForPrompts(resolvedSchema),
+    config: state?.config ?? {},
+    change,
+    facts: collectWorkflowFacts({
+      change,
+      state,
+      validated,
+      archiveTarget: archiveRel,
+      archiveTargetExists: targetExists,
+    }),
+  })
+  const counts = validationCounts(validated?.validation ?? change.validation)
+  const tasks = workflowTaskFacts(validated)
+  const notes = []
+  if (tasks !== null && tasks.total > tasks.done) {
+    notes.push(`变更还有 ${tasks.total - tasks.done} 项任务未完成（${tasks.done}/${tasks.total}），AI 会先与你确认。`)
+  }
+  if (counts.warnings > 0) notes.push(`校验有 ${counts.warnings} 个 WARNING，AI 会先与你确认。`)
+  if (skipSpecsRequested) notes.push('--skip-specs 只影响确定性收尾（只移动目录）；AI 工作流仍会先向你确认是否同步主 specs。')
+  if (notes.length > 0) notes.push('')
+  return submit(
+    invocation.agent,
+    prompt,
+    `${autoNote}已发送 OPSX 归档工作流：${change.name}（归档目标 ${archiveRel}）。命令本身没有写入或移动任何文件。AI 会先检查 artifact / 任务完成度并征得确认，再智能合并或跳过同步，验证后用 /opsx-archive ${change.name} --yes --skip-specs 确定性收尾。${notes.length > 0 ? `\n${notes.join('\n')}` : ''}`,
+  )
+}
+
+/** Warning for the deterministic archive path when tasks are still pending (upstream CLI parity: continue). */
+function incompleteTasksNote(changeName, progress) {
+  const pending = pendingTaskLines(progress)
+  const list = pending.length > 0 ? `\n未完成任务：\n${pending.join('\n')}` : ''
+  return `警告：变更 ${changeName} 还有 ${progress.total - progress.done} 项任务未完成（${progress.done}/${progress.total}）；按上游 openspec CLI 行为继续归档（校验 ERROR 仍会拒绝）。${list}`
+}
+
 /** Compose the direct status text from the native workspace state. */
 function formatStatus(state) {
   const changes = Array.isArray(state.changes) ? state.changes : []
@@ -538,7 +770,7 @@ async function runExplore(ctx, deps, invocation) {
  * the plan-only prompt.
  */
 async function runPropose(ctx, deps, invocation) {
-  const raw = stripYes(invocation.rawInput)
+  const raw = stripFlags(invocation.rawInput)
   const changeName = deps.prompts.slugify(deps.prompts.firstToken(raw))
   if (!changeName) {
     return {
@@ -662,7 +894,7 @@ async function runUpdate(ctx, deps, invocation) {
 
   const intent = picked.auto
     ? String(invocation.rawInput ?? '').trim()
-    : deps.prompts.restAfterFirstToken(stripYes(invocation.rawInput))
+    : deps.prompts.restAfterFirstToken(stripFlags(invocation.rawInput))
 
   // update only revises existing artifacts: a target that does not exist yet
   // belongs to propose (or its create step), never to update.
@@ -700,10 +932,18 @@ async function runUpdate(ctx, deps, invocation) {
   return submit(invocation.agent, prompt, lines.join('\n'))
 }
 
-/** `/opsx-sync`: validation gate → dry-run preview → `--yes` applies the merge. */
+/**
+ * `/opsx-sync`: validation gate → default OPSX AI workflow → `--dry-run`
+ * preview → `--yes` deterministic merge.
+ *
+ * The default path composes the vendored OPSX sync prompt and submits it; it
+ * never plans or writes. `--dry-run` returns the deterministic preview only,
+ * `--yes` applies the deterministic merge. Both direct paths produce no model
+ * message. Validation ERROR refuses every path before any work.
+ */
 async function runSync(ctx, deps, invocation) {
   const cwd = await resolveCwd(ctx, invocation.agent)
-  const yes = hasYesToken(invocation.rawInput)
+  const flags = parseCommandFlags(invocation.rawInput)
   const state = await deps.state.computeWorkspaceState(cwd, { signal: invocation.signal })
   const unavailable = requireWorkspace(state)
   if (unavailable) return unavailable
@@ -721,8 +961,13 @@ async function runSync(ctx, deps, invocation) {
   if (change?.metadata?.skip_specs) {
     return {
       kind: 'success',
-      text: `${autoNote}变更 ${change.name} 声明了 skip_specs：不同步主 specs，无需执行 sync。用 /opsx-archive ${change.name} 直接归档。`,
+      text: `${autoNote}变更 ${change.name} 声明了 skip_specs：没有 delta specs 可同步，无需执行 sync。用 /opsx-archive ${change.name} 直接归档。`,
     }
+  }
+
+  // Default: submit the OPSX AI workflow; no plan, no writes, no move.
+  if (!flags.yes && !flags.dryRun) {
+    return submitSyncWorkflow(deps, invocation, { cwd, autoNote, change, state, validated })
   }
 
   const { mainSpecs, deltas } = await collectMergeInput(deps, cwd, state, validated, change.name)
@@ -735,10 +980,10 @@ async function runSync(ctx, deps, invocation) {
   if (plan?.ok === false) return planRefusal(change.name, plan, '同步')
 
   const preview = deps.merge.previewSyncPlan(plan)
-  if (!yes) {
+  if (flags.dryRun) {
     return {
       kind: 'success',
-      text: `${autoNote}同步预览：变更 ${change.name}\n${preview?.text ?? '（没有需要同步的内容）'}\n\n未写入任何文件。确认无误后重新执行：/opsx-sync ${change.name} --yes${warningsAppendix(validation, plan)}`,
+      text: `${autoNote}同步预览：变更 ${change.name}\n${preview?.text ?? '（没有需要同步的内容）'}\n\n未写入任何文件（--dry-run）。确认无误后：/opsx-sync ${change.name} --yes 确定性写入，或不带参数让 AI 按 OPSX 智能合并。${warningsAppendix(validation, plan)}`,
     }
   }
 
@@ -753,10 +998,20 @@ async function runSync(ctx, deps, invocation) {
   }
 }
 
-/** `/opsx-archive`: validation + task gates → preview → `--yes` moves the change to archive/. */
+/**
+ * `/opsx-archive`: validation gate → default OPSX AI workflow → `--dry-run`
+ * preview → `--yes` deterministic plan+execute.
+ *
+ * The default path composes the vendored OPSX archive prompt and submits it; it
+ * never plans, writes or moves. Incomplete tasks no longer block: the AI path
+ * asks the user to confirm, and the deterministic `--yes` path warns and
+ * continues (upstream CLI parity). Validation ERROR refuses every path. The
+ * archive target collision refusal applies to every path. `--skip-specs` makes
+ * the deterministic path move the change without writing any main spec.
+ */
 async function runArchive(ctx, deps, invocation) {
   const cwd = await resolveCwd(ctx, invocation.agent)
-  const yes = hasYesToken(invocation.rawInput)
+  const flags = parseCommandFlags(invocation.rawInput)
   const state = await deps.state.computeWorkspaceState(cwd, { signal: invocation.signal })
   const unavailable = requireWorkspace(state)
   if (unavailable) return unavailable
@@ -771,17 +1026,6 @@ async function runArchive(ctx, deps, invocation) {
   const gate = validationGate(change.name, validation, '归档')
   if (gate) return gate
 
-  // Incomplete tasks block archive with the pending list.
-  const progress = normalizeTaskProgress(validated?.tasks, change.tasks)
-  if (progress.total > 0 && progress.done < progress.total) {
-    const pending = pendingTaskLines(progress)
-    const list = pending.length > 0 ? `\n未完成任务：\n${pending.join('\n')}` : ''
-    return {
-      kind: 'error',
-      text: `变更 ${change.name} 还有 ${progress.total - progress.done} 项任务未完成（${progress.done}/${progress.total}），已拒绝归档。请在 tasks.md 中完成并勾选后重试。${list}`,
-    }
-  }
-
   const localDate = deps.metadata.formatLocalDate()
   const archiveRel = `openspec/changes/archive/${localDate}-${change.name}`
   const targetExists = await deps.fs.pathExists(cwd, archiveRel)
@@ -792,12 +1036,31 @@ async function runArchive(ctx, deps, invocation) {
     }
   }
 
-  const { mainSpecs, deltas } = change?.metadata?.skip_specs
+  const progress = normalizeTaskProgress(validated?.tasks, change.tasks)
+  const incomplete = progress.total > 0 && progress.done < progress.total
+
+  // Default: submit the OPSX AI workflow; no plan, no writes, no move.
+  if (!flags.yes && !flags.dryRun) {
+    return submitArchiveWorkflow(deps, invocation, {
+      cwd,
+      autoNote,
+      change,
+      state,
+      validated,
+      archiveRel,
+      targetExists,
+      skipSpecsRequested: flags.skipSpecs,
+    })
+  }
+
+  const skippedByFlag = flags.skipSpecs
+  const skipSpecs = skippedByFlag || change?.metadata?.skip_specs === true
+  const { mainSpecs, deltas } = skipSpecs
     ? { mainSpecs: [], deltas: [] }
     : await collectMergeInput(deps, cwd, state, validated, change.name)
   // skip_specs archives without touching main specs; otherwise the merge plan
   // travels inside the archive plan and executeArchive applies it before moving.
-  const syncPlan = change?.metadata?.skip_specs
+  const syncPlan = skipSpecs
     ? null
     : deps.merge.planSync({
       changeName: change.name,
@@ -807,10 +1070,11 @@ async function runArchive(ctx, deps, invocation) {
     })
   if (syncPlan?.ok === false) return planRefusal(change.name, syncPlan, '归档')
 
+  const metadata = skipSpecs ? { ...(change?.metadata ?? {}), skip_specs: true } : change?.metadata ?? {}
   const plan = deps.archive.planArchive({
     changeName: change.name,
     localDate,
-    metadata: change?.metadata ?? {},
+    metadata,
     validation,
     syncPlan,
     targetExists,
@@ -818,10 +1082,13 @@ async function runArchive(ctx, deps, invocation) {
   if (plan?.ok === false) return planRefusal(change.name, plan, '归档')
 
   const preview = deps.archive.previewArchive(plan)
-  if (!yes) {
+  const taskWarning = incomplete ? incompleteTasksNote(change.name, progress) : ''
+  if (flags.dryRun) {
+    const warningBlock = taskWarning.length > 0 ? `\n\n${taskWarning}` : ''
+    const skipNote = skippedByFlag ? '（--skip-specs：只移动目录）' : ''
     return {
       kind: 'success',
-      text: `${autoNote}归档预览：变更 ${change.name}\n${preview?.text ?? `归档目标：${archiveRel}`}\n\n未写入或移动任何文件。确认无误后重新执行：/opsx-archive ${change.name} --yes${warningsAppendix(validation, plan)}`,
+      text: `${autoNote}归档预览：变更 ${change.name}${skipNote}\n${preview?.text ?? `归档目标：${archiveRel}`}\n\n未写入或移动任何文件（--dry-run）。${warningBlock}确认无误后：/opsx-archive ${change.name} --yes${skipNote ? ' --skip-specs' : ''} 确定性归档，或不带参数让 AI 按 OPSX 归档工作流处理。${warningsAppendix(validation, plan)}`,
     }
   }
 
@@ -830,11 +1097,13 @@ async function runArchive(ctx, deps, invocation) {
   const writes = Array.isArray(syncPlan?.writes) ? syncPlan.writes : []
   const writtenLines = writes.map((write) => `  • ${write.path}（${write.action}）`)
   let body = ''
-  if (writtenLines.length > 0) body = `已同步主 specs：\n${writtenLines.join('\n')}\n`
-  else if (change?.metadata?.skip_specs) body = 'skip_specs：未写入主 specs。\n'
+  if (skippedByFlag) body = '--skip-specs：未写入主 specs，只移动 change 目录。\n'
+  else if (skipSpecs) body = 'skip_specs：未写入主 specs。\n'
+  else if (writtenLines.length > 0) body = `已同步主 specs：\n${writtenLines.join('\n')}\n`
+  const warningBlock = taskWarning.length > 0 ? `\n${taskWarning}` : ''
   return {
     kind: 'success',
-    text: `${autoNote}已归档变更 ${change.name} → ${target}\n${body}归档内容保留 .openspec.yaml 与全部工件。${warningsAppendix(validation, plan)}`,
+    text: `${autoNote}已归档变更 ${change.name} → ${target}\n${body}归档内容保留 .openspec.yaml 与全部工件。${warningBlock}${warningsAppendix(validation, plan)}`,
   }
 }
 
@@ -847,7 +1116,7 @@ async function runValidate(ctx, deps, invocation) {
   }
   if (state.status === 'error') return requireWorkspace(state)
 
-  const asked = deps.prompts.slugify(deps.prompts.firstToken(stripYes(invocation.rawInput)))
+  const asked = deps.prompts.slugify(deps.prompts.firstToken(stripFlags(invocation.rawInput)))
   if (asked) {
     const match = (Array.isArray(state.changes) ? state.changes : []).find((change) => change?.name === asked)
     if (!match) return { kind: 'error', text: unknownChangeText(state, asked) }
@@ -965,14 +1234,22 @@ function registerAll(ctx, deps, commands) {
   )
   register(
     'opsx-sync',
-    description('sync', 'opsx-sync', '把 delta specs 确定性合并进主 specs；先预览，确认后加 --yes 写入'),
-    '[change-name] [--yes]',
+    description(
+      'sync',
+      'opsx-sync',
+      '默认提交 OPSX sync-specs AI 工作流（评估 delta、确认后智能合并主 specs、按契约验证）；--yes 走确定性合并，--dry-run 只输出预览',
+    ),
+    '[change-name] [--yes|--dry-run]',
     runSync,
   )
   register(
     'opsx-archive',
-    description('archive', 'opsx-archive', '校验、同步 specs 并把 change 移入 archive/；先预览，确认后加 --yes 归档'),
-    '[change-name] [--yes]',
+    description(
+      'archive',
+      'opsx-archive',
+      '默认提交 OPSX archive-change AI 工作流（完成度检查、同步确认、验证后确定性收尾）；--yes 确定性归档，--dry-run 只预览，--skip-specs 只移动目录不写主 specs',
+    ),
+    '[change-name] [--yes|--dry-run|--skip-specs]',
     runArchive,
   )
   register(

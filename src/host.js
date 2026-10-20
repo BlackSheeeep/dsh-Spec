@@ -22,15 +22,22 @@ import { isAbsolute, relative } from 'node:path'
 
 import { registerCommands } from './commands.js'
 import { readProjectConfig } from './native/config.js'
-import { isInside, listTree, readTextOrNull, toAbs } from './native/fsio.js'
+import { isInside, listTree, pathExists, readTextOrNull, toAbs } from './native/fsio.js'
 import { ensureSkeleton } from './native/init.js'
 import { planSync, previewSyncPlan } from './native/merge.js'
-import { readChangeMetadata, resolveSchemaName } from './native/metadata.js'
+import { formatLocalDate, readChangeMetadata, resolveSchemaName } from './native/metadata.js'
 import { loadProjectSchemas, resolveSchema } from './native/schema.js'
 import { createFallbackProvider, detectNativeSkills } from './native/skills.js'
-import { parseDeltaSpec } from './native/spec.js'
+import { parseDeltaSpec, parseMainSpec } from './native/spec.js'
 import { computeChangeState, computeWorkspaceState, validateChangeByName } from './native/state.js'
-import { buildApplyPrompt, buildExplorePrompt, buildProposePrompt, buildUpdatePrompt } from './prompts.js'
+import {
+  buildApplyPrompt,
+  buildArchiveWorkflowPrompt,
+  buildExplorePrompt,
+  buildProposePrompt,
+  buildSyncWorkflowPrompt,
+  buildUpdatePrompt,
+} from './prompts.js'
 
 /** Cordis plugin name; also the service key provided to other plugins. */
 export const name = 'openSpec'
@@ -160,6 +167,58 @@ async function methodValidate(ctx, payload) {
   return { workspace: true, status: state.status, validation: summarizeIssues(issues), warnings: state.warnings }
 }
 
+/** Assemble the workflow facts injected into the OPSX sync/archive prompts. */
+async function workflowFacts(cwd, changeName, change, projectConfig) {
+  const validated = await validateChangeByName(cwd, changeName)
+  const deltas = await readDeltas(cwd, changeName)
+  const deltaFacts = []
+  const mainSpecPaths = new Map()
+  for (const delta of deltas) {
+    const capability = capabilityOf(changeName, delta.path)
+    const operations = delta.parsed.operations
+    deltaFacts.push({
+      path: delta.path,
+      capability,
+      added: operations.ADDED.length,
+      modified: operations.MODIFIED.length,
+      removed: operations.REMOVED.length,
+      renamed: operations.RENAMED.length,
+    })
+    mainSpecPaths.set(capability, `openspec/specs/${capability}/spec.md`)
+  }
+  const mainSpecs = []
+  for (const [capability, path] of mainSpecPaths) {
+    const text = await readTextOrNull(cwd, path)
+    mainSpecs.push({
+      path,
+      capability,
+      exists: text !== null,
+      requirementCount: text === null ? 0 : parseMainSpec(text).requirements.length,
+    })
+  }
+  const items = Array.isArray(validated.tasks?.items) ? validated.tasks.items : []
+  const archiveTarget = `openspec/changes/archive/${formatLocalDate()}-${changeName}`
+  return {
+    validation: validated.validation,
+    artifacts: Array.isArray(change?.artifacts)
+      ? change.artifacts.map((artifact) => ({ id: artifact.id, status: artifact.status }))
+      : [],
+    tasks: validated.tasks === null || validated.tasks === undefined
+      ? null
+      : {
+          total: validated.tasks.total,
+          done: validated.tasks.done,
+          pending: items.filter((item) => item.done !== true).map((item) => item.text),
+        },
+    deltas: deltaFacts,
+    mainSpecs,
+    isPlanningComplete: change?.isPlanningComplete === true,
+    archiveTarget,
+    archiveTargetExists: await pathExists(cwd, archiveTarget),
+    config: projectConfig,
+  }
+}
+
 /** `instructions`: compose the native prompt for one workflow phase. */
 async function methodInstructions(ctx, payload) {
   const cwd = await resolveWorkspacePath(ctx, payload.cwd)
@@ -171,17 +230,19 @@ async function methodInstructions(ctx, payload) {
     const config = await readProjectConfig(cwd)
     return { text: await buildExplorePrompt({ cwd, config, topic }), kind }
   }
-  if (!['propose', 'apply', 'update'].includes(kind)) throw new Error(`未知的指令类型：${kind}`)
+  if (!['propose', 'apply', 'update', 'sync', 'archive'].includes(kind)) {
+    throw new Error(`未知的指令类型：${kind}`)
+  }
 
   const focus = await schemaContext(cwd, changeName)
   if (focus.resolved.schema === null) {
     throw new Error(`schema "${focus.schemaName}" 不存在：项目 openspec/schemas/ 与内置快照中都没有定义`)
   }
   const projectConfig = focus.config
-  let change
   if (changeName.length === 0) {
     throw new Error('缺少 change 名称')
   }
+  let change
   try {
     change = await computeChangeState(cwd, changeName, { projectConfig })
   } catch {
@@ -199,6 +260,13 @@ async function methodInstructions(ctx, payload) {
     return { text, kind, schemaName: focus.schemaName }
   }
   if (change === null) throw new Error(`变更 ${changeName} 不存在`)
+  if (kind === 'sync' || kind === 'archive') {
+    const facts = await workflowFacts(cwd, changeName, change, projectConfig)
+    const text = kind === 'sync'
+      ? await buildSyncWorkflowPrompt({ cwd, changeName, schema: focus.resolved, config: projectConfig, change, facts })
+      : await buildArchiveWorkflowPrompt({ cwd, changeName, schema: focus.resolved, config: projectConfig, change, facts })
+    return { text, kind, schemaName: focus.schemaName, change: changeName }
+  }
   const text = await buildUpdatePrompt({ cwd, changeName, schema, config: projectConfig, change })
   return { text, kind, schemaName: focus.schemaName }
 }

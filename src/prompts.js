@@ -11,8 +11,10 @@
  * - apply implements the tracked tasks and ticks them off as it works;
  * - update revises existing planning artifacts only and points at apply for
  *   code changes;
- * - archive produces no prompt at all — the deterministic merge/archive engine
- *   runs it and returns the result directly.
+ * - sync and archive default to the vendored OPSX AI workflows: the adapted
+ *   upstream `sync-specs` / `archive-change` skill text plus engine-derived
+ *   facts and an explicit finish contract. Their deterministic `--yes` path
+ *   runs the merge/archive engine and produces no model prompt.
  *
  * Prompt composition itself lives in `native/instruction.js`; it follows the
  * native order: artifact `instruction` → resolved placeholders (output path,
@@ -23,12 +25,15 @@
  * task progress, operation guidance, plans in schema order).
  *
  * No filesystem writes happen here. The only reads are artifact templates
- * performed by the instruction composer when it is invoked.
+ * performed by the instruction composer when it is invoked, plus the bundled
+ * vendored OPSX skill text loaded by `native/skill-adaptation.js` for the sync
+ * and archive AI workflows.
  *
  * @module dsh-spec/prompts
  */
 
 import { SNAPSHOT_VERSION, composeArtifactPrompt } from './native/instruction.js'
+import { loadAdaptedSkill } from './native/skill-adaptation.js'
 
 /** Kebab-case change name: what OpenSpec itself uses for folder names. */
 const CHANGE_NAME = /^[a-z0-9][a-z0-9-]*$/
@@ -663,4 +668,316 @@ export async function buildUpdatePrompt({ cwd, changeName, schema, config = {}, 
   return lines.join('\n')
 }
 
-/** Archive is deterministic (merge + move engine), so it has no model prompt. */
+/**
+ * Vendored OPSX workflow skill backing each AI workflow (`sync` / `archive`).
+ * The adapted text is embedded verbatim; only the surrounding facts, project
+ * constraints and finish contract are composed here.
+ */
+const WORKFLOW_SKILL = {
+  sync: 'openspec-sync-specs',
+  archive: 'openspec-archive-change',
+}
+
+/** Human labels for the effective schema source in a workflow header. */
+const SCHEMA_SOURCE_LABELS = {
+  project: 'project schema',
+  builtin: 'bundled snapshot schema',
+}
+
+/** Maximum validation issue rows rendered in the facts block. */
+const MAX_FACT_ISSUE_LINES = 40
+
+/** Coerce a fact count to a finite number (tolerating a missing caller field). */
+function factNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+/** Trimmed `operations.<name>.guidance`, or ''. */
+function operationGuidance(config, operation) {
+  if (!config || typeof config !== 'object') return ''
+  const guidance = config.operations && typeof config.operations === 'object' ? config.operations[operation]?.guidance : null
+  return typeof guidance === 'string' ? guidance.trim() : ''
+}
+
+/**
+ * Normalize the caller-prepared workflow facts (docs/native-module-contract §10.4).
+ * Every field is optional: the builders must still compose a usable prompt when
+ * a fact set is partial (for example before the change has any tasks file).
+ */
+function normalizeWorkflowFacts(facts) {
+  const value = facts && typeof facts === 'object' ? facts : {}
+  const validation = value.validation && typeof value.validation === 'object' ? value.validation : {}
+  const tasks = value.tasks && typeof value.tasks === 'object'
+    ? {
+        total: factNumber(value.tasks.total),
+        done: factNumber(value.tasks.done),
+        pending: (Array.isArray(value.tasks.pending) ? value.tasks.pending : []).filter(
+          (text) => typeof text === 'string' && text.length > 0,
+        ),
+      }
+    : null
+  return {
+    errors: factNumber(validation.errors),
+    warnings: factNumber(validation.warnings),
+    infos: factNumber(validation.infos),
+    issues: (Array.isArray(validation.issues) ? validation.issues : []).filter(Boolean),
+    artifacts: (Array.isArray(value.artifacts) ? value.artifacts : [])
+      .filter((row) => row && typeof row.id === 'string')
+      .map((row) => ({ id: row.id, status: typeof row.status === 'string' ? row.status : 'unknown' })),
+    tasks,
+    deltas: (Array.isArray(value.deltas) ? value.deltas : [])
+      .filter((row) => row && typeof row.path === 'string')
+      .map((row) => ({
+        path: row.path,
+        capability: typeof row.capability === 'string' && row.capability.length > 0 ? row.capability : null,
+        added: factNumber(row.added),
+        modified: factNumber(row.modified),
+        removed: factNumber(row.removed),
+        renamed: factNumber(row.renamed),
+      })),
+    mainSpecs: (Array.isArray(value.mainSpecs) ? value.mainSpecs : [])
+      .filter((row) => row && typeof row.path === 'string')
+      .map((row) => ({
+        path: row.path,
+        exists: row.exists === true,
+        requirementCount: factNumber(row.requirementCount),
+      })),
+    isPlanningComplete: value.isPlanningComplete === true,
+    archiveTarget: typeof value.archiveTarget === 'string' && value.archiveTarget.length > 0 ? value.archiveTarget : null,
+    archiveTargetExists: typeof value.archiveTargetExists === 'boolean' ? value.archiveTargetExists : null,
+  }
+}
+
+/** Render one validation issue row (`[LEVEL] path:line — message`). */
+function factIssueLine(issue) {
+  const level = typeof issue?.level === 'string' ? issue.level : 'INFO'
+  const path = typeof issue?.path === 'string' ? issue.path : ''
+  const where = path.length > 0 ? ` ${path}${Number.isFinite(issue?.line) ? `:${issue.line}` : ''}` : ''
+  return `- [${level}]${where} — ${typeof issue?.message === 'string' ? issue.message : ''}`
+}
+
+/**
+ * Render the `Current facts` markdown block: validation counts and issues,
+ * artifact status, task progress with the pending task texts, per-delta
+ * operation counts, main spec existence/requirement counts, planning
+ * completeness and (for archive) the deterministic archive target.
+ */
+function workflowFactsBlock(kind, facts) {
+  const lines = ['## Current facts', '']
+  lines.push(`Validation: ${facts.errors} ERROR / ${facts.warnings} WARNING / ${facts.infos} INFO`)
+  if (facts.issues.length === 0) {
+    lines.push('- no validation issues')
+  } else {
+    for (const issue of facts.issues.slice(0, MAX_FACT_ISSUE_LINES)) lines.push(factIssueLine(issue))
+    if (facts.issues.length > MAX_FACT_ISSUE_LINES) {
+      lines.push(`- …and ${facts.issues.length - MAX_FACT_ISSUE_LINES} more issues (run /opsx-validate for the full list).`)
+    }
+  }
+  lines.push('')
+
+  lines.push('Artifacts:')
+  if (facts.artifacts.length === 0) {
+    lines.push('- none recorded')
+  } else {
+    for (const artifact of facts.artifacts) lines.push(`- ${artifact.id}: ${artifact.status}`)
+  }
+  lines.push('')
+
+  lines.push('Tasks:')
+  if (facts.tasks === null) {
+    lines.push('- none (the change has no tasks file yet)')
+  } else {
+    lines.push(`- ${facts.tasks.done}/${facts.tasks.total} checked, ${facts.tasks.pending.length} pending`)
+    if (facts.tasks.pending.length > 0) {
+      lines.push('Pending tasks:')
+      for (const text of facts.tasks.pending) lines.push(`- ${text}`)
+    }
+  }
+  lines.push('')
+
+  lines.push('Delta specs:')
+  if (facts.deltas.length === 0) {
+    lines.push('- none (there are no delta specs to merge)')
+  } else {
+    for (const delta of facts.deltas) {
+      const capability = delta.capability === null ? 'unknown capability' : `capability ${delta.capability}`
+      lines.push(
+        `- ${delta.path} — ${capability}: ADDED ${delta.added}, MODIFIED ${delta.modified}, REMOVED ${delta.removed}, RENAMED ${delta.renamed}`,
+      )
+    }
+  }
+  lines.push('')
+
+  lines.push('Main specs:')
+  if (facts.mainSpecs.length === 0) {
+    lines.push('- none (no delta capability maps to a durable main spec yet)')
+  } else {
+    for (const spec of facts.mainSpecs) {
+      lines.push(
+        `- ${spec.path} — ${spec.exists ? `exists, ${spec.requirementCount} requirements` : 'does not exist yet, 0 requirements'}`,
+      )
+    }
+  }
+  lines.push('')
+
+  lines.push(`Planning complete: ${facts.isPlanningComplete ? 'yes' : 'no'}`)
+  if (kind === 'archive') {
+    lines.push('')
+    if (facts.archiveTarget !== null) {
+      lines.push(`Archive target: ${facts.archiveTarget}`)
+      if (facts.archiveTargetExists !== null) {
+        lines.push(`Archive target exists: ${facts.archiveTargetExists ? 'yes' : 'no'}`)
+      }
+    } else {
+      lines.push('Archive target: openspec/changes/archive/<local-date>-<change-name>')
+    }
+  }
+  return lines.join('\n')
+}
+
+/** Finish contract for the sync AI workflow: stop on ERROR, confirm, merge, verify, validate. */
+function syncFinishContract(name) {
+  return [
+    '## Finish contract (sync)',
+    '',
+    '1. STOP gate: when `validation.errors > 0`, stop before any edit. Do not create, edit, move or delete any file; report every ERROR issue listed above with a suggested fix, then wait for the user.',
+    '2. Confirm first: summarize the intended merge per capability (which requirements are added, modified, removed or renamed and in which `openspec/specs/<capability>/spec.md`) and ask the user to confirm before editing any file. Proceed only after the user confirms.',
+    '3. Intelligent merge: follow the OPSX `sync-specs` workflow above and perform the intelligent merge by directly editing the durable main specs at `openspec/specs/<capability>/spec.md` (one file per capability). Do not edit anything under `openspec/changes/`, and do not archive or move the change in this workflow.',
+    '4. Structure check after each edit: the main spec keeps its title (`# <Capability> Specification`) and its `## Purpose` section, contains no delta operation headings (`## ADDED Requirements`, `## MODIFIED Requirements`, `## REMOVED Requirements`, `## RENAMED Requirements`), and every requirement is a `### Requirement: <name>` block with at least one `#### Scenario: <name>` sub-block.',
+    '5. Result check: the ADDED / MODIFIED / REMOVED / RENAMED results in the delta facts above are exactly represented in the main specs (ADDED appended, MODIFIED whole-block replaced, REMOVED deleted, RENAMED retitled) with no duplicate requirement names.',
+    '6. Then run `/opsx-validate` (add the change name for the change-level issues too) and fix any ERROR it reports before finishing.',
+    `7. Report: the main spec files you changed, the delta results applied, the final validation counts, and any remaining WARNINGs. Do not archive the change; archiving is a separate \`/opsx-archive ${name}\` workflow.`,
+  ].join('\n')
+}
+
+/** Finish contract for the archive AI workflow: confirm, merge or skip, validate, finalize. */
+function archiveFinishContract(name) {
+  return [
+    '## Finish contract (archive)',
+    '',
+    '1. Completion check first: inspect the artifact and task state above. If `Planning complete` is `no`, tasks are pending, or validation reports WARNINGs, summarize that state and ask the user to confirm they want to continue. Do not write, move or archive anything until the user confirms.',
+    '2. STOP gate: when `validation.errors > 0`, stop before any edit. Report every ERROR issue listed above with a suggested fix; do not merge specs, do not move or archive the change.',
+    '3. Choose the sync route with the user:',
+    '   - Intelligent merge (default): perform the OPSX merge described by the workflow above by directly editing `openspec/specs/<capability>/spec.md`; verify the title, `## Purpose`, absence of delta operation headings, the `### Requirement:` + `#### Scenario:` structure and the ADDED / MODIFIED / REMOVED / RENAMED results; then run `/opsx-validate` and fix any ERROR.',
+    '   - Skip sync: only when the main specs are already merged (or the change declares `skip_specs`); leave `openspec/specs/**` untouched.',
+    '4. Validate before finalizing: run `/opsx-validate` and make sure it reports no ERROR.',
+    `5. Finalize deterministically: run \`/opsx-archive ${name} --yes --skip-specs\`.`,
+    '   - `--yes` executes the deterministic archive; `--skip-specs` tells the deterministic engine the specs are already handled, so it only moves the change directory into `openspec/changes/archive/` and writes no main spec.',
+    '   - Do not move or delete files yourself, and do not run a merge a second time: the deterministic command must not merge the same deltas again.',
+    '6. Report the archive target, the main spec files changed by the merge (or that the sync was skipped), and any remaining WARNINGs.',
+  ].join('\n')
+}
+
+/**
+ * Compose one AI workflow prompt: vendored adapted OPSX skill text + engine
+ * facts + project context/rules/guidance + the explicit finish contract.
+ */
+async function buildOpsxWorkflowPrompt({ kind, changeName, schema = null, config = {}, change = null, facts = null }) {
+  const workflow = kind === 'archive' ? 'archive' : 'sync'
+  const name = typeof changeName === 'string' && changeName.length > 0
+    ? changeName
+    : typeof change?.name === 'string' && change.name.length > 0
+      ? change.name
+      : '<change-name>'
+  const skillName = WORKFLOW_SKILL[workflow]
+  const skill = await loadAdaptedSkill(skillName)
+  if (!skill || typeof skill.content !== 'string' || skill.content.trim().length === 0) {
+    throw new Error(`could not load the vendored OPSX workflow skill "${skillName}"`)
+  }
+  const parts = normalizeSchema(schema)
+  const definition = parts.definition
+  const schemaName = definition && typeof definition.name === 'string' && definition.name.length > 0
+    ? definition.name
+    : 'custom'
+  const source = parts.source !== null ? SCHEMA_SOURCE_LABELS[parts.source] ?? parts.source : 'unknown source'
+
+  const lines = [
+    workflow === 'sync'
+      ? `## OPSX sync workflow — merge the deltas of "${name}" into the main specs`
+      : `## OPSX archive workflow — confirm, sync and archive the change "${name}"`,
+    '',
+    `Change: ${name}`,
+    definition !== null
+      ? `Schema: ${schemaName} (${source}${parts.sourceVersion !== null ? ` v${parts.sourceVersion}` : ''})`
+      : 'Schema: unknown (the caller did not resolve one)',
+    `Workspace: ${CHANGE_ROOT}/${name}`,
+  ]
+  if (change?.metadata?.skip_specs === true) {
+    lines.push('Skip specs: yes (`skip_specs: true` — this change declares that its specs are skipped)')
+  }
+  const metadata = change?.metadata && typeof change.metadata === 'object' ? change.metadata : {}
+  if (typeof metadata.created === 'string' && metadata.created.length > 0) lines.push(`Created: ${metadata.created}`)
+  if (typeof metadata.goal === 'string' && metadata.goal.trim().length > 0) lines.push(`Goal: ${metadata.goal.trim()}`)
+  if (metadata.retire_capabilities === true) lines.push('Retire capabilities: yes (`retire_capabilities: true`)')
+  lines.push('')
+  lines.push(
+    `Follow the vendored upstream OPSX \`${skillName}\` workflow below as written. Its DSH adaptation section maps every upstream \`openspec ...\` command onto reading or editing workspace files, or onto a \`/opsx-*\` DSH command; use those file-semantics actions and never a CLI. Then apply the workflow to the current facts and satisfy the finish contract at the end.`,
+  )
+  lines.push('')
+  lines.push(`### Vendored workflow: ${skillName} (upstream OpenSpec 1.14.3, MIT)`)
+  lines.push('')
+  lines.push(skill.content.trim())
+  lines.push('')
+  lines.push('### End of vendored workflow')
+  lines.push('')
+  lines.push(workflowFactsBlock(workflow, normalizeWorkflowFacts(facts)))
+  lines.push('')
+
+  const context = contextBlock(config, workflow === 'sync' ? 'sync workflow constraints' : 'archive workflow constraints')
+  if (context.length > 0) lines.push(context, '')
+  const rules = rulesBlock(config, workflow)
+  if (rules.length > 0) lines.push(rules, '')
+  const guidance = operationGuidance(config, workflow)
+  if (guidance.length > 0) {
+    lines.push(`### Operation guidance (${workflow}.guidance, advisory)`)
+    lines.push(guidance)
+    lines.push('')
+  }
+
+  lines.push(workflow === 'sync' ? syncFinishContract(name) : archiveFinishContract(name))
+  return lines.join('\n')
+}
+
+/**
+ * Sync AI workflow prompt: the adapted vendored OPSX `sync-specs` skill body,
+ * the change's current engine facts, the project context/rules/guidance and the
+ * sync finish contract (stop on validation ERROR, intelligent-merge the main
+ * specs, verify the canonical structure, then run `/opsx-validate`).
+ *
+ * This builder never writes; it only reads the bundled vendored skill text.
+ *
+ * @param {object} options
+ * @param {string} [options.cwd] absolute workspace root (kept for symmetry with the other builders)
+ * @param {string} [options.changeName] change name (folder under openspec/changes/)
+ * @param {object} [options.schema] resolved schema wrapper or bare schema definition
+ * @param {object} [options.config] project config (`context`, `rules.sync`, `operations.sync.guidance`)
+ * @param {object} [options.change] ChangeState from the native engine
+ * @param {object} [options.facts] engine-derived facts (§10.4 shape)
+ * @returns {Promise<string>} model-facing prompt
+ */
+export async function buildSyncWorkflowPrompt({ cwd, changeName, schema = null, config = {}, change = null, facts = null } = {}) {
+  return buildOpsxWorkflowPrompt({ kind: 'sync', changeName, schema, config, change, facts })
+}
+
+/**
+ * Archive AI workflow prompt: the adapted vendored OPSX `archive-change` skill
+ * body, completion facts (artifacts, tasks, deltas, main specs, archive target)
+ * and the archive finish contract (confirm completion, stop on validation
+ * ERROR, intelligent-merge or skip sync, validate, then finalize with
+ * `/opsx-archive <name> --yes --skip-specs`).
+ *
+ * This builder never writes; it only reads the bundled vendored skill text.
+ *
+ * @param {object} options
+ * @param {string} [options.cwd] absolute workspace root (kept for symmetry with the other builders)
+ * @param {string} [options.changeName] change name (folder under openspec/changes/)
+ * @param {object} [options.schema] resolved schema wrapper or bare schema definition
+ * @param {object} [options.config] project config (`context`, `rules.archive`, `operations.archive.guidance`)
+ * @param {object} [options.change] ChangeState from the native engine
+ * @param {object} [options.facts] engine-derived facts (§10.4 shape, including `archiveTarget`)
+ * @returns {Promise<string>} model-facing prompt
+ */
+export async function buildArchiveWorkflowPrompt({ cwd, changeName, schema = null, config = {}, change = null, facts = null } = {}) {
+  return buildOpsxWorkflowPrompt({ kind: 'archive', changeName, schema, config, change, facts })
+}

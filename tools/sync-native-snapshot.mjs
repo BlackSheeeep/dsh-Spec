@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * Refresh the bundled OpenSpec `spec-driven` snapshot (developer tool, never
- * loaded by the plugin host).
+ * Refresh the bundled OpenSpec snapshot (developer tool, never loaded by the
+ * plugin host).
  *
- * The plugin ships a pinned copy of the upstream OpenSpec 1.14.3 schema and
- * templates under `src/native-snapshot/` and uses it only when a project does
- * not define the same schema itself. This script copies the upstream files
- * verbatim (normalizing line endings to LF so the snapshot is deterministic)
- * and refreshes the `Upstream version:` / `Upstream commit:` markers in
- * `src/native-snapshot/ATTRIBUTION.md`.
+ * The plugin ships a pinned copy of the upstream OpenSpec 1.14.3 schema,
+ * templates and the twelve OPSX workflow skills under `src/native-snapshot/`
+ * and uses them only as a fallback when a project does not define the same
+ * schema itself / when no native `openspec-*` skill exists. This script copies
+ * the upstream files verbatim (normalizing line endings to LF so the snapshot
+ * is deterministic) and refreshes every `Upstream version:` / `Upstream
+ * commit:` marker in `src/native-snapshot/ATTRIBUTION.md`.
  *
  * Usage:
  *   node tools/sync-native-snapshot.mjs --source <path-to-openspec-repo>
@@ -21,8 +22,10 @@
  *   --help              Show usage
  *
  * `--source` may point at an OpenSpec repository checkout (containing
- * `schemas/spec-driven/`) or directly at the `schemas/spec-driven/` directory.
- * The command exits non-zero with a clear message when the source is missing.
+ * `schemas/spec-driven/` and `skills/`), directly at the `schemas/spec-driven/`
+ * directory, or at a directory laid out like the committed snapshot
+ * (`spec-driven/` + `skills/`). The command exits non-zero with a clear message
+ * when the source, or a required part of it, is missing.
  *
  * @module dsh-spec/sync-native-snapshot
  */
@@ -31,8 +34,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFile
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { VENDORED_SKILLS } from '../src/native/skill-adaptation.js'
+
 /** Bundled schema name copied from upstream. */
 export const SNAPSHOT_SCHEMA = 'spec-driven'
+
+/** Bundled workflow skills directory, relative to the snapshot root. */
+export const SNAPSHOT_SKILLS_DIR = 'skills'
 
 /** Attribution file that records the pinned upstream revision. */
 export const ATTRIBUTION_FILE = 'ATTRIBUTION.md'
@@ -50,9 +58,9 @@ const UPSTREAM_PACKAGE_NAME = '@fission-ai/openspec'
 const USAGE = [
   'Usage: node tools/sync-native-snapshot.mjs --source <path-to-openspec-repo> [--version x.y.z] [--commit <sha>] [--dry-run]',
   '',
-  'Copies <repo>/schemas/spec-driven/{schema.yaml,templates/*} into src/native-snapshot/spec-driven/',
-  'and refreshes the pinned version/commit markers in src/native-snapshot/ATTRIBUTION.md.',
-  'The source can also be OPENSPEC_SOURCE in the environment.',
+  'Copies <repo>/schemas/spec-driven/{schema.yaml,templates/*} and the twelve <repo>/skills/<name>/SKILL.md',
+  'workflow skills into src/native-snapshot/, and refreshes the pinned version/commit markers in',
+  'src/native-snapshot/ATTRIBUTION.md. The source can also be OPENSPEC_SOURCE in the environment.',
 ].join('\n')
 
 /** Normalize file content to LF so the snapshot does not depend on the checkout platform. */
@@ -136,15 +144,44 @@ export function parseSyncArgs(argv = process.argv.slice(2), env = process.env) {
 /**
  * Resolve the upstream `schemas/spec-driven` directory from a source path.
  *
- * @param {string} source OpenSpec repository root or a `schemas/spec-driven` directory
+ * Accepts an OpenSpec checkout root (`<root>/schemas/spec-driven`), a directory
+ * laid out like the committed snapshot (`<root>/spec-driven`), or a
+ * `spec-driven` schema directory itself.
+ *
+ * @param {string} source OpenSpec repository root or a spec-driven schema directory
  * @returns {string|null} absolute schema directory, or null when not found
  */
 export function resolveSourceSchemaDir(source) {
   if (typeof source !== 'string' || source.trim().length === 0) return null
   const root = resolve(source.trim())
-  const candidates = [join(root, 'schemas', SNAPSHOT_SCHEMA), root]
+  const candidates = [join(root, 'schemas', SNAPSHOT_SCHEMA), join(root, SNAPSHOT_SCHEMA), root]
   for (const candidate of candidates) {
     if (existsSync(join(candidate, 'schema.yaml'))) return candidate
+  }
+  return null
+}
+
+/**
+ * Resolve the upstream `skills/<name>/SKILL.md` directory for a schema source.
+ *
+ * The skills live at `<openspec-repo>/skills`, a sibling of
+ * `<openspec-repo>/schemas`, so the search walks up from the resolved schema
+ * directory (which also covers a snapshot mirror laid out as
+ * `<root>/spec-driven` + `<root>/skills`). Returns null unless every
+ * {@link VENDORED_SKILLS} entry is present.
+ *
+ * @param {string} schemaDir Absolute (or resolvable) `spec-driven` schema directory
+ * @returns {string|null} absolute skills directory, or null when incomplete
+ */
+export function resolveSourceSkillsDir(schemaDir) {
+  if (typeof schemaDir !== 'string' || schemaDir.trim().length === 0) return null
+  let current = resolve(schemaDir.trim())
+  for (let depth = 0; depth < 6; depth += 1) {
+    const candidate = join(current, SNAPSHOT_SKILLS_DIR)
+    if (VENDORED_SKILLS.every((name) => existsSync(join(candidate, name, 'SKILL.md')))) return candidate
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
   }
   return null
 }
@@ -239,6 +276,10 @@ export function readAttributionMarkers(text) {
 /**
  * Refresh the machine-readable revision markers in the attribution text.
  *
+ * The attribution file records the same pinned revision twice (the schema and
+ * template snapshot section, and the vendored workflow skills section), so
+ * every `Upstream version:` / `Upstream commit:` line is rewritten in place.
+ *
  * @param {string} text existing attribution markdown
  * @param {{ version?: string|null, commit?: string|null }} revision values to record
  * @returns {{ text: string, warnings: string[] }}
@@ -249,14 +290,22 @@ export function refreshAttribution(text, revision = {}) {
   const version = typeof revision.version === 'string' && revision.version.trim().length > 0 ? revision.version.trim() : null
   const commit = typeof revision.commit === 'string' && revision.commit.trim().length > 0 ? revision.commit.trim() : null
   if (version !== null) {
-    const versionPattern = /^([-*]\s*Upstream version:\s*)\S+\s*$/m
-    if (versionPattern.test(output)) output = output.replace(versionPattern, `$1${version}`)
-    else warnings.push('ATTRIBUTION.md has no "Upstream version:" marker to refresh')
+    const versionPattern = /^([-*]\s*Upstream version:\s*)\S+\s*$/gm
+    const matches = output.match(versionPattern)
+    if (matches !== null && matches.length > 0) {
+      output = output.replace(versionPattern, `$1${version}`)
+    } else {
+      warnings.push('ATTRIBUTION.md has no "Upstream version:" marker to refresh')
+    }
   }
   if (commit !== null) {
-    const commitPattern = /^([-*]\s*Upstream commit:\s*)[0-9a-f]{7,40}\s*$/im
-    if (commitPattern.test(output)) output = output.replace(commitPattern, `$1${commit}`)
-    else warnings.push('ATTRIBUTION.md has no "Upstream commit:" marker to refresh')
+    const commitPattern = /^([-*]\s*Upstream commit:\s*)[0-9a-f]{7,40}\s*$/gim
+    const matches = output.match(commitPattern)
+    if (matches !== null && matches.length > 0) {
+      output = output.replace(commitPattern, `$1${commit}`)
+    } else {
+      warnings.push('ATTRIBUTION.md has no "Upstream commit:" marker to refresh')
+    }
   }
   return { text: output, warnings }
 }
@@ -264,10 +313,19 @@ export function refreshAttribution(text, revision = {}) {
 /**
  * Build the snapshot refresh plan without writing anything (testable off-disk).
  *
- * @param {string} source OpenSpec repository root or `schemas/spec-driven` directory
- * @param {{ targetRoot?: string, version?: string|null, commit?: string|null }} [options]
+ * Plans the `spec-driven` schema + templates and the twelve vendored workflow
+ * skills; each entry records the upstream content (LF-normalized) and whether
+ * the committed snapshot already matches it.
+ *
+ * @param {string} source OpenSpec repository root, `spec-driven` schema directory,
+ *   or a snapshot-mirror directory (`spec-driven/` + `skills/`)
+ * @param {{ targetRoot?: string, version?: string|null, commit?: string|null,
+ *           sourceSkillsDir?: string|null }} [options] `sourceSkillsDir` overrides
+ *   the skills source (test seam; null forces the "missing skills" failure)
  * @returns {{ ok: boolean, error: string|null, sourceSchemaDir: string|null,
- *            targetSchemaDir: string|null, files: Array<{ rel: string, target: string, content: string, changed: boolean }>,
+ *            sourceSkillsDir: string|null, targetSchemaDir: string|null,
+ *            targetSkillsDir: string,
+ *            files: Array<{ rel: string, target: string, content: string, changed: boolean }>,
  *            attribution: { target: string, content: string, changed: boolean, version: string|null, commit: string|null,
  *                           warnings: string[] } | null,
  *            warnings: string[] }}
@@ -275,11 +333,15 @@ export function refreshAttribution(text, revision = {}) {
 export function planSnapshot(source, options = {}) {
   const targetRoot = options.targetRoot ?? SNAPSHOT_ROOT
   const schemaDir = resolveSourceSchemaDir(source)
+  const targetSchemaDir = join(targetRoot, SNAPSHOT_SCHEMA)
+  const targetSkillsDir = join(targetRoot, SNAPSHOT_SKILLS_DIR)
   const empty = {
     ok: false,
     error: null,
     sourceSchemaDir: null,
-    targetSchemaDir: join(targetRoot, SNAPSHOT_SCHEMA),
+    sourceSkillsDir: null,
+    targetSchemaDir,
+    targetSkillsDir,
     files: [],
     attribution: null,
     warnings: [],
@@ -287,7 +349,7 @@ export function planSnapshot(source, options = {}) {
   if (schemaDir === null) {
     return {
       ...empty,
-      error: `snapshot source not found: ${String(source ?? '')} (expected <source>/schemas/${SNAPSHOT_SCHEMA}/schema.yaml or a ${SNAPSHOT_SCHEMA} schema directory)`,
+      error: `snapshot source not found: ${String(source ?? '')} (expected <source>/schemas/${SNAPSHOT_SCHEMA}/schema.yaml, <source>/${SNAPSHOT_SCHEMA}/schema.yaml or a ${SNAPSHOT_SCHEMA} schema directory)`,
     }
   }
   const templatesDir = join(schemaDir, 'templates')
@@ -295,14 +357,45 @@ export function planSnapshot(source, options = {}) {
     return { ...empty, sourceSchemaDir: schemaDir, error: `snapshot source is incomplete: missing ${join(templatesDir, '*.md')}` }
   }
 
-  const targetSchemaDir = join(targetRoot, SNAPSHOT_SCHEMA)
+  const skillsDir =
+    typeof options.sourceSkillsDir === 'string' && options.sourceSkillsDir.trim().length > 0
+      ? resolve(options.sourceSkillsDir.trim())
+      : options.sourceSkillsDir === null
+        ? null
+        : resolveSourceSkillsDir(schemaDir)
+  const missingSkills =
+    skillsDir === null
+      ? [...VENDORED_SKILLS]
+      : VENDORED_SKILLS.filter((name) => !existsSync(join(skillsDir, name, 'SKILL.md')))
+  if (skillsDir === null || missingSkills.length > 0) {
+    const expectedDir = join(dirname(schemaDir), SNAPSHOT_SKILLS_DIR)
+    return {
+      ...empty,
+      sourceSchemaDir: schemaDir,
+      sourceSkillsDir: skillsDir,
+      error:
+        skillsDir === null
+          ? `snapshot source is incomplete: missing workflow skills (expected ${VENDORED_SKILLS.length} skills/<name>/SKILL.md files under ${expectedDir} or an ancestor ${SNAPSHOT_SKILLS_DIR}/ directory)`
+          : `snapshot source is incomplete: missing workflow skills ${missingSkills.join(', ')} under ${skillsDir}`,
+    }
+  }
+
+  /** @type {Array<{ rel: string, abs: string, target: string }>} */
   const sources = [
-    { rel: 'schema.yaml', abs: join(schemaDir, 'schema.yaml') },
-    ...listFiles(templatesDir).map((rel) => ({ rel: `templates/${rel}`, abs: join(templatesDir, rel) })),
+    { rel: 'schema.yaml', abs: join(schemaDir, 'schema.yaml'), target: join(targetSchemaDir, 'schema.yaml') },
+    ...listFiles(templatesDir).map((rel) => ({
+      rel: `templates/${rel}`,
+      abs: join(templatesDir, rel),
+      target: join(targetSchemaDir, 'templates', rel),
+    })),
+    ...VENDORED_SKILLS.map((name) => ({
+      rel: `${SNAPSHOT_SKILLS_DIR}/${name}/SKILL.md`,
+      abs: join(skillsDir, name, 'SKILL.md'),
+      target: join(targetSkillsDir, name, 'SKILL.md'),
+    })),
   ]
-  const files = sources.map(({ rel, abs }) => {
+  const files = sources.map(({ rel, abs, target }) => {
     const content = normalizeEol(readFileSync(abs, 'utf8'))
-    const target = join(targetSchemaDir, ...rel.split('/'))
     let existing = null
     try {
       existing = normalizeEol(readFileSync(target, 'utf8'))
@@ -346,7 +439,9 @@ export function planSnapshot(source, options = {}) {
     ok: true,
     error: null,
     sourceSchemaDir: schemaDir,
+    sourceSkillsDir: skillsDir,
     targetSchemaDir,
+    targetSkillsDir,
     files,
     attribution,
     warnings,
@@ -416,7 +511,9 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   const attributionChanged = plan.attribution?.changed === true
   if (options.dryRun) {
     console.log(`Snapshot source: ${plan.sourceSchemaDir}`)
+    console.log(`Skills source: ${plan.sourceSkillsDir}`)
     console.log(`Target: ${plan.targetSchemaDir}`)
+    console.log(`Skills target: ${plan.targetSkillsDir}`)
     console.log(changedFiles.length === 0 && !attributionChanged ? 'Already up to date.' : `Would update: ${[...changedFiles, ...(attributionChanged ? [ATTRIBUTION_FILE] : [])].join(', ')}`)
     return 0
   }

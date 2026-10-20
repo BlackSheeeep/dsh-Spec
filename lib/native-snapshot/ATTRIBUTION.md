@@ -1,8 +1,9 @@
 # Native OpenSpec snapshot attribution
 
 This directory vendors a pinned subset of the upstream OpenSpec project so that
-dsh-spec can compose native artifact instructions and templates without calling
-the `openspec` CLI and without a network connection.
+dsh-spec can compose native artifact instructions, templates and the OPSX
+workflow fallback skills without calling the `openspec` CLI and without a
+network connection.
 
 This snapshot is a **fallback only**: a project schema at
 `openspec/schemas/<name>/schema.yaml` always wins over the bundled copy. See
@@ -35,6 +36,54 @@ intent), `<context>`, artifact `<rules>`, template body, dependency status,
 unlocks, and the phase boundary. The snapshot version is exported as
 `SNAPSHOT_VERSION` from that module and is `1.14.3`.
 
+## Vendored workflow skills
+
+The same pinned upstream revision provides twelve agent workflow skills. They are
+vendored verbatim from `skills/<name>/SKILL.md` in the upstream repository (file
+bytes preserved, line endings normalized to LF) into
+`src/native-snapshot/skills/<name>/SKILL.md`:
+
+- `openspec-explore`
+- `openspec-propose`
+- `openspec-apply-change`
+- `openspec-update-change`
+- `openspec-sync-specs`
+- `openspec-archive-change`
+- `openspec-new-change`
+- `openspec-continue-change`
+- `openspec-ff-change`
+- `openspec-verify-change`
+- `openspec-bulk-archive-change`
+- `openspec-onboard`
+
+Upstream location and pinned revision:
+
+- Upstream skills directory: `skills/` (the committed skills.sh distribution,
+  generated upstream from `src/core/templates/workflows/*.ts`)
+- Upstream repository: https://github.com/Fission-AI/OpenSpec
+- Upstream version: 1.14.3
+- Upstream commit: c794978f4f8845ce59693373c9dd882ee776588c
+- License: MIT (it is the same MIT grant reproduced below)
+
+The upstream files are generated, so do not edit the vendored copies by hand.
+The extraction/refresh path is `tools/sync-native-snapshot.mjs`: with
+`--source <OpenSpec repo>` it copies `schemas/spec-driven/**` plus the twelve
+`skills/<name>/SKILL.md` files into this directory and refreshes every
+`Upstream version:` and `Upstream commit:` marker in this file.
+
+At runtime `src/native/skill-adaptation.js` reads the vendored files and rewrites
+only their frontmatter: `license: MIT`, `allowed-tools` and `compatibility`
+become the DSH file-semantics equivalents (file tools only, no CLI), and
+`metadata` records `vendoredFrom: Fission-AI/OpenSpec`,
+`upstreamVersion: 1.14.3`, `upstreamCommit: c794978…`, `license: MIT` and
+`adaptedFor: dsh-spec`. A fixed `## DSH adaptation` section is inserted between
+the frontmatter and the upstream body, mapping each `openspec …` command used by
+the workflow to reading/editing workspace files or to the matching `/opsx-*`
+DSH command; the CLI is not installed. The upstream body after that section is
+kept byte-for-byte verbatim. The adapted skills are served as the fallback skill
+catalog only while no native `openspec-*` skill exists in the workspace, and the
+plugin never writes, moves or deletes user skill files.
+
 ## Refresh instructions
 
 The snapshot is refreshed by a dev-time script (never at runtime, never by the
@@ -46,12 +95,14 @@ node tools/sync-native-snapshot.mjs --source <path-to-openspec-repo>
 OPENSPEC_SOURCE=<path-to-openspec-repo> node tools/sync-native-snapshot.mjs
 ```
 
-The script reads `<openspec-repo>/schemas/spec-driven/schema.yaml` plus every
-file under `<openspec-repo>/schemas/spec-driven/templates/`, copies them here,
-and refreshes the `Upstream version:` and `Upstream commit:` lines above. The
-version is read from the upstream `package.json`; the commit from the upstream
-git checkout (`.git/HEAD`), falling back to the existing marker when neither is
-available. Run the snapshot tests afterward:
+The script reads `<openspec-repo>/schemas/spec-driven/schema.yaml`, every file
+under `<openspec-repo>/schemas/spec-driven/templates/`, and all twelve
+`<openspec-repo>/skills/<name>/SKILL.md` workflow files, copies them here
+(normalizing line endings to LF), and refreshes every `Upstream version:` and
+`Upstream commit:` marker in this file. The version is read from the upstream
+`package.json`; the commit from the upstream git checkout (`.git/HEAD`),
+falling back to the existing markers when neither is available. Run the snapshot
+tests afterward:
 
 ```bash
 node --test --test-isolation=none tests/snapshot.test.mjs
@@ -62,8 +113,8 @@ machine-readable — the refresh script updates them in place.
 
 ## License
 
-OpenSpec is licensed under the MIT License. The vendored schema and templates
-are reproduced under that license:
+OpenSpec is licensed under the MIT License. The vendored schema, templates and
+workflow skills are reproduced under that license:
 
 ```text
 MIT License

@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { registerCommands, selectChange } from '../src/commands.js'
+import { registerCommands, collectWorkflowFacts, selectChange } from '../src/commands.js'
 
 /** Fake absolute workspace root. */
 const CWD = 'C:/workspace'
@@ -252,6 +252,14 @@ function createHarness(overrides = {}) {
       buildUpdatePrompt: async (input) => {
         calls.prompt.update = input
         return 'UPDATE_PROMPT'
+      },
+      buildSyncWorkflowPrompt: async (input) => {
+        calls.prompt.syncWorkflow = input
+        return 'SYNC_WORKFLOW_PROMPT'
+      },
+      buildArchiveWorkflowPrompt: async (input) => {
+        calls.prompt.archiveWorkflow = input
+        return 'ARCHIVE_WORKFLOW_PROMPT'
       },
     },
   }
@@ -657,7 +665,7 @@ test('opsx-update returns candidates when several changes are active and none na
   assert.equal(h.agent.messages.length, 0)
 })
 
-test('opsx-sync previews without writing and normalizes delta paths', async () => {
+test('opsx-sync --dry-run previews without writing and normalizes delta paths', async () => {
   const h = createHarness({
     state: {
       validateChangeByName: async (cwd, name) => ({
@@ -670,7 +678,7 @@ test('opsx-sync previews without writing and normalizes delta paths', async () =
       }),
     },
   })
-  const result = await h.run('opsx-sync', 'add-x')
+  const result = await h.run('opsx-sync', 'add-x --dry-run')
   assert.equal(result.kind, 'success')
   assert.match(result.text, /同步预览/)
   assert.match(result.text, /SYNC_PREVIEW/)
@@ -678,13 +686,72 @@ test('opsx-sync previews without writing and normalizes delta paths', async () =
   assert.match(result.text, /\/opsx-sync add-x --yes/)
   assert.equal(h.calls.applySyncPlan.length, 0)
   assert.equal(h.calls.planSync.length, 1)
+  assert.equal(h.agent.messages.length, 0, '--dry-run never submits a model message')
 
   const planInput = h.calls.planSync[0]
   assert.equal(planInput.changeName, 'add-x')
   assert.equal(planInput.retireCapabilities, false)
   assert.deepEqual(planInput.mainSpecs, [{ path: 'openspec/specs/cap/spec.md', text: '# Main Spec\n' }])
   assert.equal(planInput.deltas[0].path, 'openspec/changes/add-x/specs/cap/spec.md')
-  assert.equal(h.agent.messages.length, 0)
+})
+
+test('opsx-sync default submits the OPSX AI workflow, plans nothing and writes nothing', async () => {
+  const h = createHarness({
+    state: {
+      validateChangeByName: async (cwd, name) => ({
+        name,
+        validation: cleanValidation({
+          warnings: 1,
+          issues: [{ level: 'WARNING', path: 'tasks.md', line: 2, message: 'task numbering gap' }],
+        }),
+        metadata: {},
+        schemaName: 'spec-driven',
+        deltas: [
+          {
+            path: 'specs/cap/spec.md',
+            text: 'delta text',
+            parsed: { operations: { ADDED: [{}], MODIFIED: [], REMOVED: [], RENAMED: [] } },
+          },
+        ],
+        tasks: { total: 3, done: 1, items: [{ id: '1.1', text: 'first', done: true }, { id: '1.2', text: 'second', done: false }] },
+      }),
+    },
+  })
+  const result = await h.run('opsx-sync', 'add-x')
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /已发送 OPSX 同步工作流：add-x/)
+  assert.match(result.text, /命令本身没有写入任何文件/)
+  assert.match(result.text, /1 个 WARNING/)
+
+  // The workflow prompt was composed from engine facts instead of a merge plan.
+  const args = h.calls.prompt.syncWorkflow
+  assert.equal(args.changeName, 'add-x')
+  assert.ok(args.schema?.schema, 'resolved schema wrapper is passed to the workflow builder')
+  assert.equal(args.config.schema, 'spec-driven')
+  assert.equal(args.change.name, 'add-x')
+  assert.equal(args.facts.validation.warnings, 1)
+  assert.deepEqual(args.facts.artifacts[0], { id: 'proposal', status: 'done' })
+  assert.deepEqual(args.facts.tasks, { total: 3, done: 1, pending: ['second'] })
+  assert.equal(args.facts.deltas.length, 1)
+  assert.equal(args.facts.deltas[0].path, 'openspec/changes/add-x/specs/cap/spec.md')
+  assert.equal(args.facts.deltas[0].capability, 'cap')
+  assert.equal(args.facts.deltas[0].added, 1)
+  assert.deepEqual(args.facts.mainSpecs, [
+    { path: 'openspec/specs/cap/spec.md', capability: 'cap', exists: true, requirementCount: 1 },
+  ])
+  assert.equal(args.facts.isPlanningComplete, false)
+  assert.equal(args.facts.archiveTarget, null)
+
+  assert.equal(h.calls.planSync.length, 0, 'the AI path composes no deterministic plan')
+  assert.equal(h.calls.applySyncPlan.length, 0)
+  assert.equal(h.calls.writes.length, 0)
+
+  // The submitted message is the ordinary user-message shape.
+  assert.equal(h.agent.messages.length, 1)
+  const message = h.agent.messages[0]
+  assert.match(message.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+  assert.equal(message.role, 'user')
+  assert.deepEqual(message.content, [{ type: 'text', text: 'SYNC_WORKFLOW_PROMPT' }])
 })
 
 test('opsx-sync --yes applies the merge and reports written files', async () => {
@@ -697,30 +764,42 @@ test('opsx-sync --yes applies the merge and reports written files', async () => 
   assert.equal(h.calls.applySyncPlan.length, 1)
   assert.equal(h.calls.planSync[0].changeName, 'add-x')
   assert.equal(h.agent.messages.length, 0)
+  assert.equal(h.calls.prompt.syncWorkflow, undefined, 'deterministic path produces no AI workflow prompt')
 })
 
-test('opsx-sync refuses on native validation ERROR without planning the merge', async () => {
-  const h = createHarness({
-    state: {
-      validateChangeByName: async (cwd, name) => ({
-        name,
-        validation: cleanValidation({
-          errors: 1,
-          issues: [{ level: 'ERROR', path: 'proposal.md', line: 4, message: 'Why is empty' }],
-        }),
-        metadata: {},
-        schemaName: 'spec-driven',
-        deltas: [],
-        tasks: null,
+test('opsx-sync refuses native validation ERROR before any work on both paths', async () => {
+  const invalidState = {
+    validateChangeByName: async (cwd, name) => ({
+      name,
+      validation: cleanValidation({
+        errors: 1,
+        issues: [{ level: 'ERROR', path: 'proposal.md', line: 4, message: 'Why is empty' }],
       }),
-    },
-  })
-  const result = await h.run('opsx-sync', 'add-x --yes')
-  assert.equal(result.kind, 'error')
-  assert.match(result.text, /拒绝同步/)
-  assert.match(result.text, /\[ERROR\] proposal\.md:4 — Why is empty/)
-  assert.equal(h.calls.planSync.length, 0)
-  assert.equal(h.calls.applySyncPlan.length, 0)
+      metadata: {},
+      schemaName: 'spec-driven',
+      deltas: [],
+      tasks: null,
+    }),
+  }
+
+  // AI (default) path: refused without submitting a workflow prompt.
+  const aiPath = createHarness({ state: invalidState })
+  const aiResult = await aiPath.run('opsx-sync', 'add-x')
+  assert.equal(aiResult.kind, 'error')
+  assert.match(aiResult.text, /拒绝同步/)
+  assert.match(aiResult.text, /\[ERROR\] proposal\.md:4 — Why is empty/)
+  assert.equal(aiPath.agent.messages.length, 0)
+  assert.equal(aiPath.calls.prompt.syncWorkflow, undefined)
+  assert.equal(aiPath.calls.planSync.length, 0)
+
+  // Deterministic path: same refusal, nothing planned or applied.
+  const deterministic = createHarness({ state: invalidState })
+  const yesResult = await deterministic.run('opsx-sync', 'add-x --yes')
+  assert.equal(yesResult.kind, 'error')
+  assert.match(yesResult.text, /拒绝同步/)
+  assert.equal(deterministic.calls.planSync.length, 0)
+  assert.equal(deterministic.calls.applySyncPlan.length, 0)
+  assert.equal(deterministic.agent.messages.length, 0)
 })
 
 test('opsx-sync reports validation WARNINGs without blocking the write', async () => {
@@ -763,7 +842,7 @@ test('opsx-sync refuses an unsafe merge plan', async () => {
   assert.equal(h.calls.applySyncPlan.length, 0)
 })
 
-test('opsx-sync reports skip_specs without planning a merge', async () => {
+test('opsx-sync reports skip_specs without planning a merge or submitting a prompt', async () => {
   const h = createHarness({
     state: {
       computeWorkspaceState: async () =>
@@ -775,44 +854,62 @@ test('opsx-sync reports skip_specs without planning a merge', async () => {
   const result = await h.run('opsx-sync', 'add-x')
   assert.equal(result.kind, 'success')
   assert.match(result.text, /skip_specs/)
+  assert.match(result.text, /无需执行 sync/)
   assert.equal(h.calls.planSync.length, 0)
+  assert.equal(h.agent.messages.length, 0)
 })
 
-test('opsx-archive refuses incomplete tasks with the pending list', async () => {
-  const h = createHarness({
-    state: {
-      validateChangeByName: async (cwd, name) => ({
-        name,
-        validation: cleanValidation(),
-        metadata: {},
-        schemaName: 'spec-driven',
-        deltas: [],
-        tasks: {
-          total: 3,
-          done: 1,
-          items: [
-            { id: '1.1', text: '1.1 create types', done: true, depth: 0 },
-            { id: '1.2', text: 'build parser', done: false, depth: 0 },
-            { id: '2', text: '2 write tests', done: false, depth: 0 },
-          ],
-        },
-      }),
+/** validateChangeByName fake with pending tasks, shared by the incomplete-task tests. */
+function pendingTasksValidation() {
+  return async (cwd, name) => ({
+    name,
+    validation: cleanValidation(),
+    metadata: {},
+    schemaName: 'spec-driven',
+    deltas: [],
+    tasks: {
+      total: 3,
+      done: 1,
+      items: [
+        { id: '1.1', text: '1.1 create types', done: true, depth: 0 },
+        { id: '1.2', text: 'build parser', done: false, depth: 0 },
+        { id: '2', text: '2 write tests', done: false, depth: 0 },
+      ],
     },
   })
-  const result = await h.run('opsx-archive', 'add-x --yes')
-  assert.equal(result.kind, 'error')
+}
+
+test('opsx-archive default submits the OPSX AI workflow with completion facts and moves nothing', async () => {
+  const h = createHarness({ state: { validateChangeByName: pendingTasksValidation() } })
+  const result = await h.run('opsx-archive', 'add-x')
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /已发送 OPSX 归档工作流：add-x/)
+  assert.match(result.text, /归档目标 openspec\/changes\/archive\/2026-10-20-add-x/)
   assert.match(result.text, /2 项任务未完成（1\/3）/)
-  assert.match(result.text, /1\.2 build parser/)
-  // The native parser keeps the id inside `text`; the refusal must not duplicate it.
-  assert.match(result.text, /2 write tests/)
-  assert.equal(result.text.includes('2 2 write tests'), false)
+  assert.match(result.text, /命令本身没有写入或移动任何文件/)
+
+  const args = h.calls.prompt.archiveWorkflow
+  assert.equal(args.changeName, 'add-x')
+  assert.ok(args.schema?.schema)
+  assert.equal(args.change.name, 'add-x')
+  assert.equal(args.facts.isPlanningComplete, false)
+  assert.equal(args.facts.archiveTarget, 'openspec/changes/archive/2026-10-20-add-x')
+  assert.equal(args.facts.archiveTargetExists, false)
+  assert.deepEqual(args.facts.tasks, { total: 3, done: 1, pending: ['build parser', '2 write tests'] })
+  assert.deepEqual(args.facts.artifacts.map((row) => row.id), ['proposal', 'specs', 'design', 'tasks'])
+
+  assert.equal(h.calls.planSync.length, 0, 'the AI path composes no deterministic merge plan')
   assert.equal(h.calls.planArchive.length, 0)
   assert.equal(h.calls.executeArchive.length, 0)
+
+  assert.equal(h.agent.messages.length, 1)
+  assert.equal(h.agent.messages[0].role, 'user')
+  assert.deepEqual(h.agent.messages[0].content, [{ type: 'text', text: 'ARCHIVE_WORKFLOW_PROMPT' }])
 })
 
-test('opsx-archive previews without moving anything and passes the merge plan', async () => {
+test('opsx-archive --dry-run previews without moving anything and passes the merge plan', async () => {
   const h = createHarness()
-  const result = await h.run('opsx-archive', 'add-x')
+  const result = await h.run('opsx-archive', 'add-x --dry-run')
   assert.equal(result.kind, 'success')
   assert.match(result.text, /归档预览/)
   assert.match(result.text, /ARCHIVE_PREVIEW/)
@@ -820,6 +917,7 @@ test('opsx-archive previews without moving anything and passes the merge plan', 
   assert.match(result.text, /\/opsx-archive add-x --yes/)
   assert.equal(h.calls.executeArchive.length, 0)
   assert.equal(h.calls.planSync.length, 1)
+  assert.equal(h.agent.messages.length, 0, '--dry-run never submits a model message')
 
   const planInput = h.calls.planArchive[0]
   assert.equal(planInput.changeName, 'add-x')
@@ -827,6 +925,30 @@ test('opsx-archive previews without moving anything and passes the merge plan', 
   assert.equal(planInput.targetExists, false)
   assert.equal(planInput.metadata.schema, 'spec-driven')
   assert.ok(planInput.syncPlan?.ok)
+})
+
+test('opsx-archive --yes warns about incomplete tasks and continues (upstream CLI parity)', async () => {
+  const h = createHarness({ state: { validateChangeByName: pendingTasksValidation() } })
+  const result = await h.run('opsx-archive', 'add-x --yes')
+  assert.equal(result.kind, 'success', 'incomplete tasks no longer block the deterministic archive')
+  assert.match(result.text, /警告/)
+  assert.match(result.text, /2 项任务未完成（1\/3）/)
+  assert.match(result.text, /1\.2 build parser/)
+  assert.match(result.text, /2 write tests/)
+  assert.equal(result.text.includes('2 2 write tests'), false, 'the parser keeps the id inside the text; do not duplicate it')
+  assert.match(result.text, /已归档变更 add-x → openspec\/changes\/archive\/2026-10-20-add-x/)
+  assert.equal(h.calls.executeArchive.length, 1)
+  assert.equal(h.agent.messages.length, 0)
+})
+
+test('opsx-archive --dry-run warns about incomplete tasks but still only previews', async () => {
+  const h = createHarness({ state: { validateChangeByName: pendingTasksValidation() } })
+  const result = await h.run('opsx-archive', '--dry-run add-x')
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /归档预览/)
+  assert.match(result.text, /2 项任务未完成（1\/3）/)
+  assert.equal(h.calls.executeArchive.length, 0)
+  assert.equal(h.agent.messages.length, 0)
 })
 
 test('opsx-archive --yes executes the archive and reports the target', async () => {
@@ -839,27 +961,55 @@ test('opsx-archive --yes executes the archive and reports the target', async () 
   assert.equal(h.calls.executeArchive.length, 1)
   assert.equal(h.calls.executeArchive[0].cwd, CWD)
   assert.equal(h.calls.executeArchive[0].plan.ok, true)
+  assert.equal(h.agent.messages.length, 0, 'the deterministic archive produces no model message')
+  assert.equal(h.calls.prompt.archiveWorkflow, undefined)
 })
 
-test('opsx-archive refuses validation ERROR and an existing archive target', async () => {
-  const invalid = createHarness({
-    state: {
-      validateChangeByName: async (cwd, name) => ({
-        name,
-        validation: cleanValidation({
-          errors: 1,
-          issues: [{ level: 'ERROR', path: 'specs/cap/spec.md', message: 'removed requirement missing reason' }],
-        }),
-        metadata: {},
-        deltas: [],
-        tasks: { total: 1, done: 1, items: [] },
+test('opsx-archive --yes --skip-specs only moves the change and writes no main spec', async () => {
+  const h = createHarness()
+  const result = await h.run('opsx-archive', 'add-x --yes --skip-specs')
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /已归档变更 add-x/)
+  assert.match(result.text, /--skip-specs：未写入主 specs，只移动 change 目录/)
+  assert.equal(h.calls.planSync.length, 0, 'skip-specs never plans a merge')
+  assert.equal(h.calls.planArchive.length, 1)
+
+  const planInput = h.calls.planArchive[0]
+  assert.equal(planInput.syncPlan, null)
+  assert.equal(planInput.metadata.skip_specs, true, 'the archive plan sees skip_specs: true metadata')
+  assert.equal(planInput.metadata.schema, 'spec-driven', 'the rest of the change metadata is preserved')
+  assert.equal(h.calls.executeArchive.length, 1)
+  assert.equal(h.calls.executeArchive[0].plan.write, null, 'executeArchive receives a plan with no main-spec write')
+  assert.equal(h.agent.messages.length, 0)
+})
+
+test('opsx-archive refuses validation ERROR and an existing archive target on every path', async () => {
+  const invalidState = {
+    validateChangeByName: async (cwd, name) => ({
+      name,
+      validation: cleanValidation({
+        errors: 1,
+        issues: [{ level: 'ERROR', path: 'specs/cap/spec.md', message: 'removed requirement missing reason' }],
       }),
-    },
-  })
-  const refused = await invalid.run('opsx-archive', 'add-x --yes')
-  assert.equal(refused.kind, 'error')
-  assert.match(refused.text, /拒绝归档/)
-  assert.equal(invalid.calls.planArchive.length, 0)
+      metadata: {},
+      schemaName: 'spec-driven',
+      deltas: [],
+      tasks: { total: 1, done: 1, items: [] },
+    }),
+  }
+
+  const refused = createHarness({ state: invalidState })
+  const aiRefused = await refused.run('opsx-archive', 'add-x')
+  assert.equal(aiRefused.kind, 'error')
+  assert.match(aiRefused.text, /拒绝归档/)
+  assert.equal(refused.calls.prompt.archiveWorkflow, undefined, 'an ERROR refuses before composing the workflow prompt')
+  assert.equal(refused.agent.messages.length, 0)
+
+  const deterministic = createHarness({ state: invalidState })
+  const yesRefused = await deterministic.run('opsx-archive', 'add-x --yes')
+  assert.equal(yesRefused.kind, 'error')
+  assert.match(yesRefused.text, /拒绝归档/)
+  assert.equal(deterministic.calls.planArchive.length, 0)
 
   const existing = createHarness({
     fs: { pathExists: async (cwd, rel) => rel.startsWith('openspec/changes/archive/') },
@@ -869,9 +1019,15 @@ test('opsx-archive refuses validation ERROR and an existing archive target', asy
   assert.match(collision.text, /归档目标 .* 已存在/)
   assert.equal(existing.calls.planArchive.length, 0)
   assert.equal(existing.calls.executeArchive.length, 0)
+
+  // The AI path shares the target-exists refusal (it can never archive anywhere).
+  const aiCollision = await existing.run('opsx-archive', 'add-x')
+  assert.equal(aiCollision.kind, 'error')
+  assert.match(aiCollision.text, /归档目标 .* 已存在/)
+  assert.equal(existing.agent.messages.length, 0)
 })
 
-test('opsx-archive honors skip_specs by passing a null sync plan', async () => {
+test('opsx-archive honors metadata skip_specs by passing a null sync plan', async () => {
   const h = createHarness({
     state: {
       computeWorkspaceState: async () =>
@@ -885,6 +1041,7 @@ test('opsx-archive honors skip_specs by passing a null sync plan', async () => {
   assert.match(result.text, /skip_specs/)
   assert.equal(h.calls.planSync.length, 0)
   assert.equal(h.calls.planArchive[0].syncPlan, null)
+  assert.equal(h.calls.planArchive[0].metadata.skip_specs, true)
 })
 
 test('opsx-archive forwards retire_capabilities to the merge planner', async () => {
@@ -900,9 +1057,25 @@ test('opsx-archive forwards retire_capabilities to the merge planner', async () 
         }),
     },
   })
-  const result = await h.run('opsx-archive', 'add-x')
+  const result = await h.run('opsx-archive', '--yes add-x')
   assert.equal(result.kind, 'success')
   assert.equal(h.calls.planSync[0].retireCapabilities, true)
+})
+
+test('--dry-run wins over --yes so a preview can never write', async () => {
+  const syncHarness = createHarness()
+  const syncPreview = await syncHarness.run('opsx-sync', '--yes --dry-run add-x')
+  assert.equal(syncPreview.kind, 'success')
+  assert.match(syncPreview.text, /同步预览/)
+  assert.equal(syncHarness.calls.applySyncPlan.length, 0)
+  assert.equal(syncHarness.agent.messages.length, 0)
+
+  const archiveHarness = createHarness()
+  const archivePreview = await archiveHarness.run('opsx-archive', '--yes --dry-run add-x')
+  assert.equal(archivePreview.kind, 'success')
+  assert.match(archivePreview.text, /归档预览/)
+  assert.equal(archiveHarness.calls.executeArchive.length, 0)
+  assert.equal(archiveHarness.agent.messages.length, 0)
 })
 
 test('direct commands never submit a model message', async () => {
@@ -920,6 +1093,64 @@ test('thrown dependency failures become OpenSpec command errors', async () => {
   const result = await h.run('opsx-status')
   assert.equal(result.kind, 'error')
   assert.match(result.text, /^OpenSpec 命令失败：engine exploded$/)
+})
+
+test('collectWorkflowFacts derives the §10.4 facts shape from engine data', () => {
+  const facts = collectWorkflowFacts({
+    change: change({ isPlanningComplete: true }),
+    state: workspace(),
+    validated: {
+      name: 'add-x',
+      validation: cleanValidation({ warnings: 1, issues: [] }),
+      deltas: [
+        {
+          path: 'specs/cap/spec.md',
+          text: '',
+          parsed: { operations: { ADDED: [{}, {}], MODIFIED: [{}], REMOVED: [], RENAMED: [{}, {}] } },
+        },
+      ],
+      tasks: {
+        total: 3,
+        done: 1,
+        items: [{ id: '1.1', text: '1.1 done', done: true }, { id: '1.2', text: '1.2 pending', done: false }],
+      },
+    },
+    archiveTarget: 'openspec/changes/archive/2026-10-20-add-x',
+    archiveTargetExists: true,
+  })
+  assert.deepEqual(facts.validation, cleanValidation({ warnings: 1, issues: [] }))
+  assert.deepEqual(facts.artifacts[0], { id: 'proposal', status: 'done' })
+  assert.deepEqual(facts.tasks, { total: 3, done: 1, pending: ['1.2 pending'] })
+  assert.deepEqual(facts.deltas, [
+    {
+      path: 'openspec/changes/add-x/specs/cap/spec.md',
+      capability: 'cap',
+      added: 2,
+      modified: 1,
+      removed: 0,
+      renamed: 2,
+    },
+  ])
+  assert.deepEqual(facts.mainSpecs, [
+    { path: 'openspec/specs/cap/spec.md', capability: 'cap', exists: true, requirementCount: 1 },
+  ])
+  assert.equal(facts.isPlanningComplete, true)
+  assert.equal(facts.archiveTarget, 'openspec/changes/archive/2026-10-20-add-x')
+  assert.equal(facts.archiveTargetExists, true)
+})
+
+test('collectWorkflowFacts tolerates a change without tasks or deltas', () => {
+  const facts = collectWorkflowFacts({
+    change: change({ tasks: null, artifacts: [], isPlanningComplete: false }),
+    state: workspace({ specs: [] }),
+    validated: { name: 'add-x', validation: cleanValidation(), deltas: [], tasks: null },
+  })
+  assert.deepEqual(facts.artifacts, [])
+  assert.equal(facts.tasks, null)
+  assert.deepEqual(facts.deltas, [])
+  assert.deepEqual(facts.mainSpecs, [])
+  assert.equal(facts.archiveTarget, null)
+  assert.equal(facts.archiveTargetExists, null)
 })
 
 test('selectChange: explicit name wins, unknown name lists the active candidates', () => {
@@ -944,6 +1175,12 @@ test('selectChange: explicit name wins, unknown name lists the active candidates
   assert.equal(withYes.ok, true)
   assert.equal(withYes.change.name, 'add-x')
 
+  // Every command flag is stripped before the change-name parse.
+  const withFlags = selectChange(state, '--dry-run --skip-specs add-x')
+  assert.equal(withFlags.ok, true)
+  assert.equal(withFlags.change.name, 'add-x')
+  assert.equal(withFlags.auto, false)
+
   const unknown = selectChange(state, 'nope')
   assert.equal(unknown.ok, false)
   assert.match(unknown.text, /找不到变更 "nope"/)
@@ -958,7 +1195,7 @@ test('selectChange: explicit name wins, unknown name lists the active candidates
   assert.match(ambiguous.text, /fix-y — schema spec-driven；无任务清单；1 ERROR/)
 })
 
-test('selectChange: a single active change auto-selects, none is an error, --yes is not a name', () => {
+test('selectChange: a single active change auto-selects, none is an error, flags are not names', () => {
   const single = selectChange(workspace(), '')
   assert.equal(single.ok, true)
   assert.equal(single.change.name, 'add-x')
@@ -972,4 +1209,9 @@ test('selectChange: a single active change auto-selects, none is an error, --yes
   assert.equal(yesOnly.ok, true)
   assert.equal(yesOnly.change.name, 'add-x')
   assert.equal(yesOnly.auto, true)
+
+  const dryRunOnly = selectChange(workspace(), '--dry-run')
+  assert.equal(dryRunOnly.ok, true)
+  assert.equal(dryRunOnly.change.name, 'add-x')
+  assert.equal(dryRunOnly.auto, true)
 })

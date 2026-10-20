@@ -15,14 +15,17 @@ import { fileURLToPath } from 'node:url'
 import * as promptsModule from '../src/prompts.js'
 import {
   buildApplyPrompt,
+  buildArchiveWorkflowPrompt,
   buildExplorePrompt,
   buildProposePrompt,
+  buildSyncWorkflowPrompt,
   buildUpdatePrompt,
   firstToken,
   restAfterFirstToken,
   slugify,
 } from '../src/prompts.js'
 import { SNAPSHOT_VERSION } from '../src/native/instruction.js'
+import { ADAPTATION_MARKER } from '../src/native/skill-adaptation.js'
 import { loadBundledSchemas } from '../src/native/schema.js'
 
 const CWD = fileURLToPath(new URL('..', import.meta.url))
@@ -93,8 +96,10 @@ function config(overrides = {}) {
 test('prompt builders expose exactly the contract surface', () => {
   assert.deepEqual(Object.keys(promptsModule).sort(), [
     'buildApplyPrompt',
+    'buildArchiveWorkflowPrompt',
     'buildExplorePrompt',
     'buildProposePrompt',
+    'buildSyncWorkflowPrompt',
     'buildUpdatePrompt',
     'firstToken',
     'restAfterFirstToken',
@@ -105,8 +110,11 @@ test('prompt builders expose exactly the contract surface', () => {
 test('legacy phase APIs are gone: the engine owns tasks and state', () => {
   assert.ok(!('derivePhase' in promptsModule))
   assert.ok(!('parseTasks' in promptsModule))
-  assert.ok(!('archivePrompt' in promptsModule), 'archive is deterministic and produces no model prompt')
+  assert.ok(!('archivePrompt' in promptsModule))
   assert.ok(!('buildArchivePrompt' in promptsModule))
+  // sync / archive now default to the vendored OPSX AI workflows.
+  assert.equal(typeof buildSyncWorkflowPrompt, 'function')
+  assert.equal(typeof buildArchiveWorkflowPrompt, 'function')
 })
 
 test('slugify produces kebab change names and rejects junk', () => {
@@ -453,3 +461,259 @@ test('phase boundaries stay native', async () => {
   assert.match(update, /NEVER edit product code/)
   assert.match(update, /\/opsx-apply/)
 })
+
+/* ------------------------------------------------------------------ *
+ * OPSX sync / archive AI workflow prompts (§10.4)
+ * ------------------------------------------------------------------ */
+
+/** One engine-derived workflow facts fixture (§10.4 shape), overridable per test. */
+function workflowFacts(overrides = {}) {
+  return {
+    validation: {
+      errors: 0,
+      warnings: 1,
+      infos: 0,
+      issues: [{ level: 'WARNING', path: 'tasks.md', line: 2, message: 'task numbering gap' }],
+    },
+    artifacts: [
+      { id: 'proposal', status: 'done' },
+      { id: 'specs', status: 'done' },
+      { id: 'design', status: 'ready' },
+      { id: 'tasks', status: 'done' },
+    ],
+    tasks: { total: 5, done: 2, pending: ['1.2 build parser', '2 write tests'] },
+    deltas: [
+      {
+        path: 'openspec/changes/add-dark-mode/specs/theme/spec.md',
+        capability: 'theme',
+        added: 1,
+        modified: 1,
+        removed: 0,
+        renamed: 0,
+      },
+    ],
+    mainSpecs: [
+      { path: 'openspec/specs/theme/spec.md', capability: 'theme', exists: true, requirementCount: 3 },
+      { path: 'openspec/specs/brand/spec.md', capability: 'brand', exists: false, requirementCount: 0 },
+    ],
+    isPlanningComplete: true,
+    archiveTarget: 'openspec/changes/archive/2026-10-20-add-dark-mode',
+    archiveTargetExists: false,
+    ...overrides,
+  }
+}
+
+/** Prompt text from a heading marker to the end (for finish-contract assertions). */
+function fromMarker(prompt, marker) {
+  const index = prompt.indexOf(marker)
+  assert.ok(index >= 0, `expected the prompt to contain "${marker}"`)
+  return prompt.slice(index)
+}
+
+test('sync workflow prompt embeds the real adapted OPSX skill, facts and the sync finish contract', async () => {
+  const prompt = await buildSyncWorkflowPrompt({
+    cwd: CWD,
+    changeName: 'add-dark-mode',
+    schema: bundledSpecDriven(),
+    config: config(),
+    change: changeState(
+      [artifactRow('proposal', 'done'), artifactRow('specs', 'done'), artifactRow('design', 'done'), artifactRow('tasks', 'ready')],
+      { isPlanningComplete: true, tasks: { total: 5, done: 2 }, listStatus: 'in-progress' },
+    ),
+    facts: workflowFacts(),
+  })
+
+  // Adapted vendored body: the real snapshot is read through skill-adaptation.js.
+  assert.ok(prompt.includes(ADAPTATION_MARKER), 'the adapted skill body carries the DSH adaptation marker')
+  assert.match(prompt, /Fission-AI\/OpenSpec/)
+  assert.match(prompt, /### Vendored workflow: openspec-sync-specs/)
+  assert.match(prompt, /### End of vendored workflow/)
+
+  // Header + facts.
+  assert.match(prompt, /## OPSX sync workflow — merge the deltas of "add-dark-mode" into the main specs/)
+  assert.match(prompt, /Change: add-dark-mode/)
+  assert.match(prompt, /Schema: spec-driven \(bundled snapshot schema/)
+  assert.match(prompt, /Workspace: openspec\/changes\/add-dark-mode/)
+  assert.match(prompt, /Created: 2026-10-20/)
+  assert.match(prompt, /Goal: add dark mode/)
+  assert.match(prompt, /## Current facts/)
+  assert.match(prompt, /Validation: 0 ERROR \/ 1 WARNING \/ 0 INFO/)
+  assert.match(prompt, /- \[WARNING\] tasks\.md:2 — task numbering gap/)
+  assert.match(prompt, /- proposal: done/)
+  assert.match(prompt, /- specs: done/)
+  assert.match(prompt, /- tasks: done/)
+  assert.match(prompt, /2\/5 checked, 2 pending/)
+  assert.match(prompt, /- 1\.2 build parser/)
+  assert.match(prompt, /- 2 write tests/)
+  assert.match(
+    prompt,
+    /openspec\/changes\/add-dark-mode\/specs\/theme\/spec\.md — capability theme: ADDED 1, MODIFIED 1, REMOVED 0, RENAMED 0/,
+  )
+  assert.match(prompt, /openspec\/specs\/theme\/spec\.md — exists, 3 requirements/)
+  assert.match(prompt, /openspec\/specs\/brand\/spec\.md — does not exist yet, 0 requirements/)
+  assert.match(prompt, /Planning complete: yes/)
+  assert.ok(!prompt.includes('Archive target:'), 'the sync prompt does not render the archive target facts')
+
+  // Finish contract: error gate → intelligent merge → canonical verification → validate.
+  const finish = fromMarker(prompt, '## Finish contract (sync)')
+  assert.match(finish, /validation\.errors > 0/)
+  assert.match(finish, /STOP/)
+  assert.match(finish, /ask the user to confirm/)
+  assert.match(finish, /intelligent merge/i)
+  assert.match(finish, /`openspec\/specs\/<capability>\/spec\.md`/)
+  assert.match(finish, /## ADDED Requirements/)
+  assert.match(finish, /## MODIFIED Requirements/)
+  assert.match(finish, /## REMOVED Requirements/)
+  assert.match(finish, /## RENAMED Requirements/)
+  assert.match(finish, /### Requirement: <name>/)
+  assert.match(finish, /#### Scenario: <name>/)
+  assert.match(finish, /`## Purpose`/)
+  assert.match(finish, /run `\/opsx-validate`/)
+  assert.match(finish, /Do not archive the change/)
+  assert.ok(finish.includes('/opsx-archive add-dark-mode'), 'sync finish contract points at the separate archive workflow')
+  assert.ok(!finish.includes('--yes --skip-specs'), 'sync never uses the deterministic archive finalize command')
+})
+
+test('archive workflow prompt embeds completion facts and the deterministic finalize contract', async () => {
+  const prompt = await buildArchiveWorkflowPrompt({
+    cwd: CWD,
+    changeName: 'add-dark-mode',
+    schema: bundledSpecDriven(),
+    config: config(),
+    change: changeState(
+      [artifactRow('proposal', 'done'), artifactRow('specs', 'done'), artifactRow('design', 'ready'), artifactRow('tasks', 'done')],
+      { isPlanningComplete: false, tasks: { total: 5, done: 2 }, listStatus: 'in-progress' },
+    ),
+    facts: workflowFacts({ isPlanningComplete: false }),
+  })
+
+  assert.ok(prompt.includes(ADAPTATION_MARKER))
+  assert.match(prompt, /### Vendored workflow: openspec-archive-change/)
+  assert.match(prompt, /## OPSX archive workflow — confirm, sync and archive the change "add-dark-mode"/)
+  assert.match(prompt, /## Current facts/)
+  assert.match(prompt, /- proposal: done/)
+  assert.match(prompt, /- design: ready/)
+  assert.match(prompt, /2\/5 checked, 2 pending/)
+  assert.match(prompt, /- 1\.2 build parser/)
+  assert.match(prompt, /- openspec\/changes\/add-dark-mode\/specs\/theme\/spec\.md — capability theme/)
+  assert.match(prompt, /openspec\/specs\/brand\/spec\.md — does not exist yet, 0 requirements/)
+  assert.match(prompt, /Planning complete: no/)
+  assert.match(prompt, /Archive target: openspec\/changes\/archive\/2026-10-20-add-dark-mode/)
+  assert.match(prompt, /Archive target exists: no/)
+
+  // Finish contract: confirm → stop on ERROR → merge or skip → validate → deterministic finalize.
+  const finish = fromMarker(prompt, '## Finish contract (archive)')
+  assert.match(finish, /ask the user to confirm/)
+  assert.match(finish, /validation\.errors > 0/)
+  assert.match(finish, /STOP/)
+  assert.match(finish, /Intelligent merge/i)
+  assert.match(finish, /Skip sync/)
+  assert.ok(finish.includes('leave `openspec/specs/**` untouched'))
+  assert.match(finish, /run `\/opsx-validate`/)
+  assert.match(finish, /Finalize deterministically/)
+  assert.ok(finish.includes('/opsx-archive add-dark-mode --yes --skip-specs'), 'archive finish contract names the exact finalize command')
+  assert.match(finish, /only moves the change directory/)
+})
+
+test('sync and archive workflow prompts include context, rules and operation guidance only when configured', async () => {
+  const configured = config({
+    context: 'SHARED-CONTEXT for the workflows.',
+    rules: { sync: ['SYNC-RULE'], archive: ['ARCHIVE-RULE'] },
+    operations: {
+      sync: { guidance: 'SYNC-GUIDANCE: prefer minimal spec diffs.' },
+      archive: { guidance: 'ARCHIVE-GUIDANCE: confirm before moving.' },
+      apply: { guidance: 'APPLY-GUIDANCE: not part of these workflows.' },
+    },
+  })
+  const change = changeState([artifactRow('proposal', 'done')])
+  const [syncPrompt, archivePrompt] = await Promise.all([
+    buildSyncWorkflowPrompt({ cwd: CWD, changeName: 'add-dark-mode', schema: bundledSpecDriven(), config: configured, change, facts: workflowFacts() }),
+    buildArchiveWorkflowPrompt({ cwd: CWD, changeName: 'add-dark-mode', schema: bundledSpecDriven(), config: configured, change, facts: workflowFacts() }),
+  ])
+
+  for (const prompt of [syncPrompt, archivePrompt]) {
+    assert.ok(prompt.includes('<context>'))
+    assert.ok(prompt.includes('SHARED-CONTEXT for the workflows.'))
+  }
+  assert.ok(syncPrompt.includes('<rules artifact="sync">'))
+  assert.ok(syncPrompt.includes('SYNC-RULE'))
+  assert.ok(syncPrompt.includes('SYNC-GUIDANCE: prefer minimal spec diffs.'))
+  assert.ok(!syncPrompt.includes('ARCHIVE-RULE'))
+  assert.ok(!syncPrompt.includes('ARCHIVE-GUIDANCE'))
+  assert.ok(!syncPrompt.includes('APPLY-GUIDANCE'))
+
+  assert.ok(archivePrompt.includes('<rules artifact="archive">'))
+  assert.ok(archivePrompt.includes('ARCHIVE-RULE'))
+  assert.ok(archivePrompt.includes('ARCHIVE-GUIDANCE: confirm before moving.'))
+  assert.ok(!archivePrompt.includes('SYNC-RULE'))
+  assert.ok(!archivePrompt.includes('SYNC-GUIDANCE'))
+  assert.ok(!archivePrompt.includes('APPLY-GUIDANCE'))
+})
+
+test('sync and archive workflow prompts omit context, rules and guidance when unconfigured', async () => {
+  const [syncPrompt, archivePrompt] = await Promise.all([
+    buildSyncWorkflowPrompt({ cwd: CWD, changeName: 'add-dark-mode', schema: bundledSpecDriven(), config: config(), facts: workflowFacts() }),
+    buildArchiveWorkflowPrompt({ cwd: CWD, changeName: 'add-dark-mode', schema: bundledSpecDriven(), config: config(), facts: workflowFacts() }),
+  ])
+  for (const prompt of [syncPrompt, archivePrompt]) {
+    assert.ok(!prompt.includes('<context>'), 'no <context> block without project context')
+    assert.ok(!prompt.includes('<rules'), 'no <rules> block without project rules')
+    assert.ok(!prompt.includes('### Operation guidance'))
+  }
+})
+
+test('workflow prompts surface the change metadata flags', async () => {
+  const prompt = await buildArchiveWorkflowPrompt({
+    changeName: 'retire-me',
+    schema: bundledSpecDriven(),
+    config: config(),
+    change: changeState([], {
+      name: 'retire-me',
+      metadata: {
+        found: true,
+        schema: 'spec-driven',
+        created: '2026-10-20',
+        goal: 'retire the old capability',
+        skip_specs: true,
+        retire_capabilities: true,
+      },
+    }),
+    facts: workflowFacts(),
+  })
+  assert.match(prompt, /Created: 2026-10-20/)
+  assert.match(prompt, /Goal: retire the old capability/)
+  assert.match(prompt, /Skip specs: yes/)
+  assert.match(prompt, /Retire capabilities: yes/)
+})
+
+test('sync and archive workflow prompts tolerate missing facts, schema and change data', async () => {
+  const syncPrompt = await buildSyncWorkflowPrompt({ cwd: CWD, changeName: 'lonely-change' })
+  assert.match(syncPrompt, /## Current facts/)
+  assert.match(syncPrompt, /Validation: 0 ERROR \/ 0 WARNING \/ 0 INFO/)
+  assert.match(syncPrompt, /- no validation issues/)
+  assert.match(syncPrompt, /- none \(the change has no tasks file yet\)/)
+  assert.match(syncPrompt, /- none \(there are no delta specs to merge\)/)
+  assert.match(syncPrompt, /Planning complete: no/)
+  assert.match(syncPrompt, /Schema: unknown/)
+
+  const archivePrompt = await buildArchiveWorkflowPrompt({ change: changeState([], { name: 'fallback-change' }) })
+  assert.match(archivePrompt, /Change: fallback-change/)
+  assert.match(archivePrompt, /Archive target: openspec\/changes\/archive\/<local-date>-<change-name>/)
+  assert.match(archivePrompt, /## Finish contract \(archive\)/)
+  assert.ok(archivePrompt.includes('/opsx-archive fallback-change --yes --skip-specs'))
+})
+
+test('workflow prompts accept a bare schema definition', async () => {
+  const bare = bundledSpecDriven().schema
+  const prompt = await buildSyncWorkflowPrompt({
+    cwd: CWD,
+    changeName: 'add-dark-mode',
+    schema: bare,
+    config: config(),
+    facts: workflowFacts(),
+  })
+  // A bare definition carries no resolution source; the header still names the schema.
+  assert.match(prompt, /Schema: spec-driven \(unknown source\)/)
+  assert.match(prompt, /### Vendored workflow: openspec-sync-specs/)
+})
+

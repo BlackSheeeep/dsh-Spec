@@ -1,0 +1,7 @@
+schema: spec-driven
+
+# OpenSpec 项目上下文（由 dsh-spec /openspec-init 生成）。
+# 用简洁的项目级事实填充：技术栈、运行方式、关键目录、团队约定。
+# AI 在 explore / propose / apply / archive 每个阶段都会读取这里。
+context: |
+  （在此填写项目级事实，例如：技术栈、启动命令、目录结构、代码约定）

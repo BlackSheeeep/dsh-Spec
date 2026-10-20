@@ -35,7 +35,7 @@ import { validateChange, validateMainSpec } from '../src/native/validate.js'
 import { computeWorkspaceState, validateChangeByName } from '../src/native/state.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const workspaceRoot = path.resolve(repoRoot, '..')
+const workspaceRoot = path.join(repoRoot, 'tests', 'fixtures', 'workspace')
 const hasWorkspace = existsSync(path.join(workspaceRoot, 'openspec', 'changes'))
 
 const ENGINE_MODULES = [

@@ -26,7 +26,7 @@ import { validateChange } from '../src/native/validate.js'
 import { computeWorkspaceState, validateChangeByName } from '../src/native/state.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const workspaceRoot = path.resolve(repoRoot, '..')
+const workspaceRoot = path.join(repoRoot, 'tests', 'fixtures', 'workspace')
 const snapshotSchemaPath = path.join(repoRoot, 'src', 'native-snapshot', 'spec-driven', 'schema.yaml')
 const changeRel = 'openspec/changes/align-native-openspec'
 const hasWorkspace = existsSync(path.join(workspaceRoot, 'openspec', 'changes'))

@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.0
+
+直接复用上游 OpenSpec OPSX 工作流逻辑（MIT，标注出处），sync / archive 默认由 AI 参与。
+
+### Added
+
+- **内置全部 12 个 OPSX 工作流 skills**：`explore / propose / apply-change / update-change / sync-specs / archive-change / new-change / continue-change / ff-change / verify-change / bulk-archive-change / onboard`。正文逐字来自 OpenSpec 1.14.3（commit `c794978`，MIT），存放在 `src/native-snapshot/skills/**`，随 `ATTRIBUTION.md` 记录来源与版本，`tools/sync-native-snapshot.mjs` 可复现刷新。
+- **CLI → 文件语义适配层**（`src/native/skill-adaptation.js`）：加载 vendored SKILL.md 时重写 frontmatter（`vendoredFrom` / `upstreamVersion` / `upstreamCommit` / MIT / `adaptedFor: dsh-spec`）并在正文前注入映射说明（`openspec status/list/validate/instructions/show/archive/new change/sync/update` → 读 `openspec/` 文件或 `/opsx-*` 命令；声明无 CLI、无 store）。原生 skills 存在时 fallback 继续让位，且从不改写原生文件。
+- **AI sync / archive 工作流**：`/opsx-sync`、`/opsx-archive` 默认组合「内置 OPSX 工作流正文 + 当前引擎事实（artifact/任务/delta/主 spec/校验/context/rules）+ 验证与收尾契约」并提交给模型；命令本身不写盘。
+- **命令标志**：`--dry-run`（只读预览）、`--yes`（确定性合并/归档快路径，不产生模型消息）、archive 的 `--skip-specs`（AI 已完成合并时只移动目录）。
+- Host `/dsh-spec` 的 `instructions` 路由新增 `sync`、`archive` 两种工作流提示词。
+
+### Changed
+
+- `/opsx-sync`、`/opsx-archive` 不带 `--yes` 时的默认行为从「确定性预览」改为「提交 OPSX AI 工作流」；预览改用 `--dry-run`。
+- 归档未完成任务：确定性 `--yes` 路径对齐上游 CLI，改为**警告后继续**（校验 ERROR 仍一律拒绝）；AI 路径要求先向用户确认。
+- 面板同步预览文案更新为「`--yes` 确定性写入，或直接执行让 AI 智能合并」；构建产物新增 `lib/native-snapshot/skills/**` 与 `lib/native/skill-adaptation.js`。
+- 插件版本 `0.2.0` → `0.3.0`。
+
+### Notes
+
+- 扩展工作流（new / continue / ff / verify / bulk-archive / onboard）通过内置 skills 的**文件语义**完成，命令面仍保持九条（不新增 `/opsx-new` 等命令）。
+- AI 智能合并直接编辑主 specs，提示词内嵌 canonical 验证契约（标题 / Purpose / 无 delta 头 / requirement+scenario 结构 / 四类操作结果）；确定性 `--yes` 路径始终可作为对照与回退。
+- 测试改为使用提交到仓库的 `tests/fixtures/workspace/` 夹具，不再依赖宿主工作区的实时状态。
+
 ## 0.2.0
 
 原生 OPSX 语义对齐（目标 OpenSpec 1.14.3，commit `c794978`，MIT）。插件从"硬编码四阶段 + 三件套"升级为 OpenSpec 原生内容的前端，仍然零运行时依赖、不调用 openspec CLI。

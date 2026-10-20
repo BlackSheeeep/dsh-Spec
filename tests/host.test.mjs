@@ -5,18 +5,20 @@
  */
 
 import assert from 'node:assert/strict'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 
 import { ROUTE, apply, inject, name } from '../src/host.js'
 
-/** Repo root: a real initialized OpenSpec workspace (this change). */
-const WORKSPACE = 'D:/DSHarness'
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const slashed = (value) => value.replaceAll('\\', '/')
+
+/** Committed fixture workspace with native OpenSpec content (stable for tests). */
+const WORKSPACE = slashed(path.join(repoRoot, 'tests', 'fixtures', 'workspace'))
 
 /** Plugin root: a workspace without native OpenSpec skills or openspec/. */
-const PLUGIN_ROOT = 'D:/DSHarness/dsh-Spec'
-
-/** Verification fixture workspace with native OpenSpec content (committed under .verify/). */
-const FIXTURE = 'D:/DSHarness/dsh-Spec/.verify/ws-native'
+const PLUGIN_ROOT = slashed(repoRoot)
 
 /** Build a fake Cordis plugin context and the collected registrations. */
 function fakeContext({ skills } = {}) {
@@ -39,8 +41,7 @@ function fakeContext({ skills } = {}) {
     },
     connection: { admit: () => ({ principal: 'test' }) },
     workspaceRegistry: {
-      resolveByPath: async (path) =>
-        path === WORKSPACE || path === PLUGIN_ROOT || path === FIXTURE ? { path } : undefined,
+      resolveByPath: async (path) => (path === WORKSPACE || path === PLUGIN_ROOT ? { path } : undefined),
     },
     workingDirectory: {},
     get(key) {
@@ -265,6 +266,24 @@ test('validate method works per change and workspace-wide without writing', asyn
   assert.ok(Array.isArray(workspace.json.result.value.validation.issues))
 })
 
+test('instructions compose sync and archive OPSX workflow prompts', async () => {
+  const { ctx, routes } = fakeContext()
+  apply(ctx)
+  for (const kind of ['sync', 'archive']) {
+    const response = await callRoute(routes[0], {
+      endpoint: 'instructions',
+      envelope: envelope('instructions', { cwd: WORKSPACE, kind, change: 'align-native-openspec' }),
+    })
+    assert.equal(response.json.result.ok, true, `${kind} instructions must succeed`)
+    const value = response.json.result.value
+    assert.equal(value.kind, kind)
+    assert.equal(value.change, 'align-native-openspec')
+    assert.match(value.text, /## DSH adaptation/, `${kind} prompt must include the adaptation section`)
+    assert.match(value.text, /Current facts/, `${kind} prompt must include the engine facts block`)
+    assert.match(value.text, /align-native-openspec/)
+  }
+})
+
 test('sync-preview builds a dry-run plan and renders preview text', async () => {
   const { ctx, routes } = fakeContext()
   apply(ctx)
@@ -296,16 +315,16 @@ test('initialization on an uninitialized workspace is idempotent for missing dir
 test('archive-detail returns an archived change with tasks, docs and metadata', async () => {
   const { ctx, routes } = fakeContext()
   apply(ctx)
-  const stateResponse = await callRoute(routes[0], { endpoint: 'state', envelope: envelope('state', { cwd: FIXTURE }) })
+  const stateResponse = await callRoute(routes[0], { endpoint: 'state', envelope: envelope('state', { cwd: WORKSPACE }) })
   const archived = stateResponse.json.result.value.archived
   assert.ok(Array.isArray(archived) && archived.length >= 1)
-  const row = archived[0]
-  assert.equal(row.changeName, 'add-export')
+  const row = archived.find((entry) => entry.changeName === 'legacy-fixture')
+  assert.ok(row, 'the fixture archived change should be listed')
   assert.match(row.date, /^\d{4}-\d{2}-\d{2}$/)
 
   const detail = await callRoute(routes[0], {
     endpoint: 'archive-detail',
-    envelope: envelope('archive-detail', { cwd: FIXTURE, path: row.path }),
+    envelope: envelope('archive-detail', { cwd: WORKSPACE, path: row.path }),
   })
   assert.equal(detail.json.result.ok, true)
   const change = detail.json.result.value.change

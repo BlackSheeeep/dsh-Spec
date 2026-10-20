@@ -1,0 +1,3 @@
+schema: spec-driven
+created: 2026-10-20
+goal: 让 dsh-spec 在不依赖 openspec CLI 的前提下，以仓库原生 OPSX 语义读取状态、组合提示词、校验并确定性同步与归档 OpenSpec 内容。
