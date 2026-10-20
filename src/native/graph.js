@@ -1,0 +1,246 @@
+/**
+ * Artifact dependency graph for OpenSpec-native schemas (Host half).
+ *
+ * `validateSchemaGraph` reports structural schema problems (duplicate ids,
+ * dangling `requires`, cycles, bad `apply` references); `computeArtifactStates`
+ * derives the native `done` / `skipped` / `ready` / `blocked` state for one
+ * change from the schema graph plus workspace files.
+ *
+ * @module dsh-spec/native/graph
+ */
+
+import { listTree } from './fsio.js'
+import { matchGlob } from './schema.js'
+
+/** Glob metacharacters used to decide whether a `generates` entry is a pattern. @param {string} value @returns {boolean} */
+function hasGlob(value) {
+  return /[*?{]/.test(value)
+}
+
+/**
+ * Normalize `artifact.generates` to a list of output patterns.
+ *
+ * @param {{generates?: unknown}|null|undefined} artifact
+ * @returns {string[]}
+ */
+function outputPatterns(artifact) {
+  if (!artifact) return []
+  const generates = artifact.generates
+  if (typeof generates === 'string') return generates.trim() === '' ? [] : [generates.trim()]
+  if (Array.isArray(generates)) {
+    return generates
+      .filter((value) => typeof value === 'string' && value.trim() !== '')
+      .map((value) => value.trim())
+  }
+  return []
+}
+
+/**
+ * Validate the artifact graph of a parsed native schema.
+ *
+ * @param {{name?: string, artifacts?: Array<{id: string, generates?: unknown, requires?: string[]}>, apply?: {requires?: unknown, tracks?: unknown}}|null} schema
+ * @returns {{issues: Array<{level: 'ERROR'|'WARNING'|'INFO', path?: string, line?: number, message: string}>, artifacts: Map<string, object>}}
+ */
+export function validateSchemaGraph(schema) {
+  /** @type {Array<{level: 'ERROR'|'WARNING'|'INFO', path?: string, line?: number, message: string}>} */
+  const issues = []
+  /** @type {Map<string, object>} */
+  const artifacts = new Map()
+
+  const list = Array.isArray(schema?.artifacts) ? schema.artifacts : []
+  for (const artifact of list) {
+    if (!artifact || typeof artifact.id !== 'string' || artifact.id.trim() === '') continue
+    const id = artifact.id.trim()
+    if (artifacts.has(id)) {
+      issues.push({ level: 'ERROR', message: `duplicate artifact id "${id}"` })
+      continue
+    }
+    artifacts.set(id, artifact)
+  }
+
+  for (const [id, artifact] of artifacts) {
+    if (outputPatterns(artifact).length === 0) {
+      issues.push({ level: 'ERROR', message: `artifact "${id}" has no "generates" path` })
+    }
+    if (!Array.isArray(artifact.requires)) {
+      issues.push({ level: 'ERROR', message: `artifact "${id}" "requires" must be a sequence of artifact ids` })
+      continue
+    }
+    for (const dependency of artifact.requires) {
+      if (typeof dependency !== 'string' || dependency.trim() === '') continue
+      if (!artifacts.has(dependency)) {
+        issues.push({ level: 'ERROR', message: `artifact "${id}" requires unknown artifact "${dependency}"` })
+      }
+    }
+  }
+
+  // Dependency cycles: DFS with a visiting stack; canonical cycle keys dedupe rotations.
+  const visited = new Set()
+  const visiting = new Set()
+  /** @type {string[]} */
+  const stack = []
+  const reported = new Set()
+  /** @param {string} id */
+  const visit = (id) => {
+    if (visited.has(id)) return
+    if (visiting.has(id)) {
+      const start = stack.indexOf(id)
+      const cycle = [...stack.slice(start === -1 ? 0 : start), id]
+      const key = [...new Set(cycle)].sort().join('|')
+      if (!reported.has(key)) {
+        reported.add(key)
+        issues.push({ level: 'ERROR', message: `dependency cycle: ${cycle.join(' -> ')}` })
+      }
+      return
+    }
+    visiting.add(id)
+    stack.push(id)
+    const artifact = artifacts.get(id)
+    const requires = Array.isArray(artifact?.requires) ? artifact.requires : []
+    for (const dependency of requires) {
+      if (typeof dependency === 'string' && artifacts.has(dependency)) visit(dependency)
+    }
+    stack.pop()
+    visiting.delete(id)
+    visited.add(id)
+  }
+  for (const id of artifacts.keys()) visit(id)
+
+  const apply = schema?.apply && typeof schema.apply === 'object' ? schema.apply : {}
+  const applyRequires = Array.isArray(apply.requires) ? apply.requires : []
+  for (const dependency of applyRequires) {
+    if (typeof dependency !== 'string') continue
+    if (!artifacts.has(dependency)) {
+      issues.push({ level: 'ERROR', message: `apply.requires references unknown artifact "${dependency}"` })
+    }
+  }
+  if (apply.tracks !== undefined && apply.tracks !== null) {
+    const tracks = apply.tracks
+    if (typeof tracks !== 'string' || tracks.trim() === '') {
+      issues.push({ level: 'ERROR', message: 'apply.tracks must be a non-empty path' })
+    } else {
+      const generated = [...artifacts.values()].some((artifact) =>
+        outputPatterns(artifact).some((pattern) =>
+          hasGlob(pattern) ? matchGlob(pattern, tracks) : pattern === tracks,
+        ),
+      )
+      if (!generated) {
+        issues.push({ level: 'ERROR', message: `apply.tracks "${tracks}" is not generated by any artifact` })
+      }
+    }
+  }
+
+  return { issues, artifacts }
+}
+
+/**
+ * List all files inside a change directory as change-relative POSIX paths.
+ *
+ * @param {string} cwd absolute workspace root
+ * @param {string} changeRel workspace-relative change directory
+ * @returns {Promise<string[]>}
+ */
+async function collectChangeFiles(cwd, changeRel) {
+  const prefix = String(changeRel ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  const tree = await listTree(cwd, prefix)
+  /** @type {string[]} */
+  const files = []
+  for (const entry of tree) {
+    if (entry.type !== 'file') continue
+    const rel =
+      prefix === ''
+        ? entry.rel
+        : entry.rel.startsWith(`${prefix}/`)
+          ? entry.rel.slice(prefix.length + 1)
+          : entry.rel
+    files.push(rel)
+  }
+  return files.sort()
+}
+
+/**
+ * Derive native artifact states for one change.
+ *
+ * Rules: an output that exists (exact file, or a glob matching at least one file
+ * inside the change directory) marks the artifact `done`; the `specs` artifact
+ * (or any output under `specs/`) is `skipped` when `skipSpecs` is set and then
+ * satisfies dependents; otherwise an artifact is `ready` when all its
+ * dependencies are done/skipped and `blocked` with `missingDeps` otherwise.
+ *
+ * @param {string} cwd absolute workspace root
+ * @param {string} changeRel workspace-relative change directory
+ * @param {{artifacts?: Array<object>, apply?: {requires?: string[], tracks?: string|null}}|null} schema parsed schema
+ * @param {{skipSpecs?: boolean}} [options]
+ * @returns {Promise<{artifacts: Array<{id: string, outputPath: string|null, status: 'done'|'skipped'|'ready'|'blocked', missingDeps?: string[]}>, applyRequires: string[], tracks: string|null, isPlanningComplete: boolean, nextSteps: string[]}>}
+ */
+export async function computeArtifactStates(cwd, changeRel, schema, { skipSpecs = false } = {}) {
+  const artifacts = Array.isArray(schema?.artifacts) ? schema.artifacts : []
+  const files = await collectChangeFiles(cwd, changeRel)
+  /** @type {Map<string, 'done'|'skipped'|'ready'|'blocked'>} */
+  const statuses = new Map()
+
+  const isSkipped = (artifact) =>
+    skipSpecs === true &&
+    (artifact.id === 'specs' ||
+      outputPatterns(artifact).some((pattern) => pattern === 'specs' || pattern.startsWith('specs/')))
+
+  const hasOutput = (artifact) =>
+    outputPatterns(artifact).some((pattern) => files.some((file) => matchGlob(pattern, file)))
+
+  for (const artifact of artifacts) {
+    if (!artifact || typeof artifact.id !== 'string' || artifact.id.trim() === '') continue
+    if (statuses.has(artifact.id)) continue
+    if (isSkipped(artifact)) statuses.set(artifact.id, 'skipped')
+    else if (hasOutput(artifact)) statuses.set(artifact.id, 'done')
+  }
+
+  /** @type {Array<{id: string, outputPath: string|null, status: 'done'|'skipped'|'ready'|'blocked', missingDeps?: string[]}>} */
+  const rows = []
+  for (const artifact of artifacts) {
+    if (!artifact || typeof artifact.id !== 'string' || artifact.id.trim() === '') continue
+    const id = artifact.id.trim()
+    if (rows.some((row) => row.id === id)) continue
+    const patterns = outputPatterns(artifact)
+    /** @type {{id: string, outputPath: string|null, status: 'done'|'skipped'|'ready'|'blocked', missingDeps?: string[]}} */
+    const row = { id, outputPath: patterns[0] ?? null, status: 'ready' }
+    const known = statuses.get(id)
+    if (known === undefined) {
+      const requires = Array.isArray(artifact.requires) ? artifact.requires : []
+      const missingDeps = requires.filter((dependency) => {
+        const state = statuses.get(dependency)
+        return state !== 'done' && state !== 'skipped'
+      })
+      if (missingDeps.length === 0) {
+        row.status = 'ready'
+        statuses.set(id, 'ready')
+      } else {
+        row.status = 'blocked'
+        row.missingDeps = missingDeps
+        statuses.set(id, 'blocked')
+      }
+    } else {
+      row.status = known
+    }
+    rows.push(row)
+  }
+
+  const apply = schema?.apply && typeof schema.apply === 'object' ? schema.apply : {}
+  const applyRequires = Array.isArray(apply.requires)
+    ? apply.requires.filter((value) => typeof value === 'string')
+    : []
+  const tracks = typeof apply.tracks === 'string' && apply.tracks.trim() !== '' ? apply.tracks.trim() : null
+  const isPlanningComplete =
+    rows.length > 0 && rows.every((row) => row.status === 'done' || row.status === 'skipped')
+
+  /** @type {string[]} */
+  const nextSteps = []
+  if (isPlanningComplete) {
+    nextSteps.push(tracks === null ? 'archive' : `run apply on ${tracks}`)
+  } else {
+    for (const row of rows) {
+      if (row.status === 'ready') nextSteps.push(`create ${row.id} (${row.outputPath ?? row.id})`)
+    }
+  }
+
+  return { artifacts: rows, applyRequires, tracks, isPlanningComplete, nextSteps }
+}

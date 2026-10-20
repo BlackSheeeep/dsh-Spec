@@ -1,0 +1,29 @@
+# Changelog
+
+## 0.2.0
+
+原生 OPSX 语义对齐（目标 OpenSpec 1.14.3，commit `c794978`，MIT）。插件从"硬编码四阶段 + 三件套"升级为 OpenSpec 原生内容的前端，仍然零运行时依赖、不调用 openspec CLI。
+
+### Added
+
+- **原生语义引擎**（`src/native/**`，Host 侧纯 JS，零子进程零网络）：YAML 子集解析、项目 `config.yaml`（`config.yml` 回退）、change `.openspec.yaml`（schema 优先级 change > project > 默认，`skip_specs` / `retire_capabilities`、未知键警告、`x-` 键静默接受）、schema 解析（项目 `openspec/schemas/<name>/` 优先，内置快照回退）、artifact 图校验（重复 ID / 悬空依赖 / 环 / apply 引用）、artifact 状态推导（`done` / `skipped` / `ready` / `blocked` + `missingDeps`，glob 输出）、change 级状态（`no-tasks` / `in-progress` / `complete` + `nextSteps` / `applyRequires` / `tracks`）、主 spec 与 delta spec 解析（ADDED / MODIFIED / REMOVED / RENAMED）、原生任务清单解析（`-`/`*`/`+`，只有 `x` 算完成，链接 bullet 忽略、编号任务 ID 保留）、确定性分级校验（ERROR / WARNING / INFO，带路径与行号）。
+- **原生提示词组合**：按 `instruction` → `context` → `rules` → template → 依赖 → 解锁项的原生顺序组装 explore / propose / apply / update 提示词；仅注入当前 artifact 的 rules 与 `operations.apply.guidance`；`skipped` / blocked artifact 不生成创建指令。
+- **内置快照**：`src/native-snapshot/spec-driven/`（schema + proposal/spec/design/tasks 四份模板）与 `ATTRIBUTION.md`；`tools/sync-native-snapshot.mjs` 可复现刷新，测试校验结构与版本标记。
+- **确定性 sync / archive**：ADDED 追加、MODIFIED 整块替换、REMOVED 删除、RENAMED 重命名，delta 未提及内容逐字节保留；新 capability 自动写入 Purpose（缺失时写原生 TBD 占位）；`retire_capabilities` 删除最后一条 requirement 后移除主 spec；归档到本地日期 `YYYY-MM-DD-<name>`、拒绝已存在目标、保留 `.openspec.yaml`、遵守 `skip_specs`；写入前 dry-run 预览、ERROR 门禁、失败不落盘（临时文件 + rename）。
+- **命令面补齐**：新增 `/opsx-update`、`/opsx-sync`、`/opsx-validate`；`/opsx-propose` 写入含生效 schema 与本地 `created` 的 `.openspec.yaml`；`/opsx-sync`、`/opsx-archive` 支持预览 + `--yes` 确认；`/opsx-status`、`/opsx-validate`、`/openspec-init` 直出不占模型 token；统一变更选择（显式名 / 单一自动选中 / 多个列候选）。
+- **原生面板与快捷条**：面板展示生效 schema、artifact 状态 chips、可展开 `missingDeps`、`skip_specs` 信号、任务进度、原生下一步、按 `generates` 路径的工件文档、delta 操作统计、带行号的校验问题、项目配置/schema 来源、capability specs（Purpose/需求/场景计数、嵌套分组）、按本地日期分组的归档；列表分页/「还有 N 个」与文档截断提示取代静默截断。快捷条按原生下一步给出动作、显示 `skip_specs`/blocked 与检测到的原生 skills。
+- **与原生 OpenSpec skills 共存**：检测项目 `.dsh/skills`、项目 `.agents/skills` 与用户技能根目录下的 `openspec-*` 技能；原生缺失且 DSH 提供 `ctx.skills` 时注册工作区感知 fallback provider（六个 core 工作流，文件语义、无 CLI 调用、带改编来源与版本标注），原生技能出现后自动让位，且从不改写原生技能文件。
+
+### Changed
+
+- `/openspec-init` 与面板初始化改为原生骨架：只创建 `openspec/config.yaml`（`schema` + 注释示例，不含占位 context）、`openspec/specs/`、`openspec/changes/archive/` 锚点；不再创建 `openspec/README.md` 与中文占位 context；已存在文件不覆盖，只报告新建项。
+- 面板与命令中的 change 进展不再来自 draft / proposed / apply / ready 四阶段，而是 schema artifact 状态 + `nextSteps` + 任务进度；旧阶段徽标只保留为派生的样式映射。
+- `/opsx-archive` 不再向模型提交归档提示词，改由确定性引擎执行。
+- 构建流程：`node tools/build.mjs` 现在同时拷贝 `src/native/**`、`src/native-snapshot/**`，并内联 `src/client-helpers.js`；构建结束会 import 生成的 Host 模块做加载自检。
+- 插件版本 `0.1.4` → `0.2.0`。
+
+### Notes
+
+- 原生校验与合并是"高保真子集"：个别 OpenSpec CLI 规则不在覆盖范围（见 README「已知边界」）。有意未覆盖：`--strict` 区分、proposal Capabilities 与 delta 文件的一一对应、校验期的跨文件 REMOVED/MODIFIED 目标检查（改为合并期 ERROR）、`**Reason**`/`**Migration**` 强制、场景 WHEN/THEN 结构检查、`affected_areas`/`initiative` 语义。
+- YAML 解析器覆盖常见结构；anchor / merge key / 多行 flow 等会带行号报错。
+- 已有 `openspec/` 内容不做迁移或删除；`openspec/config.yaml` 中超过 50KB 的 `context` 被忽略并告警。

@@ -11,10 +11,11 @@
  *   - `sidebar.panellist`             — the page's sidebar glyph
  *   - `conversation.composer.dock`    — the quick phase command bar under the composer
  *
- * All workflow state is derived from the session workspace's `openspec/`
- * directory through the `workspaceFiles` Remote namespace (list/read/changes
- * stream), the same seam the shipped file tree uses. The plugin stores
- * nothing of its own; files are the truth.
+ * All workflow state is derived by the Host from the workspace's `openspec/`
+ * files and fetched through `ctx.connection.rpc.call('/dsh-spec', method, …)`
+ * — the browser half holds no copy of the native model. Session file watches
+ * are only a refresh trigger; session-less workspaces poll the same route.
+ * The plugin stores nothing of its own; files are the truth.
  *
  * Visual language: the plugin is part of the Harness UI, so it copies the
  * host's management-page patterns (20px page title, 13px secondary text,
@@ -29,22 +30,35 @@ function createOpenSpecPlugin(require) {
   const h = React.createElement
   const { useState, useEffect, useRef, useCallback, useSyncExternalStore } = React
 
+  // tools/build.mjs inlines src/client-helpers.js here (pure formatting helpers
+  // shared with node --test); the marker line must stay in the factory body.
+  /* @@CLIENT_HELPERS@@ */
+
   /** Sidebar row id and the `main` dispatch key — the SAME string in both. */
   const PANEL_ID = 'openspec'
   /** The composer-dock entry id. */
   const DOCK_ID = 'openspec-quickbar'
   /** Locale namespace registered in apply(). */
   const NS = 'openSpec'
-  /** Absolute Host route for session-less initialization. */
+  /** Host route: read-only native state plus the session-less init write. */
   const ROUTE = '/dsh-spec'
   /** Debounce for watch-driven refreshes. */
   const REFRESH_DEBOUNCE_MS = 400
-  /** Fallback poll when the directory watch is unsupported. */
+  /** Session-less workspaces poll the Host route while the panel is open. */
+  const POLL_MS = 4000
+  /** Poll fallback for a session workspace whose directory watch failed. */
   const FALLBACK_POLL_MS = 8000
+  /** Upper bound for one Host route call so a lost RPC cannot hang the UI. */
+  const RPC_TIMEOUT_MS = 15000
   /** How long an inline result banner stays visible. */
   const NOTICE_MS = 5000
-  /** Max change folders inspected per workspace. */
-  const MAX_CHANGES = 12
+  /** List paging sizes — no list is silently truncated. */
+  const CHANGE_PAGE_SIZE = 6
+  const SPEC_PAGE_SIZE = 8
+  const ARCHIVE_PAGE_SIZE = 10
+  const ISSUE_PAGE_SIZE = 5
+  /** Lines fetched per document page (the Host route reports truncation). */
+  const DOC_PAGE_LINES = 2000
 
   /** All user-visible copy lives here. */
   const T = {
@@ -69,6 +83,7 @@ function createOpenSpecPlugin(require) {
       changeCount: '{count} 个变更',
       archived: '已归档 {count} 个变更',
       watchDown: '目录监听不可用，已改用轮询刷新。',
+      pollingHint: '此工作区暂无会话，面板每 4 秒向 Host 轮询一次最新状态。',
       workspaceLabel: '工作区',
       specOverview: 'Spec 概览',
       activeChanges: '进行中的变更',
@@ -90,7 +105,6 @@ function createOpenSpecPlugin(require) {
       loadingDoc: '正在读取文档…',
       readDocFailed: '读取文档失败',
       docEmpty: '这个文档是空的。',
-      docTruncated: '文档较长，仅显示前 2000 行。',
       viewDoc: '查看文档',
       expand: '展开',
       collapse: '收起',
@@ -139,6 +153,108 @@ function createOpenSpecPlugin(require) {
       switchChange: '切换变更',
       taskProgress: '{done}/{total}',
       enterHint: 'Enter 确认 · Esc 取消',
+      artifactDone: '完成',
+      artifactSkipped: '跳过',
+      artifactReady: '可创建',
+      artifactBlocked: '阻塞',
+      artifactUnknown: '未知',
+      artifactsLabel: '工件',
+      artifactProgress: '工件进度',
+      artifactSource: '工件 {id}',
+      missingDeps: '缺少依赖：{deps}',
+      skipSpecs: '跳过 specs',
+      retireCaps: '归档后移除能力',
+      schemaLabel: 'Schema',
+      schemaProject: '项目',
+      schemaBuiltin: '内置',
+      schemaUnknown: '未知',
+      configSection: '项目配置',
+      configMissing: '未找到 openspec/config.yaml，使用默认 schema：{schema}',
+      effectiveSchema: '生效 Schema',
+      contextLabel: 'Context',
+      contextEmpty: '未配置项目 context',
+      contextShow: '展开完整 context',
+      contextHide: '收起 context',
+      rulesLabel: 'Rules',
+      rulesEmpty: '没有按 artifact 配置的 rules',
+      rulesCount: '{count} 条',
+      operationsLabel: 'Operations',
+      operationApply: 'apply 指导',
+      operationArchive: 'archive 指导',
+      schemasSection: '可用 Schema',
+      schemaArtifacts: '工件：{items}',
+      validationLabel: '校验',
+      validationClean: '无校验问题',
+      validationSummary: '{errors} 错误 · {warnings} 警告',
+      issuesList: '校验问题',
+      showMoreItems: '显示另外 {count} 个',
+      moreItems: '还有 {count} 个',
+      allItemsShown: '已显示全部 {count} 个',
+      deltaSection: 'Delta 操作',
+      deltaAdded: '+{count} 新增',
+      deltaModified: '{count} 修改',
+      deltaRemoved: '{count} 删除',
+      deltaRenamed: '{count} 重命名',
+      deltaEmpty: '没有 delta 文件',
+      deltaFiles: 'delta 文件',
+      nextSteps: '下一步建议',
+      noNextSteps: '没有额外建议',
+      nextActionPropose: '提案',
+      nextActionUpdate: '继续规划',
+      nextActionApply: '实施',
+      nextActionArchive: '归档',
+      metadataLabel: '.openspec.yaml',
+      metaSchema: 'Schema',
+      metaCreated: '创建',
+      metaGoal: '目标',
+      metaSkip: '跳过 specs',
+      metaRetire: '归档后移除能力',
+      metaMissing: '没有 .openspec.yaml（按项目配置推导）',
+      metaNone: '—',
+      capabilityTitle: '能力 Spec',
+      capabilityPurpose: 'Purpose',
+      scenarioCount: '{count} 场景',
+      specIssues: '{count} 问题',
+      archiveUnknownDate: '未知日期',
+      archiveSectionTitle: '已归档变更',
+      archiveTasks: '任务',
+      archiveMetadata: '元数据',
+      archiveArtifacts: '工件',
+      archiveProbeNote: '归档详情按已知工件名读取；自定义/glob 工件请直接在仓库中查看。',
+      archiveLoadFailed: '读取归档详情失败',
+      archiveDetailLoading: '正在读取归档详情…',
+      quickNext: '下一步',
+      nativeSkills: '原生技能',
+      nativeSkillsTitle: '检测到原生 OpenSpec skills：{names}',
+      fallbackSkills: '内置技能',
+      fallbackSkillsTitle: '未检测到原生 skills，使用插件内置的文件语义 fallback。',
+      nativeSkillsCount: '{count} 个',
+      docTruncated: '{total} 行文档，仅显示前 {shown} 行',
+      docTruncatedSimple: '仅显示前 {shown} 行',
+      docShowMore: '继续读取（{count} 行）',
+      docReadMoreFailed: '读取后续内容失败',
+      docAtLine: '已定位到第 {line} 行',
+      validateAction: '校验',
+      validating: '校验中…',
+      validateTitle: '校验结果',
+      validateDesc: '由 Host 原生校验引擎只读计算，不写任何文件。',
+      validateFailed: '校验失败',
+      syncPreviewAction: '同步预览',
+      syncPreviewTitle: 'Spec 同步预览',
+      syncPreviewDesc: '只读预览；确认无误后用 /opsx-sync 执行。',
+      syncPreviewFailed: '同步预览失败',
+      initCreated: '新建：{items}',
+      initAlready: '没有需要新建的文件。',
+      blockedCount: '{count} 阻塞',
+      changesBlockedHint: '有 artifact 因缺少依赖被阻塞。',
+      workspaceWarnings: '工作区警告',
+      changeSchema: 'Schema {name}',
+      noIssues: '没有校验问题',
+      docsFromSchema: '按生效 schema 的 generates 列出',
+      plannerComplete: '规划完成',
+      planning: '规划中',
+      loadingArchive: '正在读取归档…',
+      customArtifactsNote: '自定义/glob 工件已按 generates 展开；未列出的内容不会静默丢弃。',
     },
     en: {
       panel: 'OpenSpec',
@@ -161,6 +277,7 @@ function createOpenSpecPlugin(require) {
       changeCount: '{count} changes',
       archived: '{count} archived changes',
       watchDown: 'Directory watch unavailable; falling back to polling.',
+      pollingHint: 'No session in this workspace — the panel polls the Host for fresh state every 4s.',
       workspaceLabel: 'Workspace',
       specOverview: 'Spec overview',
       activeChanges: 'Changes in motion',
@@ -182,7 +299,6 @@ function createOpenSpecPlugin(require) {
       loadingDoc: 'Reading document…',
       readDocFailed: 'Failed to read the document',
       docEmpty: 'This document is empty.',
-      docTruncated: 'Long document — showing the first 2000 lines.',
       viewDoc: 'View document',
       expand: 'Expand',
       collapse: 'Collapse',
@@ -231,6 +347,108 @@ function createOpenSpecPlugin(require) {
       switchChange: 'Switch change',
       taskProgress: '{done}/{total}',
       enterHint: 'Enter to confirm · Esc to cancel',
+      artifactDone: 'Done',
+      artifactSkipped: 'Skipped',
+      artifactReady: 'Ready',
+      artifactBlocked: 'Blocked',
+      artifactUnknown: 'Unknown',
+      artifactsLabel: 'Artifacts',
+      artifactProgress: 'Artifact progress',
+      artifactSource: 'artifact {id}',
+      missingDeps: 'Missing dependencies: {deps}',
+      skipSpecs: 'skip_specs',
+      retireCaps: 'retire capabilities after archive',
+      schemaLabel: 'Schema',
+      schemaProject: 'Project',
+      schemaBuiltin: 'Builtin',
+      schemaUnknown: 'Unknown',
+      configSection: 'Project config',
+      configMissing: 'No openspec/config.yaml found; using the default schema: {schema}',
+      effectiveSchema: 'Effective schema',
+      contextLabel: 'Context',
+      contextEmpty: 'No project context configured',
+      contextShow: 'Show full context',
+      contextHide: 'Collapse context',
+      rulesLabel: 'Rules',
+      rulesEmpty: 'No per-artifact rules configured',
+      rulesCount: '{count} rules',
+      operationsLabel: 'Operations',
+      operationApply: 'apply guidance',
+      operationArchive: 'archive guidance',
+      schemasSection: 'Available schemas',
+      schemaArtifacts: 'Artifacts: {items}',
+      validationLabel: 'Validation',
+      validationClean: 'No validation issues',
+      validationSummary: '{errors} errors · {warnings} warnings',
+      issuesList: 'Validation issues',
+      showMoreItems: 'Show {count} more',
+      moreItems: '{count} more',
+      allItemsShown: 'All {count} shown',
+      deltaSection: 'Delta operations',
+      deltaAdded: '+{count} added',
+      deltaModified: '{count} modified',
+      deltaRemoved: '{count} removed',
+      deltaRenamed: '{count} renamed',
+      deltaEmpty: 'No delta files',
+      deltaFiles: 'Delta files',
+      nextSteps: 'Suggested next steps',
+      noNextSteps: 'No extra suggestion',
+      nextActionPropose: 'Propose',
+      nextActionUpdate: 'Keep planning',
+      nextActionApply: 'Apply',
+      nextActionArchive: 'Archive',
+      metadataLabel: '.openspec.yaml',
+      metaSchema: 'Schema',
+      metaCreated: 'Created',
+      metaGoal: 'Goal',
+      metaSkip: 'skip_specs',
+      metaRetire: 'retire capabilities',
+      metaMissing: 'No .openspec.yaml (derived from project config)',
+      metaNone: '—',
+      capabilityTitle: 'Capability specs',
+      capabilityPurpose: 'Purpose',
+      scenarioCount: '{count} scenarios',
+      specIssues: '{count} issues',
+      archiveUnknownDate: 'Unknown date',
+      archiveSectionTitle: 'Archived changes',
+      archiveTasks: 'Tasks',
+      archiveMetadata: 'Metadata',
+      archiveArtifacts: 'Artifacts',
+      archiveProbeNote: 'Archive details are probed by known artifact names; custom/glob artifacts are read from the repository.',
+      archiveLoadFailed: 'Failed to read the archived change',
+      archiveDetailLoading: 'Reading archived change…',
+      quickNext: 'Next step',
+      nativeSkills: 'Native skills',
+      nativeSkillsTitle: 'Detected native OpenSpec skills: {names}',
+      fallbackSkills: 'Builtin skills',
+      fallbackSkillsTitle: 'No native skills detected; using the plugin file-semantics fallback.',
+      nativeSkillsCount: '{count}',
+      docTruncated: '{total}-line document — showing the first {shown} lines',
+      docTruncatedSimple: 'Showing the first {shown} lines',
+      docShowMore: 'Load {count} more lines',
+      docReadMoreFailed: 'Failed to read more of the document',
+      docAtLine: 'Located at line {line}',
+      validateAction: 'Validate',
+      validating: 'Validating…',
+      validateTitle: 'Validation result',
+      validateDesc: 'Computed read-only by the Host native validator; nothing is written.',
+      validateFailed: 'Validation failed',
+      syncPreviewAction: 'Sync preview',
+      syncPreviewTitle: 'Spec sync preview',
+      syncPreviewDesc: 'Read-only preview; run /opsx-sync to apply it.',
+      syncPreviewFailed: 'Failed to build the sync preview',
+      initCreated: 'Created: {items}',
+      initAlready: 'Nothing to create.',
+      blockedCount: '{count} blocked',
+      changesBlockedHint: 'Some artifacts are blocked by missing dependencies.',
+      workspaceWarnings: 'Workspace warnings',
+      changeSchema: 'Schema {name}',
+      noIssues: 'No validation issues',
+      docsFromSchema: 'Listed from the effective schema generates paths',
+      plannerComplete: 'Planning complete',
+      planning: 'Planning',
+      loadingArchive: 'Reading archive…',
+      customArtifactsNote: 'Custom/glob artifacts are expanded from generates; nothing listed here is silently dropped.',
     },
   }
 
@@ -312,8 +530,10 @@ function createOpenSpecPlugin(require) {
 
 .dshspec-item{display:flex;flex-direction:column;min-width:0}
 .dshspec-item+.dshspec-item{border-top:1px solid var(--dsw-alias-border-l1)}
-.dshspec-itemHead{display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:0;cursor:pointer;user-select:none}
+.dshspec-itemHead{display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:0;flex-wrap:wrap;cursor:pointer;user-select:none}
 .dshspec-itemHead:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshspec-itemChips{padding:0 14px 10px}
+.dshspec-summaryWide{flex:1 0 100%}
 .dshspec-itemHead:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
 .dshspec-itemHeadRow{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
 .dshspec-itemBody{display:flex;flex-direction:column;gap:12px;padding:12px 14px 14px;border-top:1px solid var(--dsw-alias-border-l1)}
@@ -374,7 +594,7 @@ function createOpenSpecPlugin(require) {
 
 /* Composer dock -------------------------------------------------------- */
 .dshspec-dock{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:2px 2px 6px;font-size:12.5px;color:var(--dsw-alias-label-tertiary);min-width:0}
-.dshspec-dockStatus{display:flex;align-items:center;gap:7px;min-width:0}
+.dshspec-dockStatus{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
 .dshspec-dockTargetWrap{position:relative;display:flex;align-items:center;min-width:0}
 .dshspec-dockTarget{display:inline-flex;align-items:center;gap:7px;min-width:0;padding:2px 6px 2px 3px;margin-left:-3px;border:none;border-radius:8px;background:transparent;font:inherit;color:inherit;cursor:pointer;text-align:left}
 .dshspec-dockTarget:hover{background:var(--dsw-alias-interactive-bg-hover)}
@@ -465,6 +685,56 @@ function createOpenSpecPlugin(require) {
 .dshspec-skelLine{height:10px;border-radius:5px;background:var(--dsw-alias-bg-skeleton);animation:dshspec-pulse 1.4s ease-in-out infinite}
 .dshspec-spin{animation:dshspec-rotate .8s linear infinite}
 .dshspec-toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:1001;display:flex;align-items:center;gap:8px;max-width:min(520px,calc(100vw - 48px));padding:9px 14px;border-radius:12px;background:var(--dsw-alias-toast-bg);color:var(--dsw-alias-toast-label);font-size:12.5px;line-height:18px;box-shadow:var(--dsw-elevation-prominent);animation:dshspec-fade .12s ease-out}
+
+/* Native model: artifact chips, metadata, issues, lists ----------------- */
+.dshspec-chipRow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+.dshspec-artChip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px 0 8px;border:.5px solid var(--dsw-alias-border-l2);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:11.5px;line-height:1;cursor:pointer;white-space:nowrap;transition:background .12s ease,border-color .12s ease,color .12s ease}
+.dshspec-artChip:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshspec-artChip:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.dshspec-artChip[data-status='ready']{border-color:var(--dsw-alias-state-business-primary)}
+.dshspec-artChip[data-status='blocked']{border-color:var(--dsw-alias-state-warn-primary)}
+.dshspec-artChip[data-status='done']{border-color:var(--dsw-alias-state-success-secondary)}
+.dshspec-artChipDot{width:6px;height:6px;border-radius:50%;flex:none}
+.dshspec-artChipState{color:var(--dsw-alias-label-tertiary);font-size:10.5px}
+.dshspec-artChip[data-status='ready'] .dshspec-artChipState,.dshspec-artChip[data-status='blocked'] .dshspec-artChipState{color:var(--dsw-alias-label-secondary)}
+.dshspec-depsRow{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:10px;background:var(--dsw-alias-interactive-bg-hover);font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary);flex-wrap:wrap}
+.dshspec-depsRow b{font-weight:500;color:var(--dsw-alias-label-primary)}
+.dshspec-kv{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:12.5px;line-height:18px}
+.dshspec-kvLabel{flex:none;min-width:72px;color:var(--dsw-alias-label-tertiary);font-size:11.5px}
+.dshspec-kvValue{min-width:0;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.dshspec-kvValue code,.dshspec-mono{font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11.5px}
+.dshspec-pre{margin:0;padding:10px 12px;border-radius:10px;border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
+.dshspec-prePlain{max-height:none;overflow:visible}
+.dshspec-issueList{display:flex;flex-direction:column;gap:5px}
+.dshspec-issue{display:flex;align-items:flex-start;gap:8px;padding:6px 9px;border-radius:9px;background:var(--dsw-alias-interactive-bg-hover);font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary);min-width:0}
+.dshspec-issueLevel{flex:none;font-size:10px;line-height:15px;font-weight:600;letter-spacing:.02em;padding:0 5px;border-radius:5px;color:var(--dsw-alias-label-primary)}
+.dshspec-issuePath{flex:none;font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:10.5px;line-height:17px;color:var(--dsw-alias-label-tertiary);max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshspec-issueMsg{min-width:0;overflow-wrap:anywhere}
+.dshspec-issue[data-tone='error'] .dshspec-issueLevel{background:var(--dsw-alias-state-error-secondary,var(--dsw-alias-state-error-primary));color:var(--dsw-alias-label-primary-foreground)}
+.dshspec-issue[data-tone='warn'] .dshspec-issueLevel{background:var(--dsw-alias-state-warn-secondary,var(--dsw-alias-state-warn-primary));color:var(--dsw-alias-label-primary-foreground)}
+.dshspec-issue[data-tone='info'] .dshspec-issueLevel{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary)}
+.dshspec-contextBox{max-height:180px;overflow:auto;border-radius:10px;background:var(--dsw-alias-interactive-bg-hover);padding:9px 11px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;overflow-wrap:anywhere}
+.dshspec-nested{display:flex;align-items:center;gap:8px;width:100%;min-width:0;padding:8px 14px;border:none;background:transparent;font:inherit;text-align:left;color:var(--dsw-alias-label-primary);cursor:pointer;transition:background .12s ease}
+.dshspec-nested:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshspec-nested:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
+.dshspec-nested+.dshspec-nested{border-top:1px solid var(--dsw-alias-border-l1)}
+.dshspec-nestedGroup{display:flex;align-items:center;gap:8px;padding:8px 14px 5px;font-size:11.5px;line-height:16px;font-weight:500;color:var(--dsw-alias-label-tertiary);min-width:0}
+.dshspec-nestedGroup+ .dshspec-nested{border-top:none}
+.dshspec-nestedName{font-size:13px;line-height:18px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshspec-nestedMeta{font-size:11.5px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshspec-nestedEnd{flex:none;display:flex;align-items:center;gap:6px;margin-left:auto}
+.dshspec-treeText{min-width:0;display:flex;flex-direction:column;gap:1px}
+.dshspec-pageFoot{display:flex;align-items:center;gap:8px;padding:9px 14px;border-top:1px solid var(--dsw-alias-border-l1);font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.dshspec-skillChips{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.dshspec-inlineTag{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:6px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:1;white-space:nowrap}
+.dshspec-summaryLine{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.dshspec-strongMeta{font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-secondary);min-width:0}
+.dshspec-strongMeta b{font-weight:500;color:var(--dsw-alias-label-primary)}
+.dshspec-codeBlock{max-height:min(54vh,520px);overflow:auto}
+.dshspec-archGroup{display:flex;flex-direction:column}
+.dshspec-archGroup+.dshspec-archGroup{border-top:1px solid var(--dsw-alias-border-l2)}
+.dshspec-archHead{display:flex;align-items:center;gap:8px;padding:8px 14px 6px;font-size:11.5px;line-height:16px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+
 @keyframes dshspec-fade{from{opacity:0}to{opacity:1}}
 @keyframes dshspec-pop{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
 @keyframes dshspec-rotate{to{transform:rotate(360deg)}}
@@ -617,32 +887,6 @@ function createOpenSpecPlugin(require) {
         ...rest,
       },
       h(Icon, { name: icon, size: size >= 28 ? 16 : 14 }),
-    )
-  }
-
-  /** Phase from files + parsed tasks; mirrors src/prompts.js derivePhase. */
-  function derivePhase(change) {
-    if (change.tasks !== null && change.tasks.total > 0) {
-      return change.tasks.done < change.tasks.total ? 'apply' : 'ready'
-    }
-    if (change.hasProposal || change.hasSpecs) return 'proposed'
-    return 'draft'
-  }
-
-  const PHASE_META = {
-    draft: { key: 'phaseDraft', color: 'var(--dsw-alias-label-tertiary)' },
-    proposed: { key: 'phaseProposed', color: 'var(--dsw-alias-state-business-primary)' },
-    apply: { key: 'phaseApply', color: 'var(--dsw-alias-state-warn-primary)' },
-    ready: { key: 'phaseReady', color: 'var(--dsw-alias-state-success-primary)' },
-  }
-
-  function PhaseBadge({ t, phase }) {
-    const meta = PHASE_META[phase] ?? PHASE_META.draft
-    return h(
-      'span',
-      { className: 'dshspec-badge', 'data-phase': phase },
-      h('span', { className: 'dshspec-badgeDot', style: { background: meta.color } }),
-      t(meta.key),
     )
   }
 
@@ -933,53 +1177,115 @@ function createOpenSpecPlugin(require) {
   }
 
   /* ------------------------------------------------------------------ *
-   * Data layer — workflow source derived from openspec/ files.
+   * Data layer — Host-derived native state.
+   *
+   * The browser never parses openspec/ files: every shape below comes from
+   * `ctx.connection.rpc.call('/dsh-spec', method, payload)` (see
+   * docs/native-module-contract.md §4/§5). A session file watch (or a 4s poll
+   * for session-less workspaces) only decides when to re-read; nothing is
+   * stored outside the React external store.
    * ------------------------------------------------------------------ */
 
-  /** Join a workspace root and a workspace-relative path with `/`. */
+  /** Join an absolute workspace root and a workspace-relative POSIX path. */
   function joinPath(root, rel) {
     return `${String(root).replace(/[\\/]+$/, '')}/${rel}`
   }
 
-  /** Count `- [ ]` / `- [x]` checkboxes — the workflow's only progress state. */
-  function parseTasks(text) {
-    let total = 0
-    let done = 0
-    const items = []
-    for (const raw of String(text ?? '').split(/\r?\n/)) {
-      const match = /^(\s*)[-*]\s+\[([ xX])\]\s+(.*)$/.exec(raw)
-      if (match === null) continue
-      total += 1
-      const checked = match[2].toLowerCase() === 'x'
-      if (checked) done += 1
-      if (items.length < 200) {
-        items.push({ text: match[3].trim(), done: checked, depth: Math.min(3, Math.floor(match[1].length / 2)) })
-      }
+  /** Workspace-relative POSIX form of a Host-provided path (relative paths pass through). */
+  function relPathOf(cwd, path) {
+    const raw = String(path ?? '').replace(/\\/g, '/')
+    const root = String(cwd ?? '').replace(/\\/g, '/').replace(/\/+$/, '')
+    if (root !== '' && (raw === root || raw.startsWith(`${root}/`))) {
+      return raw.slice(root.length).replace(/^\/+/, '')
     }
-    return { total, done, items }
+    return raw.replace(/^\.\//, '')
   }
 
-  /** Count requirement headings in a spec document (`### Requirement: …`). */
-  function countRequirements(text) {
-    let count = 0
-    for (const line of String(text ?? '').split(/\r?\n/)) {
-      if (/^###\s+\S/.test(line)) count += 1
+  /** One Host route call → value; throws on the `{ok:false}` envelope. */
+  async function callRoute(ctx, method, payload, label) {
+    const result = await withTimeout(
+      Promise.resolve(ctx.connection.rpc.call(ROUTE, method, payload)),
+      RPC_TIMEOUT_MS,
+      label ?? method,
+    )
+    if (result === null || typeof result !== 'object') throw new Error(`${method} 无响应`)
+    if (result.ok !== true) {
+      const error = result.error
+      throw new Error(typeof error?.message === 'string' ? error.message : String(error?.code ?? method))
     }
-    return count
+    return result.value
+  }
+
+  /** Normalize the Host WorkspaceState into the panel snapshot (defensive). */
+  function normalizeState(value, cwd) {
+    if (value === null || typeof value !== 'object') return { status: 'error', cwd, error: '状态为空' }
+    const status = value.status === 'missing' || value.status === 'error' ? value.status : 'ready'
+    const warnings = Array.isArray(value.warnings) ? value.warnings : []
+    if (status === 'error') {
+      const error =
+        typeof value.error === 'string'
+          ? value.error
+          : warnings.length > 0
+            ? warnings.join('；')
+            : '状态读取失败'
+      return { ...value, status, cwd: typeof value.cwd === 'string' ? value.cwd : cwd, error, warnings }
+    }
+    return {
+      ...value,
+      status,
+      cwd: typeof value.cwd === 'string' ? value.cwd : cwd,
+      changes: Array.isArray(value.changes) ? value.changes : [],
+      specs: Array.isArray(value.specs) ? value.specs : [],
+      schemas: Array.isArray(value.schemas) ? value.schemas : [],
+      archived: Array.isArray(value.archived) ? value.archived : [],
+      skills: value.skills ?? { native: [], fallbackActive: false },
+      warnings: Array.isArray(value.warnings) ? value.warnings : [],
+      archivedCount: typeof value.archivedCount === 'number' ? value.archivedCount : Array.isArray(value.archived) ? value.archived.length : 0,
+    }
+  }
+
+  /** Normalize one ChangeState (live or archived) so render code never crashes on a partial host. */
+  function normalizeChangeState(change, fallbackName) {
+    const value = change !== null && typeof change === 'object' ? change : {}
+    return {
+      ...value,
+      name: typeof value.name === 'string' && value.name !== '' ? value.name : String(fallbackName ?? ''),
+      schemaName: typeof value.schemaName === 'string' ? value.schemaName : '',
+      schemaSource: value.schemaSource === 'project' || value.schemaSource === 'builtin' ? value.schemaSource : undefined,
+      metadata: value.metadata !== null && typeof value.metadata === 'object' ? value.metadata : { found: false },
+      artifacts: Array.isArray(value.artifacts) ? value.artifacts : [],
+      docs: Array.isArray(value.docs) ? value.docs : [],
+      delta:
+        value.delta !== null && typeof value.delta === 'object'
+          ? { ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0, files: [], ...value.delta }
+          : { ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0, files: [] },
+      validation:
+        value.validation !== null && typeof value.validation === 'object'
+          ? { errors: 0, warnings: 0, infos: 0, issues: [], ...value.validation }
+          : { errors: 0, warnings: 0, infos: 0, issues: [] },
+      tasks: value.tasks !== null && typeof value.tasks === 'object' ? value.tasks : null,
+      nextSteps: Array.isArray(value.nextSteps) ? value.nextSteps.filter((step) => typeof step === 'string') : [],
+      applyRequires: Array.isArray(value.applyRequires) ? value.applyRequires : [],
+      tracks: typeof value.tracks === 'string' ? value.tracks : null,
+      isPlanningComplete: value.isPlanningComplete === true,
+      listStatus: value.listStatus === 'complete' || value.listStatus === 'in-progress' ? value.listStatus : 'no-tasks',
+    }
   }
 
   /**
-   * Per-session workflow source: one authoritative snapshot of the workspace's
-   * openspec/ tree, kept fresh by the directory changes stream, with a manual
-   * refresh and a command runner. Subscriptions drive its lifecycle.
+   * Workspace source: one Host `state` snapshot plus the on-demand read-only
+   * calls (`document`, `validate`, `sync-preview`, `archive-detail`) for one
+   * absolute workspace path. Subscriptions drive the watch/poll lifecycle.
    */
-  function createOpenspecSource(ctx, sessionId) {
-    let snapshot = { status: 'loading' }
+  function createWorkspaceSource(ctx, row) {
+    const cwd = row.cwd
+    let snapshot = { status: 'loading', cwd }
     const listeners = new Set()
-    let disposers = []
+    const disposers = []
     let epoch = 0
     let watchAlive = false
-    let watchFallback = null
+    let watchFailed = false
+    let pollTimer = null
     let debounceTimer = null
     let dirty = false
 
@@ -988,192 +1294,94 @@ function createOpenSpecPlugin(require) {
       for (const listener of listeners) listener()
     }
 
-    const listDir = async (path) => {
-      const listing = await ctx.remote.workspaceFiles.list(sessionId, path)
-      if (!listing.ok) throw Object.assign(new Error(listing.error?.message ?? 'list failed'), { code: listing.error?.code })
-      return listing.value.entries
-    }
-
-    const readFile = async (path, limit = 2000) => {
-      try {
-        const page = await ctx.remote.workspaceFiles.read(sessionId, path, { offset: 1, limit })
-        if (!page.ok) {
-          return { ok: false, path, text: '', error: page.error?.message ?? String(page.error?.code ?? 'read failed') }
-        }
-        const text = page.value?.text ?? ''
-        return { ok: true, path, text, truncated: text.split(/\r?\n/).length >= limit }
-      } catch (error) {
-        return { ok: false, path, text: '', error: error instanceof Error ? error.message : String(error) }
+    const clearPoll = () => {
+      if (pollTimer !== null) {
+        clearInterval(pollTimer)
+        pollTimer = null
       }
     }
 
-    /** Markdown documents directly inside a change / capability folder. */
-    const docsIn = (base, entries) => {
-      const docs = []
-      for (const entry of entries) {
-        if (entry.type !== 'file' || !entry.name.endsWith('.md')) continue
-        const kind = entry.name === 'proposal.md' ? 'proposal' : entry.name === 'design.md' ? 'design' : entry.name === 'tasks.md' ? 'tasks' : 'doc'
-        docs.push({ path: `${base}/${entry.name}`, label: entry.name, kind })
-      }
-      const order = { proposal: 0, design: 1, tasks: 2 }
-      docs.sort((left, right) => (order[left.kind] ?? 3) - (order[right.kind] ?? 3) || left.label.localeCompare(right.label))
-      return docs
+    /** Slow re-read while the panel is open (session-less workspace or watch down). */
+    const poll = (ms) => {
+      clearPoll()
+      pollTimer = setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden === true) return
+        if (listeners.size > 0) void refresh()
+      }, ms)
     }
 
-    /** Delta-spec documents under `<base>/specs/<capability>/spec.md`. */
-    const deltaDocs = async (base) => {
-      const docs = []
+    /** Follow `<cwd>/openspec` through the session file watch. */
+    const startWatch = (sessionId) => {
+      if (watchAlive || watchFailed) return
+      if (typeof ctx.remote?.$stream !== 'function' || typeof ctx.remote?.workspaceFiles?.changes !== 'function') {
+        watchFailed = true
+        poll(FALLBACK_POLL_MS)
+        return
+      }
+      const root = joinPath(cwd, 'openspec')
+      let stream
+      watchAlive = true
       try {
-        const capabilities = (await listDir(`${base}/specs`)).filter((entry) => entry.type === 'directory')
-        for (const capability of capabilities.slice(0, 12)) {
-          let entries = []
-          try {
-            entries = await listDir(`${base}/specs/${capability.name}`)
-          } catch {
-            continue
-          }
-          if (entries.some((entry) => entry.name === 'spec.md' && entry.type === 'file')) {
-            docs.push({ path: `${base}/specs/${capability.name}/spec.md`, label: `${capability.name}/spec.md`, kind: 'delta' })
-          }
-        }
+        stream = ctx.remote.$stream({
+          name: `openspec ${root}`,
+          open: (lifetime) => ctx.remote.workspaceFiles.changes(sessionId, root, lifetime),
+          ended: () => new Error(`openspec watch ended: ${root}`),
+        })
       } catch {
-        /* no specs/ folder inside this change */
+        watchAlive = false
+        watchFailed = true
+        poll(FALLBACK_POLL_MS)
+        return
       }
-      return docs
-    }
-
-    const readChange = async (root, name) => {
-      const base = `${root}/changes/${name}`
-      const entries = await listDir(base)
-      const names = entries.map((entry) => entry.name)
-      let tasks = null
-      if (names.includes('tasks.md')) {
-        const page = await readFile(`${base}/tasks.md`, 400)
-        if (page.ok) tasks = parseTasks(page.text)
-      }
-      return {
-        name,
-        hasProposal: names.includes('proposal.md'),
-        hasSpecs: names.includes('specs'),
-        tasks,
-        phase: null,
-        files: names.slice(0, 10),
-        docs: docsIn(base, entries).concat(await deltaDocs(base)),
-      }
-    }
-
-    const readCapability = async (root, name) => {
-      const base = `${root}/specs/${name}`
-      let entries = []
-      try {
-        entries = await listDir(base)
-      } catch {
-        /* unreadable capability folder */
-      }
-      const docs = docsIn(base, entries)
-      let requirementCount = 0
-      const spec = docs.find((doc) => doc.label === 'spec.md')
-      if (spec !== undefined) {
-        const page = await readFile(spec.path, 400)
-        if (page.ok) requirementCount = countRequirements(page.text)
-      }
-      return { name, docs, requirementCount }
-    }
-
-    /** Load one archived change on demand (the panel lists names only). */
-    const loadArchive = async (name) => {
-      const cwd = cwdOf(ctx, sessionId)
-      if (!cwd) return { ok: false, error: 'no workspace path' }
-      const base = `${joinPath(cwd, 'openspec')}/changes/archive/${name}`
-      try {
-        const entries = await listDir(base)
-        let tasks = null
-        if (entries.some((entry) => entry.name === 'tasks.md' && entry.type === 'file')) {
-          const page = await readFile(`${base}/tasks.md`, 400)
-          if (page.ok) tasks = parseTasks(page.text)
+      disposers.push(() => {
+        watchAlive = false
+        void stream.dispose()
+      })
+      void (async () => {
+        try {
+          for await (const item of stream) {
+            if (typeof item?.accept === 'function') item.accept()
+            if (item?.value?.kind === 'change') scheduleRefresh()
+          }
+        } catch {
+          watchAlive = false
+          watchFailed = true
+          if (listeners.size === 0) return
+          if (snapshot.status === 'ready') publish({ ...snapshot, watchDown: true })
+          poll(FALLBACK_POLL_MS)
         }
-        return { ok: true, name, docs: docsIn(base, entries).concat(await deltaDocs(base)), tasks }
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      })()
+    }
+
+    /** Pick the freshness strategy: session watch, else 4s polling. */
+    const ensureFreshness = () => {
+      if (listeners.size === 0) return
+      const sessionId = row.sessionId
+      if (typeof sessionId === 'string' && sessionId !== '') {
+        if (watchFailed) {
+          if (pollTimer === null) poll(FALLBACK_POLL_MS)
+          return
+        }
+        clearPoll()
+        startWatch(sessionId)
+        return
       }
+      // No session: a workspace with no live session polls the Host route.
+      if (pollTimer === null) poll(POLL_MS)
     }
 
     const refresh = async () => {
       const request = ++epoch
-      const cwd = cwdOf(ctx, sessionId)
-      if (!cwd) {
-        publish({ status: 'nosession' })
-        return
-      }
-      if (snapshot.status === 'loading' || snapshot.status === 'missing' || snapshot.status === 'error') {
-        publish({ ...snapshot, status: 'loading' })
-      }
-      const root = joinPath(cwd, 'openspec')
       try {
-        const topLevel = await ctx.remote.workspaceFiles.list(sessionId, `${root}/changes`)
+        const value = await callRoute(ctx, 'state', { cwd }, '读取 openspec 状态')
         if (request !== epoch) return
-        if (!topLevel.ok) {
-          const code = topLevel.error?.code
-          if (code === 'workspace-file/not-found' || code === 'workspace-file/outside-workspace') {
-            publish({ status: 'missing', cwd, root })
-          } else {
-            publish({ status: 'error', cwd, root, error: topLevel.error?.message ?? String(code ?? 'unknown') })
-          }
-          return
-        }
-        const dirs = topLevel.value.entries.filter((entry) => entry.type === 'directory' && entry.name !== 'archive')
-        const changes = []
-        for (const dir of dirs.slice(0, MAX_CHANGES)) {
-          try {
-            const change = await readChange(root, dir.name)
-            change.phase = derivePhase(change)
-            changes.push(change)
-          } catch {
-            /* unreadable folder: skip it rather than fail the workspace */
-          }
-          if (request !== epoch) return
-        }
-        let archived = []
-        const archiveEntry = topLevel.value.entries.find((entry) => entry.name === 'archive' && entry.type === 'directory')
-        if (archiveEntry !== undefined) {
-          try {
-            archived = (await listDir(`${root}/changes/archive`))
-              .filter((entry) => entry.type === 'directory')
-              .map((entry) => entry.name)
-              .sort((left, right) => right.localeCompare(left))
-          } catch {
-            /* empty archive folder */
-          }
-        }
-        if (request !== epoch) return
-        const specs = []
-        try {
-          const capabilityDirs = (await listDir(`${root}/specs`)).filter((entry) => entry.type === 'directory')
-          for (const dir of capabilityDirs.slice(0, 30)) {
-            try {
-              specs.push(await readCapability(root, dir.name))
-            } catch {
-              /* skip an unreadable capability */
-            }
-            if (request !== epoch) return
-          }
-        } catch {
-          /* no specs/ folder yet */
-        }
-        publish({
-          status: 'ready',
-          cwd,
-          root,
-          changes,
-          specs,
-          archived,
-          archivedCount: archived.length,
-          watchDown: snapshot.watchDown === true,
-        })
-        ensureWatch(root)
+        publish(normalizeState(value, cwd))
+        ensureFreshness()
       } catch (error) {
         if (request !== epoch) return
-        publish({ status: 'error', cwd, root, error: error instanceof Error ? error.message : String(error) })
+        const message = error instanceof Error ? error.message : String(error)
+        if (snapshot.status === 'ready') publish({ ...snapshot, backgroundError: message })
+        else publish({ status: 'error', cwd, error: message })
       }
     }
 
@@ -1189,57 +1397,109 @@ function createOpenSpecPlugin(require) {
       }, REFRESH_DEBOUNCE_MS)
     }
 
-    /** Follow the openspec/ directory; falls back to slow polling when unsupported. */
-    const ensureWatch = (root) => {
-      if (watchAlive || listeners.size === 0) return
-      watchAlive = true
-      let stream
+    /**
+     * Read one workspace document through the Host route.
+     * @returns {{ok: boolean, path: string, text: string, offset: number, limit: number, truncated: boolean, totalLines: number|null, error?: string}}
+     */
+    const readDocument = async (path, options) => {
+      const offset = typeof options?.offset === 'number' && options.offset > 0 ? Math.floor(options.offset) : 1
+      const limit = typeof options?.limit === 'number' && options.limit > 0 ? Math.floor(options.limit) : DOC_PAGE_LINES
       try {
-        stream = ctx.remote.$stream({
-          name: `openspec ${root}`,
-          open: (lifetime) => ctx.remote.workspaceFiles.changes(sessionId, root, lifetime),
-          ended: () => new Error(`openspec watch ended: ${root}`),
-        })
-      } catch {
-        watchAlive = false
-        startFallback()
-        return
-      }
-      disposers.push(() => {
-        watchAlive = false
-        void stream.dispose()
-      })
-      void (async () => {
-        try {
-          for await (const item of stream) {
-            if (typeof item?.accept === 'function') item.accept()
-            if (item?.value?.kind === 'change') scheduleRefresh()
-          }
-        } catch {
-          if (listeners.size > 0) {
-            publish({ ...snapshot, watchDown: true })
-            startFallback()
-          }
+        const value = await callRoute(ctx, 'document', { cwd, path: relPathOf(cwd, path), offset, limit }, '读取文档')
+        return {
+          ok: true,
+          path,
+          text: typeof value?.text === 'string' ? value.text : '',
+          offset,
+          limit,
+          truncated: value?.truncated === true,
+          totalLines: typeof value?.totalLines === 'number' && Number.isFinite(value.totalLines) ? value.totalLines : null,
         }
-      })()
+      } catch (error) {
+        return { ok: false, path, text: '', offset, limit, truncated: false, totalLines: null, error: error instanceof Error ? error.message : String(error) }
+      }
     }
 
-    const startFallback = () => {
-      if (watchFallback !== null || listeners.size === 0) return
-      watchFallback = setInterval(() => {
-        if (listeners.size > 0) void refresh()
-      }, FALLBACK_POLL_MS)
-      disposers.push(() => {
-        clearInterval(watchFallback)
-        watchFallback = null
-      })
+    /** Fallback archive detail for hosts without `archive-detail`: probe known artifacts. */
+    const probeArchivedChange = async (path, entry) => {
+      const candidates = ['.openspec.yaml', 'tasks.md', 'proposal.md', 'design.md']
+      const docs = []
+      let tasksText = ''
+      let metadataText = ''
+      for (const rel of candidates) {
+        const page = await readDocument(`${path}/${rel}`, { offset: 1, limit: 400 })
+        if (!page.ok) continue
+        if (rel === 'tasks.md') tasksText = page.text
+        else if (rel === '.openspec.yaml') metadataText = page.text
+        else docs.push({ path: `${path}/${rel}`, label: rel, artifactId: rel.replace(/\.md$/, ''), kind: 'artifact' })
+      }
+      if (docs.length === 0 && tasksText === '' && metadataText === '') return null
+      const tasks = tasksText === '' ? null : countTaskCheckboxes(tasksText)
+      return normalizeChangeState(
+        {
+          name: entry?.changeName,
+          metadata: { found: metadataText !== '', schema: null, created: null, goal: null, skip_specs: null },
+          artifacts: [],
+          docs,
+          tasks,
+          delta: { ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0, files: [] },
+          validation: { errors: 0, warnings: 0, infos: 0, issues: [] },
+          nextSteps: [],
+          isPlanningComplete: false,
+          listStatus: 'no-tasks',
+          fallback: true,
+          metadataText,
+        },
+        entry?.changeName ?? archiveEntryLabel(entry ?? {}),
+      )
+    }
+
+    /** Load one archived change on demand (primary: `archive-detail`, fallback: known-file probe). */
+    const loadArchive = async (entry) => {
+      const path = relPathOf(cwd, entry?.path ?? '')
+      if (path === '') return { ok: false, error: '归档路径为空' }
+      try {
+        const value = await callRoute(ctx, 'archive-detail', { cwd, path }, '读取归档')
+        const change = normalizeChangeState(value?.change, entry?.changeName ?? archiveEntryLabel(entry ?? {}))
+        return { ok: true, change, fallback: false }
+      } catch (error) {
+        const probed = await probeArchivedChange(path, entry)
+        if (probed !== null) return { ok: true, change: probed, fallback: true }
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
+    /** On-demand validation for one change (`validate` route method). */
+    const validateChange = async (changeName) => {
+      try {
+        const value = await callRoute(ctx, 'validate', { cwd, change: changeName }, '校验')
+        const validation = value?.validation ?? value ?? null
+        return { ok: true, validation, name: value?.name ?? changeName }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
+    /** Read-only merge preview for one change (`sync-preview` route method). */
+    const syncPreview = async (changeName) => {
+      try {
+        const value = await callRoute(ctx, 'sync-preview', { cwd, change: changeName }, '同步预览')
+        return { ok: true, text: typeof value?.text === 'string' ? value.text : '', preview: value?.preview ?? null }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
     }
 
     const start = () => {
-      disposers.push(ctx.on('connection/reset', () => {
-        watchAlive = false
-        void refresh()
-      }))
+      watchFailed = false
+      disposers.push(
+        ctx.on('connection/reset', () => {
+          watchAlive = false
+          watchFailed = false
+          clearPoll()
+          void refresh()
+        }),
+      )
       void refresh()
     }
 
@@ -1249,17 +1509,19 @@ function createOpenSpecPlugin(require) {
         clearTimeout(debounceTimer)
         debounceTimer = null
       }
+      clearPoll()
       for (const dispose of disposers.splice(0)) {
         try {
           dispose()
         } catch {
-          /* best effort teardown */
+          /* best-effort teardown */
         }
       }
-      disposers = []
     }
 
     return {
+      cwd,
+      sessionId: row.sessionId,
       hooks: {
         state: {
           getSnapshot: () => snapshot,
@@ -1274,27 +1536,25 @@ function createOpenSpecPlugin(require) {
         },
       },
       refresh,
-      /** Read one Markdown document for the viewer. */
-      readFile,
-      /** Load one archived change's artifacts on demand. */
+      readDocument,
       loadArchive,
-      /** Run one /command line in this session and normalize the outcome.
-       * The wire takes the exact receiving agent id plus the line; the dock
-       * renders inside the session it targets. */
-      async run(line) {
-        try {
-          const outcome = await ctx.remote.commands.execute(sessionId, line, [])
-          if (outcome === undefined) return { ok: false, text: `${line} 不是可用命令` }
-          if (!outcome.ok) return { ok: false, text: outcome.error?.message ?? `${line} 执行失败（${outcome.error?.code ?? 'unknown'}）` }
-          const execution = outcome.value
-          if (execution === undefined || execution.result === undefined) return { ok: false, text: `${line} 不是可用命令` }
-          const result = execution.result
-          if (result.kind === 'success') return { ok: true, text: result.text ?? '' }
-          return { ok: false, text: result.text ?? `${line} 执行失败（无错误信息）` }
-        } catch (error) {
-          return { ok: false, text: error instanceof Error ? error.message : String(error) }
-        }
-      },
+      validateChange,
+      syncPreview,
+    }
+  }
+
+  /** Session-less init through the Host route; reports the native scaffold's created items. */
+  async function initWorkspace(ctx, cwd) {
+    try {
+      const value = await callRoute(ctx, 'init', { cwd: typeof cwd === 'string' ? cwd : '' }, '初始化')
+      const created = Array.isArray(value?.created) ? value.created.filter((item) => typeof item === 'string') : []
+      return {
+        ok: true,
+        text: typeof value?.text === 'string' ? value.text : '',
+        created,
+      }
+    } catch (error) {
+      return { ok: false, text: error instanceof Error ? error.message : String(error), created: [] }
     }
   }
 
@@ -1397,25 +1657,56 @@ function createOpenSpecPlugin(require) {
     ]).finally(() => clearTimeout(timer))
   }
 
-  /** The change a one-click 实施/归档 acts on: applying first, then the first listed. */
+  /**
+   * Tone → `--dsw-*` color token. Tones come from the pure helpers
+   * (`artifactStatusTone`, `issueLevelTone`); the mapping to theme tokens is
+   * presentation and lives here.
+   */
+  const TONE_COLOR = {
+    success: 'var(--dsw-alias-state-success-primary)',
+    muted: 'var(--dsw-alias-label-tertiary)',
+    business: 'var(--dsw-alias-state-business-primary)',
+    warn: 'var(--dsw-alias-state-warn-primary)',
+    error: 'var(--dsw-alias-state-error-primary)',
+    info: 'var(--dsw-alias-label-secondary)',
+  }
+
+  /** Resolve one helper tone to a theme color token. */
+  function toneColor(tone) {
+    return TONE_COLOR[tone] ?? TONE_COLOR.muted
+  }
+
+  /** The change the quick bar targets: the first change still being planned, else the first active one. */
   function primaryChange(state) {
-    if (state.status !== 'ready' || state.changes.length === 0) return undefined
-    return state.changes.find((change) => change.phase === 'apply') ?? state.changes.find((change) => change.phase === 'ready') ?? state.changes[0]
+    if (state === null || state === undefined || state.status !== 'ready' || !Array.isArray(state.changes) || state.changes.length === 0) return undefined
+    return (
+      state.changes.find((change) => change.isPlanningComplete !== true) ??
+      state.changes.find((change) => change.listStatus !== 'complete') ??
+      state.changes[0]
+    )
   }
 
-  function statusColor(state) {
-    if (state.status === 'error') return 'var(--dsw-alias-state-error-primary)'
-    if (state.status === 'ready') {
-      const primary = primaryChange(state)
-      if (primary === undefined) return 'var(--dsw-alias-label-tertiary)'
-      return (PHASE_META[primary.phase] ?? PHASE_META.draft).color
+  /** Find the workspace row that a mounted session belongs to (quick bar). */
+  function rowForSession(ctx, sessionId) {
+    const rows = workspaceRows(ctx)
+    const match = rows.find(
+      (row) => row.sessionId === sessionId || (Array.isArray(row.sessionIds) && row.sessionIds.includes(sessionId)),
+    )
+    if (match !== undefined) return match
+    const cwd = cwdOf(ctx, sessionId)
+    if (typeof cwd !== 'string' || cwd === '') return undefined
+    return { workspaceId: undefined, cwd, sessionId, sessionIds: [sessionId] }
+  }
+
+  /** Format one templated locale string (`{name}` placeholders). */
+  function tx(t, key, vars) {
+    let text = t(key)
+    if (typeof text !== 'string') text = String(key)
+    if (vars !== undefined && vars !== null) {
+      for (const name of Object.keys(vars)) text = text.split(`{${name}}`).join(String(vars[name]))
     }
-    if (state.status === 'missing') return 'var(--dsw-alias-state-warn-primary)'
-    return 'var(--dsw-alias-label-tertiary)'
+    return text
   }
-
-  /** The stage the workflow suggests next — used to highlight one dock button. */
-  const PHASE_STAGE = { draft: 'propose', proposed: 'apply', apply: 'apply', ready: 'archive' }
 
   function basenameOf(path) {
     const trimmed = String(path ?? '').replace(/[\\/]+$/, '')
@@ -1448,31 +1739,87 @@ function createOpenSpecPlugin(require) {
     return true
   }
 
-  /** Stable no-op external-store pieces for workspace cards without a session yet. */
-  const NOOP_SUBSCRIBE = () => () => {}
-  const NOSESSION_SNAPSHOT = { status: 'nosession' }
-  const getNoSession = () => NOSESSION_SNAPSHOT
-
   /* ------------------------------------------------------------------ *
    * Panel surfaces.
    * ------------------------------------------------------------------ */
 
-  const PHASE_ORDER = ['draft', 'proposed', 'apply', 'ready']
+  /** Small tone badge: dot + text, used for schema sources, skip_specs, skills. */
+  function ToneBadge({ tone, title, children }) {
+    return h(
+      'span',
+      { className: 'dshspec-badge', title: title ?? undefined },
+      h('span', { className: 'dshspec-badgeDot', style: { background: toneColor(tone) } }),
+      children,
+    )
+  }
 
-  /** One-click init control: posts the workspace to the Host's session-less init route, then refreshes. */
+  /** Collapsible section with an optional count, header meta and action. */
+  function Section({ title, count, headMeta, action, defaultOpen = false, children }) {
+    const [open, setOpen] = useState(defaultOpen)
+    return h(
+      'section',
+      { className: 'dshspec-section' },
+      h(
+        'div',
+        { className: 'dshspec-sectionHead' },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'dshspec-sectionToggle',
+            'aria-expanded': open,
+            onClick: () => setOpen((value) => !value),
+          },
+          h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (open ? ' dshspec-chevOpen' : '') }),
+          h('span', { className: 'dshspec-sectionTitle' }, title),
+          count === undefined || count === null ? null : h('span', { className: 'dshspec-sectionCount' }, String(count)),
+        ),
+        headMeta ?? null,
+        h('span', { className: 'dshspec-space' }),
+        action ?? null,
+      ),
+      open ? h('div', { className: 'dshspec-sectionBody' }, children) : null,
+    )
+  }
+
+  /** "There is more" footer — lists are never silently truncated. */
+  function ListMore({ t, hidden, reveal, onMore }) {
+    if (!(hidden > 0)) return null
+    return h(
+      'div',
+      { className: 'dshspec-pageFoot' },
+      h('span', null, moreItemsText(t, hidden)),
+      h(
+        'button',
+        { type: 'button', className: 'dshspec-taskMore', onClick: onMore },
+        h(Icon, { name: 'chevronDown', size: 12 }),
+        tx(t, 'showMoreItems', { count: reveal }),
+      ),
+    )
+  }
+
+  /** Visible-count state for paged lists; grows by one page per click. */
+  function useVisibleLimit(step) {
+    const [limit, setLimit] = useState(step)
+    const reveal = useCallback(() => setLimit((value) => value + step), [step])
+    return [limit, reveal]
+  }
+
+  /** One-click init control: posts the workspace to the Host route, then refreshes. */
   function InitControl({ t, cwd, init, refresh }) {
     const [busy, setBusy] = useState(false)
     const [result, setResult] = useState(null)
     const initialize = async () => {
       setBusy(true)
       try {
-        setResult(typeof init === 'function' ? await init(cwd) : { ok: false, text: t('commandFailed') })
+        setResult(typeof init === 'function' ? await init(cwd) : { ok: false, text: t('commandFailed'), created: [] })
       } catch (error) {
-        setResult({ ok: false, text: error instanceof Error ? error.message : String(error) })
+        setResult({ ok: false, text: error instanceof Error ? error.message : String(error), created: [] })
       }
       if (typeof refresh === 'function') await refresh()
       setBusy(false)
     }
+    const created = Array.isArray(result?.created) ? result.created : []
     return h(
       'div',
       { style: { display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' } },
@@ -1481,7 +1828,23 @@ function createOpenSpecPlugin(require) {
         { variant: 'primary', size: 'md', icon: 'folderPlus', disabled: busy, onClick: () => void initialize() },
         busy ? t('initBusy') : t('init'),
       ),
-      result === null ? null : h(Banner, { tone: result.ok === true ? 'info' : 'error', wrap: result.ok !== true }, result.text),
+      result === null
+        ? null
+        : h(
+            'div',
+            { style: { display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' } },
+            created.length > 0
+              ? h(
+                  'div',
+                  { className: 'dshspec-chipRow' },
+                  h('span', { className: 'dshspec-inlineTag' }, tx(t, 'initCreated', { items: '' })),
+                  created.map((item) => h('span', { key: item, className: 'dshspec-fileChip' }, item)),
+                )
+              : null,
+            result.ok === true
+              ? h(Banner, { tone: 'info', wrap: true }, result.text === '' ? t('initAlready') : result.text)
+              : h(Banner, { tone: 'error', wrap: true }, result.text ?? t('commandFailed')),
+          ),
     )
   }
 
@@ -1657,10 +2020,12 @@ function createOpenSpecPlugin(require) {
     return h('div', { className: 'dshspec-markdown' }, blocks)
   }
 
-  /** Read-only Markdown preview modal for one openspec/ document. */
-  function DocModal({ t, doc, onClose, onAlign }) {
+  /** Read-only Markdown preview modal for one openspec/ document (truncation offers a follow-up read). */
+  function DocModal({ t, doc, onClose, onAlign, onReadMore }) {
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState(null)
+    const [moreBusy, setMoreBusy] = useState(false)
+    const [moreError, setMoreError] = useState(null)
     const align = async () => {
       if (typeof onAlign !== 'function' || busy) return
       setBusy(true)
@@ -1675,6 +2040,19 @@ function createOpenSpecPlugin(require) {
       }
       setBusy(false)
     }
+    const readMore = async () => {
+      if (typeof onReadMore !== 'function' || moreBusy) return
+      setMoreBusy(true)
+      setMoreError(null)
+      try {
+        const outcome = await onReadMore()
+        if (outcome !== undefined && outcome !== null && outcome.ok === false) setMoreError(outcome.error ?? t('docReadMoreFailed'))
+      } catch (failure) {
+        setMoreError(failure instanceof Error ? failure.message : String(failure))
+      }
+      setMoreBusy(false)
+    }
+    const shownLines = documentShownLines(doc.text ?? '')
     return h(
       Modal,
       {
@@ -1704,32 +2082,52 @@ function createOpenSpecPlugin(require) {
             : doc.text.trim() === ''
               ? h('div', { className: 'dshspec-sectionEmpty' }, t('docEmpty'))
               : h(Markdown, { text: doc.text }),
-        doc.status === 'ready' && doc.truncated === true ? h(Banner, { tone: 'warn' }, t('docTruncated')) : null,
+        doc.status === 'ready' && doc.truncated === true
+          ? h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 2px 2px' } },
+              h(Banner, { tone: 'warn', wrap: true }, documentTruncationText(t, { shown: shownLines, totalLines: doc.totalLines })),
+              h(
+                'div',
+                { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                h(
+                  Button,
+                  { variant: 'outline', size: 'sm', icon: 'refresh', disabled: moreBusy, onClick: () => void readMore() },
+                  moreBusy ? t('loading') : tx(t, 'docShowMore', { count: DOC_PAGE_LINES }),
+                ),
+                moreError === null ? null : h('span', { className: 'dshspec-errorText' }, moreError),
+              ),
+            )
+          : null,
       ),
+      doc.focusLine === undefined || doc.focusLine === null
+        ? null
+        : h('div', { className: 'dshspec-foot' }, h(Icon, { name: 'arrowUpRight', size: 12 }), h('span', null, tx(t, 'docAtLine', { line: doc.focusLine }))),
     )
   }
 
   /* ------------------------------------------------------------------ *
-   * Spec overview widgets + expandable rows.
+   * Native overview, artifact chips, metadata and issue lists.
    * ------------------------------------------------------------------ */
+
+  /** Native artifact statuses in display order. */
+  const ARTIFACT_STATUS_ORDER = ['done', 'skipped', 'ready', 'blocked']
 
   function Stat({ label, value }) {
     return h('div', { className: 'dshspec-stat' }, h('span', { className: 'dshspec-statValue' }, String(value)), h('span', { className: 'dshspec-statLabel' }, label))
   }
 
-  function ProgressRing({ t, done, total }) {
+  /** Generic percent ring (artifact progress, never the legacy phase split). */
+  function ProgressRing({ percent, label, title }) {
     const size = 72
     const stroke = 7
     const radius = (size - stroke) / 2
     const circumference = 2 * Math.PI * radius
-    const ratio = total > 0 ? Math.max(0, Math.min(1, done / total)) : 0
-    const color = total > 0 && ratio >= 1 ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-warn-primary)'
+    const ratio = Math.max(0, Math.min(1, (typeof percent === 'number' && Number.isFinite(percent) ? percent : 0) / 100))
+    const color = ratio >= 1 ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-business-primary)'
     return h(
       'div',
-      {
-        className: 'dshspec-ringWrap',
-        title: t('tasksDone').replace('{done}', String(done)).replace('{total}', String(total)),
-      },
+      { className: 'dshspec-ringWrap', title: title ?? label },
       h(
         'svg',
         { width: size, height: size, viewBox: `0 0 ${size} ${size}`, 'aria-hidden': 'true' },
@@ -1760,37 +2158,59 @@ function createOpenSpecPlugin(require) {
         'div',
         { className: 'dshspec-ringText' },
         h('span', { className: 'dshspec-ringValue' }, `${Math.round(ratio * 100)}%`),
-        h('span', { className: 'dshspec-ringLabel' }, t('progressLabel')),
+        h('span', { className: 'dshspec-ringLabel' }, label),
       ),
     )
   }
 
-  function SpecSummary({ t, state }) {
-    const changes = state.changes
-    const done = changes.reduce((sum, change) => sum + (change.tasks?.done ?? 0), 0)
-    const total = changes.reduce((sum, change) => sum + (change.tasks?.total ?? 0), 0)
-    const counts = { draft: 0, proposed: 0, apply: 0, ready: 0 }
-    for (const change of changes) counts[change.phase] = (counts[change.phase] ?? 0) + 1
+  /** Workspace overview: native artifact progress, validation counts and skills. */
+  function SummaryBar({ t, state }) {
+    const changes = Array.isArray(state.changes) ? state.changes : []
+    const totals = { done: 0, skipped: 0, ready: 0, blocked: 0 }
+    let artifactTotal = 0
+    let errors = 0
+    let warnings = 0
+    let taskDone = 0
+    let taskTotal = 0
+    for (const change of changes) {
+      const artifacts = Array.isArray(change.artifacts) ? change.artifacts : []
+      const counts = artifactStatusCounts(artifacts)
+      artifactTotal += artifacts.length
+      for (const status of ARTIFACT_STATUS_ORDER) totals[status] += counts[status]
+      const validation = change.validation ?? {}
+      errors += Number.isFinite(validation.errors) ? validation.errors : 0
+      warnings += Number.isFinite(validation.warnings) ? validation.warnings : 0
+      const progress = taskProgressInfo(change.tasks)
+      taskDone += progress.done
+      taskTotal += progress.total
+    }
+    const archiveCount = typeof state.archivedCount === 'number' ? state.archivedCount : state.archived.length
+    const nativeSkills = state.skills !== null && state.skills !== undefined && Array.isArray(state.skills.native) ? state.skills.native : []
+    const artifactPercent = artifactTotal === 0 ? 0 : Math.round(((totals.done + totals.skipped) / artifactTotal) * 100)
     return h(
       'div',
       { className: 'dshspec-summary' },
-      h(ProgressRing, { t, done, total }),
+      h(ProgressRing, {
+        percent: artifactPercent,
+        label: t('artifactProgress'),
+        title: tx(t, 'tasksDone', { done: totals.done + totals.skipped, total: artifactTotal }),
+      }),
       h(
         'div',
         { className: 'dshspec-summaryPhase' },
-        h('div', { className: 'dshspec-summaryLabel' }, t('phaseDistribution')),
+        h('div', { className: 'dshspec-summaryLabel' }, t('artifactProgress')),
         changes.length === 0
           ? h('div', { className: 'dshspec-note' }, t('noChanges'))
           : h(
               'div',
               { className: 'dshspec-phaseBar' },
-              PHASE_ORDER.map((phase) =>
-                counts[phase] > 0
+              ARTIFACT_STATUS_ORDER.map((status) =>
+                totals[status] > 0
                   ? h('span', {
-                      key: phase,
+                      key: status,
                       className: 'dshspec-phaseSeg',
-                      style: { flexGrow: counts[phase], background: PHASE_META[phase].color },
-                      title: `${t(PHASE_META[phase].key)} ${counts[phase]}`,
+                      style: { flexGrow: totals[status], background: toneColor(artifactStatusTone(status)) },
+                      title: `${artifactStatusText(t, status)} ${totals[status]}`,
                     })
                   : null,
               ),
@@ -1798,13 +2218,13 @@ function createOpenSpecPlugin(require) {
         h(
           'div',
           { className: 'dshspec-phaseLegend' },
-          PHASE_ORDER.map((phase) =>
+          ARTIFACT_STATUS_ORDER.map((status) =>
             h(
               'span',
-              { key: phase, className: 'dshspec-legendItem' },
-              h('span', { className: 'dshspec-badgeDot', style: { background: PHASE_META[phase].color } }),
-              t(PHASE_META[phase].key),
-              h('b', null, String(counts[phase] ?? 0)),
+              { key: status, className: 'dshspec-legendItem' },
+              h('span', { className: 'dshspec-badgeDot', style: { background: toneColor(artifactStatusTone(status)) } }),
+              artifactStatusText(t, status),
+              h('b', null, String(totals[status])),
             ),
           ),
         ),
@@ -1813,88 +2233,220 @@ function createOpenSpecPlugin(require) {
         'div',
         { className: 'dshspec-summaryStats' },
         h(Stat, { label: t('statActive'), value: changes.length }),
+        h(Stat, { label: t('taskList'), value: taskTotal === 0 ? '—' : `${taskDone}/${taskTotal}` }),
         h(Stat, { label: t('statSpecs'), value: state.specs.length }),
-        h(Stat, { label: t('statArchived'), value: state.archivedCount ?? state.archived.length }),
+        h(Stat, { label: t('statArchived'), value: archiveCount }),
+        h(Stat, { label: t('validationLabel'), value: errors + warnings }),
+      ),
+      h(
+        'div',
+        { className: 'dshspec-chipRow dshspec-summaryWide' },
+        nativeSkills.length > 0
+          ? h(
+              ToneBadge,
+              { tone: 'business', title: tx(t, 'nativeSkillsTitle', { names: nativeSkills.map((skill) => skill.name ?? skill.workflow ?? '').join(', ') }) },
+              `${t('nativeSkills')} ${nativeSkills.length}`,
+            )
+          : null,
+        state.skills !== null && state.skills !== undefined && state.skills.fallbackActive === true
+          ? h(ToneBadge, { tone: 'muted', title: t('fallbackSkillsTitle') }, t('fallbackSkills'))
+          : null,
       ),
     )
   }
 
-  function DocGrid({ t, docs, openDoc }) {
-    if (docs.length === 0) return h('div', { className: 'dshspec-note' }, t('noDocs'))
+  /** Document buttons for a change / capability / archive detail. */
+  function DocGrid({ t, docs, openDoc, emptyText }) {
+    const list = Array.isArray(docs) ? docs : []
+    if (list.length === 0) return h('div', { className: 'dshspec-note' }, emptyText ?? t('noDocs'))
     return h(
       'div',
       { className: 'dshspec-docGrid' },
-      docs.map((doc) =>
-        h(
+      list.map((doc) => {
+        const path = typeof doc.path === 'string' ? doc.path : ''
+        const basename = basenameOf(path) || String(doc.label ?? '')
+        const label = doc.kind === 'delta' && typeof doc.label === 'string' && doc.label !== '' ? doc.label : basename
+        return h(
           'button',
           {
-            key: doc.path,
+            key: path === '' ? label : path,
             type: 'button',
             className: 'dshspec-docBtn',
-            title: doc.path,
+            title: path,
             onClick: () => openDoc(doc),
           },
           h(Icon, { name: 'file', size: 14 }),
-          h('span', null, doc.label),
-        ),
-      ),
+          h('span', null, label),
+          doc.artifactId !== undefined && doc.artifactId !== null
+            ? h('span', { className: 'dshspec-inlineTag' }, tx(t, 'artifactSource', { id: artifactLabel(doc.artifactId) }))
+            : null,
+          doc.kind === 'delta' ? h('span', { className: 'dshspec-docKind' }, 'delta') : null,
+        )
+      }),
     )
   }
 
-  function TaskPreview({ t, tasks }) {
-    const [open, setOpen] = useState(false)
-    if (tasks === null || tasks === undefined || tasks.items.length === 0) {
-      return h('div', { className: 'dshspec-note' }, t('noTasks'))
-    }
-    const limit = 12
-    const shown = open ? tasks.items : tasks.items.slice(0, limit)
-    const remaining = tasks.items.length - shown.length
+  /** One label/value row (`.openspec.yaml` metadata, config facts). */
+  function KvRow({ label, value }) {
     return h(
       'div',
-      { className: 'dshspec-taskBlock' },
-      h(
-        'div',
-        { className: 'dshspec-subHead' },
-        h('b', null, t('taskList')),
-        h('span', null, t('tasksDone').replace('{done}', String(tasks.done)).replace('{total}', String(tasks.total))),
-      ),
-      h(
-        'ul',
-        { className: 'dshspec-taskList' },
-        shown.map((item, index) =>
-          h(
-            'li',
-            { key: index, className: 'dshspec-task' + (item.done ? ' dshspec-taskDone' : '') },
-            h(Icon, { name: item.done ? 'checkSquare' : 'square', size: 14 }),
-            h('span', null, item.text),
-          ),
-        ),
-      ),
-      open
-        ? tasks.items.length > limit
-          ? h(
-              'button',
-              { type: 'button', className: 'dshspec-taskMore', onClick: () => setOpen(false) },
-              h(Icon, { name: 'chevronRight', size: 12, className: 'dshspec-chev dshspec-chevOpen' }),
-              t('collapseTasks'),
-            )
-          : null
-        : remaining > 0
-          ? h(
-              'button',
-              { type: 'button', className: 'dshspec-taskMore', onClick: () => setOpen(true) },
-              h(Icon, { name: 'chevronRight', size: 12, className: 'dshspec-chev' }),
-              t('expandTasks').replace('{count}', String(remaining)),
-            )
-          : null,
+      { className: 'dshspec-kv' },
+      h('span', { className: 'dshspec-kvLabel' }, label),
+      h('span', { className: 'dshspec-kvValue' }, value === undefined || value === null ? '—' : String(value)),
     )
   }
 
-  /** One collapsible change row: status line always, artifacts + tasks when open. */
-  function ChangeItem({ t, change, open, onToggle, execute, openDoc }) {
-    const meta = PHASE_META[change.phase] ?? PHASE_META.draft
-    const ready = change.phase === 'ready'
-    const tasks = change.tasks
+  /** `.openspec.yaml` metadata rows from the Host `ChangeState.metadata`. */
+  function MetadataRows({ t, metadata }) {
+    const value = metadata !== null && metadata !== undefined ? metadata : {}
+    if (value.found !== true) return h('div', { className: 'dshspec-note' }, t('metaMissing'))
+    return h(
+      'div',
+      { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+      h(KvRow, { label: t('metaSchema'), value: value.schema ?? t('metaNone') }),
+      h(KvRow, { label: t('metaCreated'), value: value.created ?? t('metaNone') }),
+      value.goal !== undefined && value.goal !== null && value.goal !== '' ? h(KvRow, { label: t('metaGoal'), value: value.goal }) : null,
+      value.skip_specs === true ? h(KvRow, { label: t('metaSkip'), value: t('artifactSkipped') }) : null,
+      value.retire_capabilities === true ? h(KvRow, { label: t('metaRetire'), value: t('artifactDone') }) : null,
+    )
+  }
+
+  /** Validation issues with level, path and line; clicking opens the document. */
+  function IssueList({ t, issues, onIssue }) {
+    const list = Array.isArray(issues) ? issues : []
+    const [limit, reveal] = useVisibleLimit(ISSUE_PAGE_SIZE)
+    if (list.length === 0) return h('div', { className: 'dshspec-note' }, t('noIssues'))
+    const page = paginate(list, { pageSize: limit })
+    return h(
+      'div',
+      { className: 'dshspec-issueList' },
+      page.items.map((issue, index) => {
+        const level = typeof issue?.level === 'string' ? issue.level : 'INFO'
+        const location = validationIssueLocation(issue)
+        return h(
+          'div',
+          {
+            key: `${location}#${index}`,
+            className: 'dshspec-issue',
+            'data-tone': issueLevelTone(level),
+            role: 'button',
+            tabIndex: 0,
+            title: location === '' ? t('viewDoc') : `${t('viewDoc')} · ${location}`,
+            onClick: () => onIssue(issue),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onIssue(issue)
+              }
+            },
+          },
+          h('span', { className: 'dshspec-issueLevel' }, level),
+          location === '' ? null : h('span', { className: 'dshspec-issuePath' }, location),
+          h('span', { className: 'dshspec-issueMsg' }, issue?.message ?? ''),
+        )
+      }),
+      h(ListMore, { t, hidden: page.hidden, reveal: Math.min(page.pageSize, page.hidden), onMore: reveal }),
+    )
+  }
+
+  /** Tone of a change's overall native state (progress colors / status dot). */
+  function changeTone(change) {
+    if (change === null || change === undefined) return 'muted'
+    const validation = change.validation ?? {}
+    if (Number.isFinite(validation.errors) && validation.errors > 0) return 'error'
+    if (blockedArtifacts(change.artifacts).length > 0) return 'warn'
+    if (change.isPlanningComplete !== true) return 'business'
+    if (change.listStatus === 'complete') return 'success'
+    return 'warn'
+  }
+
+  /** Icon for the derived native next action. */
+  function nextActionIcon(kind) {
+    if (kind === 'propose') return 'filePlus'
+    if (kind === 'update') return 'activity'
+    if (kind === 'archive') return 'archive'
+    return 'play'
+  }
+
+  /** One-line Purpose summary for the capability list; the full text stays in the title attribute. */
+  function purposeSummary(spec) {
+    const raw = String(spec?.purpose ?? '').replace(/\s+/g, ' ').trim()
+    if (raw === '') return ''
+    return raw.length > 140 ? `${raw.slice(0, 139)}…` : raw
+  }
+
+  /** Per-artifact native status chips; a blocked chip expands its `missingDeps`. */
+  function ArtifactChips({ t, change }) {
+    const artifacts = sortArtifacts(change.artifacts)
+    const [depsFor, setDepsFor] = useState(null)
+    if (artifacts.length === 0) return h('div', { className: 'dshspec-note' }, t('docsFromSchema'))
+    const selected = artifacts.find((artifact) => String(artifact.id) === depsFor)
+    return h(
+      'div',
+      { style: { display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 } },
+      h(
+        'div',
+        { className: 'dshspec-chipRow' },
+        artifacts.map((artifact) => {
+          const status = typeof artifact.status === 'string' ? artifact.status : 'blocked'
+          const blocked = status === 'blocked'
+          const deps = Array.isArray(artifact.missingDeps) ? artifact.missingDeps : []
+          const depsText = deps.length === 0 ? '—' : deps.map((dep) => artifactLabel(dep)).join('、')
+          const common = {
+            key: artifact.id,
+            className: 'dshspec-artChip',
+            'data-status': status,
+            title: blocked
+              ? tx(t, 'missingDeps', { deps: depsText })
+              : `${artifactLabel(artifact.id)} · ${artifactStatusText(t, status)}`,
+          }
+          const content = [
+            h('span', { key: 'dot', className: 'dshspec-artChipDot', style: { background: toneColor(artifactStatusTone(status)) } }),
+            h('span', { key: 'label' }, artifactLabel(artifact.id)),
+            h('span', { key: 'state', className: 'dshspec-artChipState' }, artifactStatusText(t, status)),
+          ]
+          return blocked
+            ? h(
+                'button',
+                {
+                  ...common,
+                  type: 'button',
+                  'aria-expanded': depsFor === artifact.id,
+                  onClick: () => setDepsFor((current) => (current === artifact.id ? null : artifact.id)),
+                },
+                content,
+              )
+            : h('span', common, content)
+        }),
+      ),
+      selected === undefined
+        ? null
+        : h(
+            'div',
+            { className: 'dshspec-depsRow' },
+            h('b', null, `${artifactLabel(selected.id)} · ${t('artifactBlocked')}`),
+            h(
+              'span',
+              null,
+              tx(t, 'missingDeps', {
+                deps: (Array.isArray(selected.missingDeps) ? selected.missingDeps : []).map((dep) => artifactLabel(dep)).join('、') || '—',
+              }),
+            ),
+          ),
+    )
+  }
+
+  /**
+   * One collapsible change card: native artifact chips are always visible, the
+   * body adds schema-derived docs, `.openspec.yaml` metadata, delta counts,
+   * validation issues and the native next step.
+   */
+  function ChangeCard({ t, change, open, onToggle, commands, openDoc, onIssue, onValidate, onSyncPreview }) {
+    const action = deriveNextAction(change)
+    const progress = taskProgressInfo(change.tasks)
+    const blocked = blockedArtifacts(change.artifacts)
+    const validation = change.validation ?? {}
+    const deltaText = deltaSummaryText(t, change.delta)
     const toggle = () => onToggle()
     return h(
       'div',
@@ -1916,9 +2468,20 @@ function createOpenSpecPlugin(require) {
         },
         h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (open ? ' dshspec-chevOpen' : '') }),
         h('span', { className: 'dshspec-changeName', title: change.name }, change.name),
-        h(PhaseBadge, { t, phase: change.phase }),
-        tasks !== null && tasks.total > 0
-          ? h('div', { className: 'dshspec-changeProgress' }, h(Progress, { done: tasks.done, total: tasks.total, color: meta.color }))
+        change.schemaName === ''
+          ? null
+          : h(ToneBadge, { tone: 'muted', title: tx(t, 'changeSchema', { name: change.schemaName }) }, change.schemaName),
+        h(ToneBadge, { tone: change.isPlanningComplete ? 'success' : 'business' }, t(change.isPlanningComplete ? 'plannerComplete' : 'planning')),
+        change.metadata.skip_specs === true ? h(ToneBadge, { tone: 'muted', title: t('skipSpecs') }, t('skipSpecs')) : null,
+        blocked.length > 0
+          ? h(ToneBadge, { tone: 'warn', title: t('changesBlockedHint') }, tx(t, 'blockedCount', { count: blocked.length }))
+          : null,
+        progress.total > 0
+          ? h(
+              'div',
+              { className: 'dshspec-changeProgress' },
+              h(Progress, { done: progress.done, total: progress.total, color: toneColor(changeTone(change)) }),
+            )
           : null,
         h('span', { className: 'dshspec-space' }),
         h(
@@ -1927,199 +2490,476 @@ function createOpenSpecPlugin(require) {
           h(
             Button,
             {
-              variant: ready ? 'outline' : 'primary',
+              variant: 'primary',
               size: 'md',
-              icon: 'play',
+              icon: nextActionIcon(action.kind),
+              title: change.nextSteps.length > 0 ? `${t('quickNext')} · ${change.nextSteps.join(' · ')}` : nextActionText(t, action),
               onClick: (event) => {
                 event.stopPropagation()
-                execute(`/opsx-apply ${change.name}`)
+                if (action.kind === 'propose') commands.open('propose')
+                else commands.execute(action.line)
               },
             },
-            change.phase === 'apply' ? t('applyContinue') : t('apply'),
-          ),
-          h(
-            Button,
-            {
-              variant: ready ? 'primary' : 'ghost',
-              size: 'md',
-              icon: 'archive',
-              onClick: (event) => {
-                event.stopPropagation()
-                execute(`/opsx-archive ${change.name}`)
-              },
-            },
-            t('archive'),
+            nextActionText(t, action),
           ),
         ),
       ),
+      h('div', { className: 'dshspec-itemChips' }, h(ArtifactChips, { t, change })),
       open
         ? h(
             'div',
             { className: 'dshspec-itemBody' },
-            h('div', { className: 'dshspec-subHead' }, h('b', null, t('docs'))),
+            h('div', { className: 'dshspec-subHead' }, h('b', null, t('metadataLabel')), h('span', null, t('effectiveSchema') + ' · ' + (change.schemaName || '—'))),
+            h(MetadataRows, { t, metadata: change.metadata }),
+            h('div', { className: 'dshspec-subHead' }, h('b', null, t('docs')), h('span', null, t('docsFromSchema'))),
             h(DocGrid, { t, docs: change.docs, openDoc }),
-            h(TaskPreview, { t, tasks }),
+            h(
+              'div',
+              { className: 'dshspec-subHead' },
+              h('b', null, t('deltaSection')),
+              h('span', null, deltaText === '' ? t('deltaEmpty') : deltaText),
+            ),
+            deltaText === '' ? null : h(DocGrid, { t, docs: change.docs.filter((doc) => doc.kind === 'delta'), openDoc }),
+            h(
+              'div',
+              { className: 'dshspec-subHead' },
+              h('b', null, t('issuesList')),
+              h('span', null, validationSummaryText(t, validation)),
+            ),
+            h(IssueList, { t, issues: validation.issues, onIssue }),
+            h('div', { className: 'dshspec-subHead' }, h('b', null, t('nextSteps'))),
+            change.nextSteps.length === 0
+              ? h('div', { className: 'dshspec-note' }, t('noNextSteps'))
+              : h(
+                  'ul',
+                  { className: 'dshspec-taskList' },
+                  change.nextSteps.map((step, index) =>
+                    h(
+                      'li',
+                      { key: index, className: 'dshspec-task' },
+                      h(Icon, { name: 'chevronRight', size: 12 }),
+                      h('span', null, step),
+                    ),
+                  ),
+                ),
+            h(
+              'div',
+              { className: 'dshspec-chipRow' },
+              h(Button, { variant: 'outline', size: 'sm', icon: 'check', onClick: () => onValidate(change) }, t('validateAction')),
+              h(Button, { variant: 'outline', size: 'sm', icon: 'refresh', onClick: () => onSyncPreview(change) }, t('syncPreviewAction')),
+            ),
           )
         : null,
     )
   }
 
-  /** One finalized capability spec row: click opens its spec.md. */
-  function CapabilityRow({ t, capability, openDoc }) {
-    const doc = capability.docs.find((item) => item.label === 'spec.md') ?? capability.docs[0]
+  /** Capability specs with native counts, validation and nested-path grouping. */
+  function CapabilitySection({ t, specs, openDoc, onIssues }) {
+    const list = Array.isArray(specs) ? specs : []
+    const [limit, reveal] = useVisibleLimit(SPEC_PAGE_SIZE)
+    if (list.length === 0) {
+      return h(SectionEmpty, { icon: 'layers', title: t('noCapabilities'), hint: t('noCapabilitiesHint') })
+    }
+    const rows = groupSpecsByPath(list)
+    const page = paginate(rows, { pageSize: limit })
+    const openSpec = (spec) => {
+      if (spec === null || spec === undefined || typeof spec.path !== 'string' || spec.path === '') return
+      openDoc({ path: spec.path, label: basenameOf(spec.path) || `${spec.name}/spec.md`, artifactId: 'specs' })
+    }
     return h(
-      'button',
-      {
-        type: 'button',
-        className: 'dshspec-rowItem',
-        title: doc === undefined ? t('noDocs') : doc.path,
-        onClick: () => {
-          if (doc !== undefined) openDoc(doc)
-        },
-      },
-      h('span', { className: 'dshspec-rowIcon' }, h(Icon, { name: 'layers', size: 15 })),
-      h(
-        'span',
-        { className: 'dshspec-rowText' },
-        h('span', { className: 'dshspec-rowName' }, capability.name),
-        h('span', { className: 'dshspec-rowMeta' }, doc === undefined ? t('noDocs') : doc.label),
+      'div',
+      { style: { display: 'flex', flexDirection: 'column' } },
+      page.items.map((row, index) =>
+        row.kind === 'group'
+          ? h(
+              'div',
+              { key: `group-${row.fullName}`, className: 'dshspec-nestedGroup', style: { paddingLeft: 14 + row.depth * 18 } },
+              h(Icon, { name: 'layers', size: 13 }),
+              h('span', null, row.label),
+            )
+          : h(
+              'div',
+              {
+                key: `spec-${row.fullName}-${index}`,
+                className: 'dshspec-nested',
+                style: { paddingLeft: 14 + row.depth * 18 },
+                title: row.fullName,
+                role: 'button',
+                tabIndex: 0,
+                onClick: () => openSpec(row.spec),
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    openSpec(row.spec)
+                  }
+                },
+              },
+              h(Icon, { name: 'file', size: 14 }),
+              h(
+                'span',
+                { className: 'dshspec-treeText' },
+                h('span', { className: 'dshspec-nestedName' }, row.label),
+                h('span', { className: 'dshspec-nestedMeta', title: String(row.spec.purpose ?? '') }, purposeSummary(row.spec) || t('capabilityPurpose')),
+              ),
+              h(
+                'span',
+                { className: 'dshspec-nestedEnd' },
+                h('span', { className: 'dshspec-legendItem' }, tx(t, 'requirementCount', { count: row.spec.requirementCount ?? 0 })),
+                h('span', { className: 'dshspec-legendItem' }, tx(t, 'scenarioCount', { count: row.spec.scenarioCount ?? 0 })),
+                totalIssues(row.spec.validation) > 0 && typeof onIssues === 'function'
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'dshspec-taskMore',
+                        title: validationSummaryText(t, row.spec.validation),
+                        onClick: (event) => {
+                          event.stopPropagation()
+                          onIssues(row.spec)
+                        },
+                      },
+                      h(Icon, { name: 'alert', size: 12 }),
+                      tx(t, 'specIssues', { count: totalIssues(row.spec.validation) }),
+                    )
+                  : null,
+                h(Icon, { name: 'chevronRight', size: 14 }),
+              ),
+            ),
       ),
-      capability.requirementCount > 0
-        ? h('span', { className: 'dshspec-legendItem' }, t('requirementCount').replace('{count}', String(capability.requirementCount)))
-        : null,
-      h(Icon, { name: 'chevronRight', size: 14 }),
+      h(ListMore, { t, hidden: page.hidden, reveal: Math.min(page.pageSize, page.hidden), onMore: reveal }),
     )
   }
 
-  function archiveParts(name) {
-    const match = /^(\d{4}-\d{2}-\d{2})-(.*)$/.exec(name)
-    return match === null ? { date: null, label: name } : { date: match[1], label: match[2] }
+  /** Total error/warning count of one validation summary. */
+  function totalIssues(validation) {
+    const errors = Number.isFinite(validation?.errors) ? validation.errors : 0
+    const warnings = Number.isFinite(validation?.warnings) ? validation.warnings : 0
+    return errors + warnings
   }
 
-  /** Archived changes live at the bottom, newest first, loaded on demand. */
+  /** Archive rows grouped by local date; each change's artifacts/tasks/metadata load on demand. */
   function ArchiveSection({ t, source, archived, openDoc }) {
     const [open, setOpen] = useState(false)
     const [expanded, setExpanded] = useState({})
     const [details, setDetails] = useState({})
+    const [limit, reveal] = useVisibleLimit(ARCHIVE_PAGE_SIZE)
+    const groups = groupArchivedByLocalDate(archived)
 
+    const visibleGroups = []
+    let remaining = limit
+    let hidden = 0
+    for (const group of groups) {
+      if (remaining <= 0) {
+        hidden += group.entries.length
+        continue
+      }
+      const entries = group.entries.slice(0, remaining)
+      hidden += group.entries.length - entries.length
+      remaining -= entries.length
+      if (entries.length > 0) visibleGroups.push({ date: group.date, entries })
+    }
+
+    const keyOf = (entry) => String(entry?.path ?? entry?.name ?? '')
     const load = useCallback(
-      (name) => {
-        setDetails((prev) => (prev[name] === undefined ? { ...prev, [name]: { status: 'loading' } } : prev))
+      (entry) => {
+        const key = keyOf(entry)
         if (source === undefined) {
-          setDetails((prev) => ({ ...prev, [name]: { status: 'error', error: t('commandFailed') } }))
+          setDetails((prev) => ({ ...prev, [key]: { status: 'error', error: t('archiveLoadFailed') } }))
           return
         }
-        void source.loadArchive(name).then((result) => {
-          setDetails((prev) => ({
-            ...prev,
-            [name]:
-              result !== null && result !== undefined && result.ok === true
-                ? { status: 'ready', docs: result.docs, tasks: result.tasks }
-                : { status: 'error', error: result?.error ?? t('commandFailed') },
-          }))
-        })
+        setDetails((prev) => (prev[key] === undefined ? { ...prev, [key]: { status: 'loading' } } : prev))
+        void source
+          .loadArchive(entry)
+          .then((result) => {
+            setDetails((prev) => ({
+              ...prev,
+              [key]:
+                result !== null && result !== undefined && result.ok === true
+                  ? { status: 'ready', change: result.change, fallback: result.fallback === true }
+                  : { status: 'error', error: result?.error ?? t('archiveLoadFailed') },
+            }))
+          })
+          .catch((error) => {
+            setDetails((prev) => ({ ...prev, [key]: { status: 'error', error: error instanceof Error ? error.message : String(error) } }))
+          })
       },
       [source, t],
     )
 
-    const toggleItem = (name) => {
-      const willOpen = expanded[name] !== true
-      setExpanded((prev) => ({ ...prev, [name]: willOpen }))
-      if (willOpen && details[name] === undefined) load(name)
+    const toggle = (entry) => {
+      const key = keyOf(entry)
+      const willOpen = expanded[key] !== true
+      setExpanded((prev) => ({ ...prev, [key]: willOpen }))
+      if (willOpen && details[key] === undefined) load(entry)
+    }
+
+    const renderDetail = (detail, entry) => {
+      if (detail === undefined || detail.status === 'loading') {
+        return h('div', { className: 'dshspec-inlineLoad' }, h(Icon, { name: 'refresh', size: 14, className: 'dshspec-spin' }), h('span', null, t('archiveDetailLoading')))
+      }
+      if (detail.status === 'error') return h(Banner, { tone: 'error', wrap: true }, detail.error ?? t('archiveLoadFailed'))
+      const change = detail.change
+      if (change === null || change === undefined) return h(Banner, { tone: 'error', wrap: true }, t('archiveLoadFailed'))
+      const deltaText = deltaSummaryText(t, change.delta)
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+        h('div', { className: 'dshspec-subHead' }, h('b', null, t('archiveMetadata')), h('span', null, change.schemaName ?? '')),
+        h(MetadataRows, { t, metadata: change.metadata }),
+        typeof change.metadataText === 'string' && change.metadataText !== ''
+          ? h('pre', { className: 'dshspec-pre dshspec-prePlain' }, change.metadataText)
+          : null,
+        detail.fallback === true ? h('div', { className: 'dshspec-note' }, t('archiveProbeNote')) : null,
+        change.tasks !== null && change.tasks !== undefined
+          ? h(
+              'div',
+              { className: 'dshspec-summaryLine' },
+              h('span', { className: 'dshspec-inlineTag' }, t('archiveTasks')),
+              h('span', { className: 'dshspec-strongMeta' }, tx(t, 'tasksDone', { done: taskProgressInfo(change.tasks).done, total: taskProgressInfo(change.tasks).total })),
+              taskProgressInfo(change.tasks).total > 0
+                ? h(
+                    'div',
+                    { className: 'dshspec-changeProgress' },
+                    h(Progress, {
+                      done: taskProgressInfo(change.tasks).done,
+                      total: taskProgressInfo(change.tasks).total,
+                      color: toneColor('success'),
+                    }),
+                  )
+                : null,
+            )
+          : null,
+        h('div', { className: 'dshspec-subHead' }, h('b', null, t('archiveArtifacts'))),
+        h(DocGrid, { t, docs: change.docs, openDoc }),
+        deltaText === '' ? null : h('div', { className: 'dshspec-subHead' }, h('b', null, t('deltaSection')), h('span', null, deltaText)),
+        h('div', { className: 'dshspec-subHead' }, h('b', null, t('issuesList')), h('span', null, validationSummaryText(t, change.validation))),
+        totalIssues(change.validation) > 0
+          ? h(IssueList, {
+              t,
+              issues: change.validation.issues,
+              onIssue: (issue) => {
+                if (typeof issue?.path !== 'string' || issue.path === '') return
+                const base = typeof entry?.path === 'string' ? entry.path : ''
+                const relative = issue.path.startsWith('openspec/') || issue.path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(issue.path)
+                const path = relative || base === '' ? issue.path : `${base}/${issue.path}`
+                openDoc({ path, label: basenameOf(path) }, issue.line)
+              },
+            })
+          : null,
+      )
     }
 
     return h(
-      'section',
-      { className: 'dshspec-section' },
-      h(
-        'div',
-        { className: 'dshspec-sectionHead' },
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'dshspec-sectionToggle',
-            'aria-expanded': open,
-            onClick: () => setOpen((value) => !value),
-          },
-          h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (open ? ' dshspec-chevOpen' : '') }),
-          h('span', { className: 'dshspec-sectionTitle' }, t('archivedChanges')),
-          h('span', { className: 'dshspec-sectionCount' }, String(archived.length)),
-        ),
-        h('span', { className: 'dshspec-space' }),
-        h('span', { className: 'dshspec-note' }, t('archivedHint')),
-      ),
-      open
-        ? h(
-            'div',
-            { className: 'dshspec-sectionBody' },
-            archived.length === 0
-              ? h('div', { className: 'dshspec-sectionEmpty' }, t('noArchived'))
-              : archived.map((name) => {
-                  const parts = archiveParts(name)
-                  const isOpen = expanded[name] === true
-                  const detail = details[name]
-                  return h(
+      Section,
+      {
+        title: t('archiveSectionTitle'),
+        count: archived.length,
+        headMeta: h('span', { className: 'dshspec-note' }, t('archivedHint')),
+        defaultOpen: false,
+      },
+      archived.length === 0
+        ? h(SectionEmpty, { icon: 'archive', title: t('noArchived') })
+        : visibleGroups.map((group) =>
+            h(
+              'div',
+              { key: group.date ?? 'unknown', className: 'dshspec-archGroup' },
+              h(
+                'div',
+                { className: 'dshspec-archHead' },
+                h(Icon, { name: 'archive', size: 13 }),
+                h('span', null, group.date === null ? t('archiveUnknownDate') : group.date),
+                h('span', { className: 'dshspec-sectionCount' }, String(group.entries.length)),
+              ),
+              group.entries.map((entry) => {
+                const key = keyOf(entry)
+                const isOpen = expanded[key] === true
+                const detail = details[key]
+                const label = archiveEntryLabel(entry)
+                return h(
+                  'div',
+                  { key, className: 'dshspec-item' },
+                  h(
                     'div',
-                    { key: name, className: 'dshspec-item' },
-                    h(
-                      'div',
-                      {
-                        className: 'dshspec-itemHead',
-                        role: 'button',
-                        tabIndex: 0,
-                        'aria-expanded': isOpen,
-                        onClick: () => toggleItem(name),
-                        onKeyDown: (event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.preventDefault()
-                            toggleItem(name)
-                          }
-                        },
+                    {
+                      className: 'dshspec-itemHead',
+                      role: 'button',
+                      tabIndex: 0,
+                      'aria-expanded': isOpen,
+                      onClick: () => toggle(entry),
+                      onKeyDown: (event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          toggle(entry)
+                        }
                       },
-                      h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (isOpen ? ' dshspec-chevOpen' : '') }),
-                      h('span', { className: 'dshspec-changeName', title: name }, parts.label),
-                      parts.date === null ? null : h('span', { className: 'dshspec-dateChip' }, parts.date),
-                      detail !== undefined && detail.status === 'ready' && detail.tasks !== null && detail.tasks.total > 0
-                        ? h('div', { className: 'dshspec-changeProgress' }, h(Progress, { done: detail.tasks.done, total: detail.tasks.total, color: 'var(--dsw-alias-state-success-primary)' }))
-                        : null,
-                      h('span', { className: 'dshspec-space' }),
-                      h(Icon, { name: 'archive', size: 14, className: 'dshspec-decoIcon' }),
-                    ),
-                    isOpen
+                    },
+                    h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (isOpen ? ' dshspec-chevOpen' : '') }),
+                    h('span', { className: 'dshspec-changeName', title: entry.path ?? entry.name }, label),
+                    detail !== undefined && detail.status === 'ready' && detail.change?.tasks !== null
                       ? h(
                           'div',
-                          { className: 'dshspec-itemBody' },
-                          detail === undefined || detail.status === 'loading'
-                            ? h('div', { className: 'dshspec-inlineLoad' }, h(Icon, { name: 'refresh', size: 14, className: 'dshspec-spin' }), h('span', null, t('loading')))
-                            : detail.status === 'error'
-                              ? h(Banner, { tone: 'error', wrap: true }, detail.error ?? t('error'))
-                              : h(
-                                  'div',
-                                  { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
-                                  h('div', { className: 'dshspec-subHead' }, h('b', null, t('docs'))),
-                                  h(DocGrid, { t, docs: detail.docs, openDoc }),
-                                  h(TaskPreview, { t, tasks: detail.tasks }),
-                                ),
+                          { className: 'dshspec-changeProgress' },
+                          h(Progress, {
+                            done: taskProgressInfo(detail.change.tasks).done,
+                            total: taskProgressInfo(detail.change.tasks).total,
+                            color: toneColor('success'),
+                          }),
                         )
                       : null,
-                  )
-                }),
-          )
-        : null,
+                    h('span', { className: 'dshspec-space' }),
+                    h(Icon, { name: 'archive', size: 14, className: 'dshspec-decoIcon' }),
+                  ),
+                  isOpen ? h('div', { className: 'dshspec-itemBody' }, renderDetail(detail, entry)) : null,
+                )
+              }),
+            ),
+          ),
+      h(ListMore, { t, hidden, reveal: Math.min(limit, hidden), onMore: reveal }),
     )
   }
 
-  /** The selected workspace: overview diagram, changes, specs and archive. */
+  /** Project configuration (`openspec/config.yaml`) and available schemas. */
+  function ProjectSection({ t, state }) {
+    const config = state.config !== null && state.config !== undefined ? state.config : {}
+    const schemas = Array.isArray(state.schemas) ? state.schemas : []
+    const rules = config.rules !== null && typeof config.rules === 'object' ? config.rules : {}
+    const ruleArtifacts = Object.keys(rules)
+    const rulesCount = ruleArtifacts.reduce((sum, id) => sum + (Array.isArray(rules[id]) ? rules[id].length : 0), 0)
+    const contextText = typeof config.context === 'string' ? config.context.trim() : ''
+    const contextSummary = contextText.length > 240 ? `${contextText.slice(0, 239)}…` : contextText
+    const operations = config.operations !== null && typeof config.operations === 'object' ? config.operations : {}
+    const applyGuidance = typeof operations.apply?.guidance === 'string' ? operations.apply.guidance : ''
+    const archiveGuidance = typeof operations.archive?.guidance === 'string' ? operations.archive.guidance : ''
+    const [contextOpen, setContextOpen] = useState(false)
+    const [rulesOpen, setRulesOpen] = useState({})
+    return h(
+      Section,
+      {
+        title: t('configSection'),
+        count: rulesCount,
+        headMeta: h('span', { className: 'dshspec-note' }, `${t('effectiveSchema')} · ${config.schema ?? '—'}`),
+        defaultOpen: false,
+      },
+      h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 12, padding: '12px 14px' } },
+        config.found !== true ? h('div', { className: 'dshspec-note' }, tx(t, 'configMissing', { schema: config.schema ?? 'spec-driven' })) : null,
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+          h(KvRow, { label: t('effectiveSchema'), value: config.schema ?? '—' }),
+          config.found === true ? h(KvRow, { label: 'config', value: config.file ?? 'openspec/config.yaml' }) : null,
+        ),
+        h(
+          'div',
+          { className: 'dshspec-subHead' },
+          h('b', null, t('contextLabel')),
+          contextText === '' ? h('span', null, t('contextEmpty')) : h('span', null, `${contextText.length} chars`),
+        ),
+        contextText === ''
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+              h('div', { className: 'dshspec-contextBox' }, contextOpen ? contextText : contextSummary),
+              contextText.length > 240
+                ? h(
+                    'button',
+                    { type: 'button', className: 'dshspec-taskMore', onClick: () => setContextOpen((value) => !value) },
+                    h(Icon, { name: contextOpen ? 'chevronRight' : 'chevronDown', size: 12 }),
+                    contextOpen ? t('contextHide') : t('contextShow'),
+                  )
+                : null,
+            ),
+        h('div', { className: 'dshspec-subHead' }, h('b', null, t('rulesLabel')), h('span', null, tx(t, 'rulesCount', { count: rulesCount }))),
+        ruleArtifacts.length === 0
+          ? h('div', { className: 'dshspec-note' }, t('rulesEmpty'))
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+              ruleArtifacts.map((id) => {
+                const items = Array.isArray(rules[id]) ? rules[id] : []
+                const opened = rulesOpen[id] === true
+                return h(
+                  'div',
+                  { key: id, style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                  h(
+                    'button',
+                    { type: 'button', className: 'dshspec-taskMore', onClick: () => setRulesOpen((prev) => ({ ...prev, [id]: !prev[id] })) },
+                    h(Icon, { name: opened ? 'chevronDown' : 'chevronRight', size: 12 }),
+                    `${artifactLabel(id)} · ${tx(t, 'rulesCount', { count: items.length })}`,
+                  ),
+                  opened
+                    ? h(
+                        'ul',
+                        { className: 'dshspec-taskList' },
+                        items.map((rule, index) =>
+                          h('li', { key: index, className: 'dshspec-task' }, h(Icon, { name: 'chevronRight', size: 10 }), h('span', null, rule)),
+                        ),
+                      )
+                    : null,
+                )
+              }),
+            ),
+        applyGuidance === '' && archiveGuidance === ''
+          ? null
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+              h('div', { className: 'dshspec-subHead' }, h('b', null, t('operationsLabel'))),
+              applyGuidance === '' ? null : h(KvRow, { label: t('operationApply'), value: applyGuidance }),
+              archiveGuidance === '' ? null : h(KvRow, { label: t('operationArchive'), value: archiveGuidance }),
+            ),
+        Array.isArray(config.warnings) && config.warnings.length > 0
+          ? h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+              config.warnings.map((warning, index) => h(Banner, { key: index, tone: 'warn', wrap: true }, warning)),
+            )
+          : null,
+        h('div', { className: 'dshspec-subHead' }, h('b', null, t('schemasSection')), h('span', null, String(schemas.length))),
+        h(
+          'div',
+          { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+          schemas.map((schema) =>
+            h(
+              'div',
+              { key: `${schema.source}-${schema.name}`, style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+              h(
+                'div',
+                { className: 'dshspec-summaryLine' },
+                h('span', { className: 'dshspec-strongMeta' }, h('b', null, schema.name)),
+                h(ToneBadge, { tone: schema.source === 'project' ? 'business' : 'muted' }, schemaSourceText(t, schema.source)),
+                typeof schema.description === 'string' && schema.description !== ''
+                  ? h('span', { className: 'dshspec-note', title: schema.description }, schema.description.length > 120 ? `${schema.description.slice(0, 119)}…` : schema.description)
+                  : null,
+              ),
+              h(
+                'div',
+                { className: 'dshspec-note' },
+                tx(t, 'schemaArtifacts', {
+                  items: (Array.isArray(schema.artifacts) ? schema.artifacts : []).map((id) => artifactLabel(id)).join('、') || '—',
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    )
+  }
+
+  /** The selected workspace: native overview, changes, project config, capabilities and archive. */
   function WorkspaceDetail({ t, row, source, compose, align, init, onRefresh }) {
     const stateSource = source !== undefined ? source.hooks.state : undefined
     const state = useSyncExternalStore(
-      stateSource !== undefined ? stateSource.subscribe : NOOP_SUBSCRIBE,
-      stateSource !== undefined ? stateSource.getSnapshot : getNoSession,
+      stateSource !== undefined ? stateSource.subscribe : () => () => {},
+      stateSource !== undefined ? stateSource.getSnapshot : () => ({ status: 'loading', cwd: row.cwd }),
     )
     const [expanded, setExpanded] = useState({})
     const [doc, setDoc] = useState(null)
     const [notice, setNotice] = useState(null)
+    const [modal, setModal] = useState(null)
+    const [changeLimit, revealChanges] = useVisibleLimit(CHANGE_PAGE_SIZE)
     const noticeTimer = useRef(null)
 
     useEffect(
@@ -2150,26 +2990,111 @@ function createOpenSpecPlugin(require) {
     })
 
     const openDoc = useCallback(
-      (item) => {
-        const relative = item.path.startsWith(row.cwd)
-          ? item.path.slice(row.cwd.length).replace(/^[\\/]+/, '')
-          : item.path
-        const base = { title: item.label, path: item.path, relPath: relative, status: 'loading', text: '', truncated: false }
+      (item, focusLine) => {
+        const rawPath = typeof item?.path === 'string' ? item.path : ''
+        if (rawPath === '') return
+        const base = {
+          title: item.label ?? basenameOf(rawPath),
+          path: rawPath,
+          relPath: relPathOf(row.cwd, rawPath),
+          status: 'loading',
+          text: '',
+          truncated: false,
+          totalLines: null,
+          offset: 1,
+          focusLine: typeof focusLine === 'number' && Number.isFinite(focusLine) ? focusLine : null,
+        }
         setDoc(base)
         if (source === undefined) {
           setDoc({ ...base, status: 'error', error: t('commandFailed') })
           return
         }
-        void source.readFile(item.path).then((page) => {
+        void source.readDocument(rawPath, { offset: 1, limit: DOC_PAGE_LINES }).then((page) => {
           setDoc((prev) => {
-            if (prev === null || prev.path !== item.path) return prev
+            if (prev === null || prev.path !== rawPath) return prev
             return page.ok
-              ? { ...prev, status: 'ready', text: page.text, truncated: page.truncated === true }
+              ? { ...prev, status: 'ready', text: page.text, truncated: page.truncated === true, totalLines: page.totalLines, offset: page.offset }
               : { ...prev, status: 'error', error: page.error ?? '' }
           })
         })
       },
       [row.cwd, source, t],
+    )
+
+    const openIssue = useCallback(
+      (issue, change) => {
+        if (typeof issue?.path !== 'string' || issue.path === '') return
+        let path = issue.path
+        const workspaceRelative = path.startsWith('openspec/') || path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path)
+        if (!workspaceRelative && change !== undefined && typeof change.name === 'string' && change.name !== '') {
+          path = `openspec/changes/${change.name}/${path}`
+        }
+        openDoc({ path, label: basenameOf(path) }, issue.line)
+      },
+      [openDoc],
+    )
+
+    const readMoreDoc = useCallback(async () => {
+      if (doc === null || source === undefined) return { ok: false, error: t('docReadMoreFailed') }
+      const shown = documentShownLines(doc.text)
+      const page = await source.readDocument(doc.path, { offset: (doc.offset ?? 1) + shown, limit: DOC_PAGE_LINES })
+      if (!page.ok) return { ok: false, error: page.error ?? t('docReadMoreFailed') }
+      setDoc((prev) =>
+        prev !== null && prev.path === doc.path
+          ? {
+              ...prev,
+              text: `${prev.text}\n${page.text}`,
+              truncated: page.truncated === true,
+              totalLines: page.totalLines ?? prev.totalLines,
+            }
+          : prev,
+      )
+      return { ok: true }
+    }, [doc, source, t])
+
+    const openValidation = useCallback(
+      (change) => {
+        setModal({ kind: 'validate', status: 'loading', name: change.name })
+        if (source === undefined) {
+          setModal({ kind: 'validate', status: 'error', name: change.name, error: t('validateFailed') })
+          return
+        }
+        void source.validateChange(change.name).then((result) => {
+          setModal((prev) =>
+            prev !== null && prev.kind === 'validate' && prev.name === change.name
+              ? result.ok === true
+                ? { kind: 'validate', status: 'ready', name: change.name, validation: result.validation }
+                : { kind: 'validate', status: 'error', name: change.name, error: result.error ?? t('validateFailed') }
+              : prev,
+          )
+        })
+      },
+      [source, t],
+    )
+
+    const openSpecIssues = useCallback((spec) => {
+      if (spec === null || spec === undefined) return
+      setModal({ kind: 'spec-issues', status: 'ready', name: spec.name, validation: spec.validation })
+    }, [])
+
+    const openSyncPreview = useCallback(
+      (change) => {
+        setModal({ kind: 'sync', status: 'loading', name: change.name })
+        if (source === undefined) {
+          setModal({ kind: 'sync', status: 'error', name: change.name, error: t('syncPreviewFailed') })
+          return
+        }
+        void source.syncPreview(change.name).then((result) => {
+          setModal((prev) =>
+            prev !== null && prev.kind === 'sync' && prev.name === change.name
+              ? result.ok === true
+                ? { kind: 'sync', status: 'ready', name: change.name, text: result.text }
+                : { kind: 'sync', status: 'error', name: change.name, error: result.error ?? t('syncPreviewFailed') }
+              : prev,
+          )
+        })
+      },
+      [source, t],
     )
 
     const reload = useCallback(async () => {
@@ -2185,6 +3110,85 @@ function createOpenSpecPlugin(require) {
     const changes = state.status === 'ready' ? state.changes : []
     const specs = state.status === 'ready' ? state.specs : []
     const archived = state.status === 'ready' ? state.archived : []
+    const changePage = paginate(changes, { pageSize: changeLimit })
+    const warnings = Array.isArray(state.warnings) ? state.warnings : []
+
+    const validationModal =
+      modal !== null && modal.kind === 'validate'
+        ? h(
+            Modal,
+            {
+              t,
+              title: t('validateTitle'),
+              description: `${modal.name ?? ''} · ${t('validateDesc')}`,
+              onClose: () => setModal(null),
+              width: 680,
+              focusCard: true,
+            },
+            modal.status === 'loading'
+              ? h(LoadingBody)
+              : modal.status === 'error'
+                ? h(Banner, { tone: 'error', wrap: true }, modal.error ?? t('validateFailed'))
+                : h(
+                    'div',
+                    { className: 'dshspec-modalBody' },
+                    h(Banner, { tone: totalIssues(modal.validation) > 0 ? 'warn' : 'info', wrap: true }, validationSummaryText(t, modal.validation)),
+                    h(IssueList, {
+                      t,
+                      issues: modal.validation?.issues,
+                      onIssue: (issue) => {
+                        openIssue(issue, { name: modal.name })
+                        setModal(null)
+                      },
+                    }),
+                  ),
+          )
+        : null
+
+    const syncModal =
+      modal !== null && modal.kind === 'sync'
+        ? h(
+            Modal,
+            {
+              t,
+              title: t('syncPreviewTitle'),
+              description: `${modal.name ?? ''} · ${t('syncPreviewDesc')}`,
+              onClose: () => setModal(null),
+              width: 760,
+              focusCard: true,
+            },
+            modal.status === 'loading'
+              ? h(LoadingBody)
+              : modal.status === 'error'
+                ? h(Banner, { tone: 'error', wrap: true }, modal.error ?? t('syncPreviewFailed'))
+                : modal.text === ''
+                  ? h('div', { className: 'dshspec-note' }, t('syncPreviewDesc'))
+                  : h(Markdown, { text: modal.text }),
+          )
+        : null
+
+    const specIssuesModal =
+      modal !== null && modal.kind === 'spec-issues'
+        ? h(
+            Modal,
+            {
+              t,
+              title: t('validateTitle'),
+              description: `${modal.name ?? ''} · ${validationSummaryText(t, modal.validation)}`,
+              onClose: () => setModal(null),
+              width: 680,
+              focusCard: true,
+            },
+            h(IssueList, {
+              t,
+              issues: modal.validation?.issues,
+              onIssue: (issue) => {
+                openIssue(issue)
+                setModal(null)
+              },
+            }),
+          )
+        : null
 
     return h(
       'section',
@@ -2204,18 +3208,6 @@ function createOpenSpecPlugin(require) {
       ),
       notice === null ? null : h(Banner, { tone: notice.tone, icon: notice.icon, wrap: notice.tone === 'error' }, notice.text),
       state.status === 'loading' ? h(LoadingBody) : null,
-      state.status === 'nosession'
-        ? h(
-            'div',
-            { className: 'dshspec-card' },
-            h(
-              'div',
-              { className: 'dshspec-nosession' },
-              h(Icon, { name: 'info', size: 14 }),
-              h('span', null, row.sessionId === undefined ? t('nosessionHint') : t('nosession')),
-            ),
-          )
-        : null,
       state.status === 'error'
         ? h(
             'div',
@@ -2231,7 +3223,11 @@ function createOpenSpecPlugin(require) {
       state.status === 'missing' ? h('div', { className: 'dshspec-card' }, h(MissingBody, { t, init, refresh: () => void reload(), cwd: row.cwd })) : null,
       state.status === 'ready'
         ? [
-            h(SpecSummary, { key: 'summary', t, state }),
+            h(SummaryBar, { key: 'summary', t, state }),
+            state.backgroundError === undefined || state.backgroundError === null
+              ? null
+              : h(Banner, { key: 'background', tone: 'warn', wrap: true }, `${t('error')}：${state.backgroundError}`),
+            h(ProjectSection, { key: 'config', t, state }),
             h(
               'section',
               { key: 'changes', className: 'dshspec-section' },
@@ -2240,6 +3236,8 @@ function createOpenSpecPlugin(require) {
                 { className: 'dshspec-sectionHead' },
                 h('span', { className: 'dshspec-sectionTitle' }, t('activeChanges')),
                 h('span', { className: 'dshspec-sectionCount' }, String(changes.length)),
+                h('span', { className: 'dshspec-space' }),
+                h(Button, { variant: 'primary', size: 'sm', icon: 'filePlus', onClick: () => commands.open('propose') }, t('newProposal')),
               ),
               h(
                 'div',
@@ -2251,43 +3249,54 @@ function createOpenSpecPlugin(require) {
                       hint: t('noChangesHint'),
                       action: h(Button, { variant: 'primary', size: 'md', icon: 'filePlus', onClick: () => commands.open('propose') }, t('newProposal')),
                     })
-                  : changes.map((change) =>
-                      h(ChangeItem, {
+                  : changePage.items.map((change) =>
+                      h(ChangeCard, {
                         key: change.name,
                         t,
-                        change,
+                        change: normalizeChangeState(change, change.name),
                         open: expanded[change.name] === true,
                         onToggle: () => toggleChange(change.name),
-                        execute: commands.execute,
+                        commands,
                         openDoc,
+                        onIssue: (issue) => openIssue(issue, change),
+                        onValidate: openValidation,
+                        onSyncPreview: openSyncPreview,
                       }),
                     ),
+                h(ListMore, { t, hidden: changePage.hidden, reveal: Math.min(changePage.pageSize, changePage.hidden), onMore: revealChanges }),
               ),
             ),
             h(
-              'section',
-              { key: 'specs', className: 'dshspec-section' },
-              h(
-                'div',
-                { className: 'dshspec-sectionHead' },
-                h('span', { className: 'dshspec-sectionTitle' }, t('capabilitySpecs')),
-                h('span', { className: 'dshspec-sectionCount' }, String(specs.length)),
-              ),
-              h(
-                'div',
-                { className: 'dshspec-sectionBody' },
-                specs.length === 0
-                  ? h(SectionEmpty, { icon: 'layers', title: t('noCapabilities'), hint: t('noCapabilitiesHint') })
-                  : specs.map((capability) => h(CapabilityRow, { key: capability.name, t, capability, openDoc })),
-              ),
+              Section,
+              { key: 'specs', title: t('capabilitySpecs'), count: specs.length, defaultOpen: true },
+              h(CapabilitySection, { t, specs, openDoc, onIssues: openSpecIssues }),
             ),
             h(ArchiveSection, { key: 'archive', t, source, archived, openDoc }),
-            state.watchDown === true
-              ? h('div', { key: 'watch', className: 'dshspec-foot' }, h(Icon, { name: 'alert', size: 14 }), h('span', null, t('watchDown')))
+            warnings.length === 0
+              ? null
+              : h(
+                  Section,
+                  { key: 'warnings', title: t('workspaceWarnings'), count: warnings.length, defaultOpen: false },
+                  h(
+                    'div',
+                    { style: { display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 14px' } },
+                    warnings.map((warning, index) => h(Banner, { key: index, tone: 'warn', wrap: true }, warning)),
+                  ),
+                ),
+            state.watchDown === true || (source !== undefined && source.sessionId === undefined)
+              ? h(
+                  'div',
+                  { key: 'watch', className: 'dshspec-foot' },
+                  h(Icon, { name: 'refresh', size: 14 }),
+                  h('span', null, source !== undefined && source.sessionId === undefined ? t('pollingHint') : t('watchDown')),
+                )
               : null,
           ]
         : null,
       commands.modal,
+      validationModal,
+      syncModal,
+      specIssuesModal,
       doc === null
         ? null
         : h(DocModal, {
@@ -2295,6 +3304,7 @@ function createOpenSpecPlugin(require) {
             doc,
             onClose: () => setDoc(null),
             onAlign: typeof align === 'function' ? () => align(row, doc)() : undefined,
+            onReadMore: readMoreDoc,
           }),
     )
   }
@@ -2394,7 +3404,7 @@ function createOpenSpecPlugin(require) {
                     key: `${selectedRow.cwd}#${nonce}`,
                     t,
                     row: selectedRow,
-                    source: selectedRow.sessionId !== undefined ? sourceFor(selectedRow.sessionId) : undefined,
+                    source: sourceFor(selectedRow),
                     compose: composeFor,
                     align: alignFor,
                     init: initFor,
@@ -2407,6 +3417,7 @@ function createOpenSpecPlugin(require) {
 
 
 
+  /** Inline composer quick bar: native status, next-step action, skip_specs/blocked/skills signals. */
   function DockBody({ t, state, source, openPanel, init, sessionId }) {
     const [toast, setToast] = useState(null)
     const [selectedName, setSelectedName] = useState(null)
@@ -2443,39 +3454,70 @@ function createOpenSpecPlugin(require) {
       toastTimer.current = setTimeout(() => setToast(null), 3200)
     }, [])
 
-    const changes = state.status === 'ready' ? state.changes : []
-    const target = changes.find((change) => change.name === selectedName) ?? primaryChange(state)
+    const changes = state.status === 'ready' ? state.changes.map((change) => normalizeChangeState(change, change.name)) : []
+    const rawTarget = changes.find((change) => change.name === selectedName) ?? primaryChange(state)
+    const target = rawTarget === undefined ? undefined : normalizeChangeState(rawTarget, rawTarget.name)
     const commands = useCommands({
       t,
-      run: (line) => source.run(line),
       insert: (text) => insertIntoComposer(text),
       onResult: (outcome) => {
         if (outcome !== undefined && outcome !== null && outcome.ok === false) showToast(outcome.text ?? t('commandFailed'))
       },
     })
 
-    const stage = target === undefined ? 'propose' : PHASE_STAGE[target.phase] ?? 'apply'
-    const applyLine = target !== undefined ? `/opsx-apply ${target.name}` : '/opsx-apply '
-    const archiveLine = target !== undefined ? `/opsx-archive ${target.name}` : '/opsx-archive '
-    const progress =
-      target !== undefined && target.tasks !== null && target.tasks.total > 0
-        ? t('taskProgress').replace('{done}', String(target.tasks.done)).replace('{total}', String(target.tasks.total))
-        : null
+    const action = deriveNextAction(target)
+    const progress = taskProgressInfo(target?.tasks)
+    const blocked = target !== undefined ? blockedArtifacts(target.artifacts) : []
+    const nativeSkills = state.skills !== null && state.skills !== undefined && Array.isArray(state.skills.native) ? state.skills.native : []
+    const fallbackActive = state.skills !== null && state.skills !== undefined && state.skills.fallbackActive === true
+    const runNext = () => {
+      if (target === undefined || action.kind === 'propose') {
+        commands.open('propose')
+        return
+      }
+      commands.execute(action.line)
+    }
 
-    const dot = h('span', {
-      className: 'dshspec-dot',
-      style: { background: target === undefined ? statusColor(state) : (PHASE_META[target.phase] ?? PHASE_META.draft).color },
-    })
+    const dot = h('span', { className: 'dshspec-dot', style: { background: toneColor(target === undefined ? 'muted' : changeTone(target)) } })
     const nameNode =
       target === undefined
         ? h('span', { className: 'dshspec-dockName', title: t('quickNoChange') }, `OpenSpec · ${t('quickNoChange')}`)
         : h('span', { className: 'dshspec-dockName', title: target.name }, target.name)
-    const badge = target === undefined ? null : h(PhaseBadge, { t, phase: target.phase })
-    const progressNode = progress === null ? null : h('span', { className: 'dshspec-progressCount', title: t('progressLabel') }, progress)
+    const statusMeta =
+      target === undefined
+        ? []
+        : [
+            target.schemaName === '' ? null : h(ToneBadge, { key: 'schema', tone: 'muted', title: tx(t, 'changeSchema', { name: target.schemaName }) }, target.schemaName),
+            target.metadata.skip_specs === true ? h(ToneBadge, { key: 'skip', tone: 'muted', title: t('skipSpecs') }, t('skipSpecs')) : null,
+            blocked.length > 0
+              ? h(
+                  ToneBadge,
+                  {
+                    key: 'blocked',
+                    tone: 'warn',
+                    title: blocked.map((artifact) => `${artifactLabel(artifact.id)}: ${artifact.missingDeps.map((dep) => artifactLabel(dep)).join('、')}`).join('\n'),
+                  },
+                  tx(t, 'blockedCount', { count: blocked.length }),
+                )
+              : null,
+            progress.total > 0
+              ? h('span', { key: 'progress', className: 'dshspec-progressCount', title: t('progressLabel') }, tx(t, 'taskProgress', { done: progress.done, total: progress.total }))
+              : null,
+          ]
+    const skillsBadge =
+      nativeSkills.length > 0
+        ? h(
+            ToneBadge,
+            { tone: 'business', title: tx(t, 'nativeSkillsTitle', { names: nativeSkills.map((skill) => skill.name ?? skill.workflow ?? '').join(', ') }) },
+            `${t('nativeSkills')} ${nativeSkills.length}`,
+          )
+        : fallbackActive
+          ? h(ToneBadge, { tone: 'muted', title: t('fallbackSkillsTitle') }, t('fallbackSkills'))
+          : null
 
     const statusArea =
       target === undefined || changes.length <= 1
-        ? h('div', { className: 'dshspec-dockStatus' }, dot, nameNode, badge, progressNode)
+        ? h('div', { className: 'dshspec-dockStatus' }, dot, nameNode, statusMeta)
         : h(
             'div',
             { className: 'dshspec-dockStatus' },
@@ -2494,22 +3536,17 @@ function createOpenSpecPlugin(require) {
                 },
                 dot,
                 nameNode,
-                badge,
-                progressNode,
+                statusMeta,
                 h(Icon, { name: 'chevronDown', size: 12, className: 'dshspec-dockCaret' }),
               ),
               menuOpen
                 ? h(
                     'div',
                     { className: 'dshspec-dockMenu', role: 'menu' },
-                    h(
-                      'div',
-                      { className: 'dshspec-dockMenuHead' },
-                      h('span', null, t('switchChange')),
-                      h('span', null, String(changes.length)),
-                    ),
-                    changes.map((change) =>
-                      h(
+                    h('div', { className: 'dshspec-dockMenuHead' }, h('span', null, t('switchChange')), h('span', null, String(changes.length))),
+                    changes.map((change) => {
+                      const itemProgress = taskProgressInfo(change.tasks)
+                      return h(
                         'button',
                         {
                           key: change.name,
@@ -2517,21 +3554,20 @@ function createOpenSpecPlugin(require) {
                           role: 'menuitemradio',
                           className: 'dshspec-dockMenuItem',
                           title: change.name,
-                          'aria-checked': change.name === target.name ? 'true' : 'false',
-                          'data-active': change.name === target.name ? 'true' : undefined,
+                          'aria-checked': target !== undefined && change.name === target.name ? 'true' : 'false',
+                          'data-active': target !== undefined && change.name === target.name ? 'true' : undefined,
                           onClick: () => {
                             setSelectedName(change.name)
                             setMenuOpen(false)
                           },
                         },
                         h('span', { className: 'dshspec-dockMenuName' }, change.name),
-                        h(PhaseBadge, { t, phase: change.phase }),
-                        change.tasks !== null && change.tasks.total > 0
-                          ? h('span', { className: 'dshspec-dockMenuCount' }, `${change.tasks.done}/${change.tasks.total}`)
-                          : null,
-                        change.name === target.name ? h(Icon, { name: 'check', size: 14 }) : null,
-                      ),
-                    ),
+                        h(ToneBadge, { tone: change.isPlanningComplete ? 'success' : 'business' }, t(change.isPlanningComplete ? 'plannerComplete' : 'planning')),
+                        change.metadata.skip_specs === true ? h('span', { className: 'dshspec-dockMenuCount' }, 'skip_specs') : null,
+                        itemProgress.total > 0 ? h('span', { className: 'dshspec-dockMenuCount' }, `${itemProgress.done}/${itemProgress.total}`) : null,
+                        target !== undefined && change.name === target.name ? h(Icon, { name: 'check', size: 14 }) : null,
+                      )
+                    }),
                   )
                 : null,
             ),
@@ -2547,37 +3583,21 @@ function createOpenSpecPlugin(require) {
         h(
           'div',
           { className: 'dshspec-seg' },
-          h(Button, {
-            variant: stage === 'explore' ? 'primary' : 'ghost',
-            size: 'sm',
-            title: '/opsx-explore [主题]',
-            onClick: () => commands.open('explore'),
-          }, t('explore')),
-          h(Button, {
-            variant: stage === 'propose' ? 'primary' : 'ghost',
-            size: 'sm',
-            title: '/opsx-propose <change-name> [说明]',
-            onClick: () => commands.open('propose'),
-          }, t('propose')),
-          h(Button, {
-            variant: stage === 'apply' ? 'primary' : 'ghost',
-            size: 'sm',
-            title: applyLine,
-            disabled: target === undefined,
-            onClick: () => {
-              if (target !== undefined) commands.execute(applyLine)
+          h(Button, { variant: 'ghost', size: 'sm', title: '/opsx-explore [主题]', onClick: () => commands.open('explore') }, t('explore')),
+          h(Button, { variant: 'ghost', size: 'sm', title: '/opsx-propose <change-name> [说明]', onClick: () => commands.open('propose') }, t('propose')),
+          h(
+            Button,
+            {
+              variant: 'primary',
+              size: 'sm',
+              icon: nextActionIcon(action.kind),
+              title: action.kind === 'propose' ? '/opsx-propose ' : action.line,
+              onClick: runNext,
             },
-          }, t('apply')),
-          h(Button, {
-            variant: stage === 'archive' ? 'primary' : 'ghost',
-            size: 'sm',
-            title: archiveLine,
-            disabled: target === undefined,
-            onClick: () => {
-              if (target !== undefined) commands.execute(archiveLine)
-            },
-          }, t('archive')),
+            nextActionText(t, action),
+          ),
         ),
+        skillsBadge,
         h(Button, { variant: 'ghost', size: 'sm', title: '/opsx-status', onClick: () => commands.execute('/opsx-status') }, t('status')),
         h(IconButton, { icon: 'layout', label: t('openPanel'), size: 28, onClick: openPanel }),
       ),
@@ -2586,11 +3606,11 @@ function createOpenSpecPlugin(require) {
     )
   }
 
-  /** The quick bar under the composer: status + one-click phase commands. */
+  /** The quick bar under the composer: native state + one-click next-step command. */
   function QuickBar({ state: stateSource, source, openPanel, t, init, sessionId }) {
-    if (stateSource === undefined) return null
+    if (stateSource === undefined || source === undefined) return null
     const state = useSyncExternalStore(stateSource.subscribe, stateSource.getSnapshot)
-    if (state.status === 'loading' || state.status === 'nosession') return null
+    if (state.status === 'loading') return null
     if (state.status === 'error') {
       return h(
         'div',
@@ -2642,7 +3662,7 @@ function createOpenSpecPlugin(require) {
   }
 
   /** Build marker for served-bundle verification. */
-  const BUILD = '20261020-spec-browser'
+  const BUILD = '20261020-native-panel'
 
   /**
    * Register the locale dictionaries, the monitoring page, the sidebar glyph,
@@ -2654,13 +3674,14 @@ function createOpenSpecPlugin(require) {
     ctx.effect(() => ctx.locale.register(NS, { zh: T.zh, en: T.en }), 'dsh-spec: dictionaries')
     const t = ctx.locale.bind(NS)
 
-    /** One source per session, shared by the dock and the panel. */
+    /** One workspace source per (cwd, session) pair, shared by the dock and the panel. */
     const sources = new Map()
-    const sourceFor = (sessionId) => {
-      let source = sources.get(sessionId)
+    const sourceFor = (row) => {
+      const key = `${row.cwd}|${typeof row.sessionId === 'string' ? row.sessionId : ''}`
+      let source = sources.get(key)
       if (source === undefined) {
-        source = createOpenspecSource(ctx, sessionId)
-        sources.set(sessionId, source)
+        source = createWorkspaceSource(ctx, { cwd: row.cwd, sessionId: row.sessionId })
+        sources.set(key, source)
       }
       return source
     }
@@ -2758,23 +3779,9 @@ function createOpenSpecPlugin(require) {
     /**
      * Session-less init for a panel workspace row: post the workspace path to
      * the Host's /dsh-spec route, which validates it against the registered
-     * workspaces and writes the fixed skeleton. No session or model needed.
+     * workspaces, writes the native scaffold and reports the created items.
      */
-    const initFor = async (cwd) => {
-      try {
-        const result = await withTimeout(
-          Promise.resolve(ctx.connection.rpc.call(ROUTE, 'init', { cwd: typeof cwd === 'string' ? cwd : '' })),
-          15000,
-          '初始化',
-        )
-        if (result !== null && typeof result === 'object' && result.ok === true) {
-          return { ok: true, text: result.value?.text ?? 'OpenSpec 骨架已就绪。' }
-        }
-        return { ok: false, text: result?.error?.message ?? '初始化失败' }
-      } catch (error) {
-        return { ok: false, text: error instanceof Error ? error.message : String(error) }
-      }
-    }
+    const initFor = async (cwd) => initWorkspace(ctx, cwd)
 
     /** Stable rows snapshot for the panel: recomputed only when a store changes. */
     let lastRaw
@@ -2793,9 +3800,7 @@ function createOpenSpecPlugin(require) {
 
     const refreshAll = async () => {
       const rows = rowsSource.getSnapshot()
-      await Promise.all(
-        rows.map((row) => (row.sessionId !== undefined ? sourceFor(row.sessionId).refresh() : Promise.resolve())),
-      )
+      await Promise.all(rows.map((row) => sourceFor(row).refresh()))
     }
 
     ctx.slots.inject('main', () => ctx.slots.register({
@@ -2827,10 +3832,11 @@ function createOpenSpecPlugin(require) {
       order: 5,
       locale: NS,
       inject: (sessionId) => {
-        const source = sourceFor(sessionId)
+        const row = rowForSession(ctx, sessionId)
+        const source = row === undefined ? undefined : sourceFor(row)
         return {
           sessionId,
-          state: source.hooks.state,
+          state: source === undefined ? undefined : source.hooks.state,
           source,
           init: initFor,
           openPanel: () => ctx.layout.selectPanel(PANEL_ID),
