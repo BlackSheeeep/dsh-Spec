@@ -74,9 +74,7 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 
 ### 截图（本机 DSH Web 验证实例）
 
-> 截图采集于较早的界面版本；0.4.0 的概览已改为「工件进度 / 任务进度」双进度圈，变更详情新增默认收起的任务清单，探索 / 提案入口改为点击直接填入输入框。
-
-| 面板（artifact chips / 原生下一步 / 校验问题） | 项目配置与可用 schema |
+| 面板（工件/任务双进度圈 · artifact chips · 原生下一步） | 项目配置与可用 schema |
 |---|---|
 | ![面板](docs/panel.png) | ![项目配置](docs/config-view.png) |
 
@@ -88,9 +86,9 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 |---|---|
 | ![文档截断](docs/doc-truncation.png) | ![原生 skills](docs/native-skills.png) |
 
-| 会话快捷条（原生下一步 / 任务进度 / skills 指示） |
-|---|
-| ![快捷条](docs/quickbar.png) |
+| 会话快捷条（原生下一步 / 任务进度 / skills 指示） | 变更详情（任务清单默认收起 / 展开） |
+|---|---|
+| ![快捷条](docs/quickbar.png) | ![任务清单](docs/tasks-expand.png) |
 
 ## 原生语义：状态与校验
 
