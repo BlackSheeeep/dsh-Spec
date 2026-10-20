@@ -2,6 +2,8 @@
 
 把 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 的规格驱动开发（SDD）工作流完整桥接进 DeepSeek Harness（DSH）：**工作区原生面板 + 会话快捷命令条 + 九条 `/opsx-*` 命令**，直接读取仓库里的 `openspec/` 原生文件，**不依赖 openspec CLI**。
 
+当前版本 **0.4.0**：面板概览为「工件进度 / 任务进度」两个独立进度圈，change 详情与归档详情带默认收起、可展开的任务清单；「探索 / 提案」入口点击后直接把命令填入输入框（不弹窗、不自动发送）。
+
 目标原生契约：**OpenSpec 1.14.3**（schema 驱动 OPSX）。插件内置一份带版本与 MIT 归属的 `spec-driven` schema + 四份模板快照，以及全部 12 个 OPSX 工作流 skills 的改编快照（上游 commit `c794978`，见 `src/native-snapshot/ATTRIBUTION.md`）；schema 仅当项目没有同名 `openspec/schemas/<name>/` 时作为回退，skills 仅当工作区没有原生 `openspec-*` 技能时作为 fallback。
 
 ```text
@@ -48,12 +50,13 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 
 侧栏点 **OpenSpec** 图标进入。面板不再套用固定四阶段，而是展示 OpenSpec 原生数据模型：
 
+- **工作区概览**：工件进度与任务进度两个独立进度圈——工件圈按 `(done + skipped) / artifact 总数`、任务圈按 `已勾选 / 任务总数` 分别聚合，各圈到 100% 才变绿；没有任务清单时任务圈显示 `—` 而不是 0%，规划完成不会被读成整体完成；旁边保留 artifact 状态分布条；
 - **项目配置**：生效 schema、context 摘要、按 artifact 分组的 rules、项目本地与内置快照 schema 来源；
 - **进行中的变更**：生效 schema 名、每个 artifact 的原生状态（`done` / `skipped` / `ready` / `blocked`）、可展开的 `missingDeps`、`skip_specs` 信号、独立的任务进度，以及按 artifact 状态推导的下一步动作；
-- **变更详情**：工件文档按 schema 的 `generates` 路径列出（自定义 artifact、glob 输出都能显示），`.openspec.yaml` 元数据（schema / created / goal / skip_specs），delta 操作统计（ADDED / MODIFIED / REMOVED / RENAMED），以及带文件路径与行号的分级校验问题；
+- **变更详情**：工件文档按 schema 的 `generates` 路径列出（自定义 artifact、glob 输出都能显示），`.openspec.yaml` 元数据（schema / created / goal / skip_specs），默认收起、可展开的任务清单（勾选状态、编号与层级；超过 200 条 / change 的载入上限时显式提示剩余条目），delta 操作统计（ADDED / MODIFIED / REMOVED / RENAMED），以及带文件路径与行号的分级校验问题；
 - **能力 Spec**：每个 capability 的 Purpose、requirement / scenario 数量与校验问题，嵌套路径（如 `identity/user-auth`）按层级分组；
-- **已归档**：按本地归档日期分组，按需读取工件、任务与元数据；
-- **不做静默截断**：列表超出单页显示分页/「还有 N 个」，文档读取被截断时显示提示并支持继续读取。
+- **已归档**：按本地归档日期分组，按需读取工件、任务勾选明细与元数据；
+- **不做静默截断**：列表超出单页显示分页/「还有 N 个」，任务清单超过载入上限显示「还有 N 项，打开 tasks.md」，文档读取被截断时显示提示并支持继续读取。
 
 无会话的工作区由面板每 4s 轮询 Host 只读接口；有会话时以 `workspaceFiles` 文件监听为主，并保留每 4s 的轮询兜底（目录重命名/归档移动不一定触发文件监听，轮询保证快捷条的「归档」按钮在归档后几秒内切换到下一步）。界面不存任何隐藏状态——所有内容每次从文件推导。
 
@@ -61,15 +64,17 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 
 ### 会话快捷命令条
 
-会话开始后，输入框下方常驻一条：当前变更名、artifact 状态摘要、任务进度，加上按原生下一步推导的动作按钮（探索 / 提案 / 实施 / 更新 / 同步 / 归档 / 状态）与「检测到的原生 OpenSpec skills」指示。
+**新会话（还没发第一条消息）时**，快捷条并入「工作区 / 模式」那一行的右端（`conversation.hero.options` 槽位），不额外占一行；对话开始后它切换到输入框下方（`conversation.composer.dock` 槽位），两者互斥不会重复。条上显示：当前变更名、artifact 状态摘要、任务进度，加上按原生下一步推导的动作按钮（探索 / 提案 / 实施 / 更新 / 同步 / 归档 / 状态）与「检测到的原生 OpenSpec skills」指示。
 
 其中「归档」按钮默认填入 **`/opsx-archive <name> --yes`**：回车即走确定性归档（校验 → 合并 → 移动，不产生模型消息），适合一键收尾；想看 OPSX AI 归档工作流则手动输入不带 `--yes` 的 `/opsx-archive <name>`。
 
-面板按钮**不自动执行**：点击会切到对应工作区的会话并把 `/opsx-*` 指令填入输入框；确认后再回车，避免误触直接跑模型。
+面板按钮**不自动执行**：点击会切到对应工作区的会话并把 `/opsx-*` 指令填入输入框；确认后再回车，避免误触直接跑模型。其中「探索」「提案」入口也走同一条路径——点击直接把 `/opsx-explore ` / `/opsx-propose ` 填入输入框（不再弹输入弹窗），主题或 change 名在输入框里补充。
 
 界面完全使用 DSH 宿主的主题 token（`--dsw-*`）与弹窗规范：浅色 / 深色自动跟随。
 
 ### 截图（本机 DSH Web 验证实例）
+
+> 截图采集于较早的界面版本；0.4.0 的概览已改为「工件进度 / 任务进度」双进度圈，变更详情新增默认收起的任务清单，探索 / 提案入口改为点击直接填入输入框。
 
 | 面板（artifact chips / 原生下一步 / 校验问题） | 项目配置与可用 schema |
 |---|---|
@@ -100,7 +105,7 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 | `ready` | 依赖全部 done/skipped，且自身输出尚未生成 |
 | `blocked` | 还有未完成的依赖，`missingDeps` 给出依赖 ID |
 
-change 级状态为 `no-tasks` / `in-progress` / `complete`（任务进度独立展示）；不再有 draft / proposed / apply / ready 这类硬编码阶段作为判定真相。
+change 级状态为 `no-tasks` / `in-progress` / `complete`（任务进度独立展示，工作区概览用「工件进度 / 任务进度」双进度圈）；不再有 draft / proposed / apply / ready 这类硬编码阶段作为判定真相。
 
 ### 校验子集（高保真、非全量）
 
@@ -158,8 +163,10 @@ src/native/**          纯 JS 原生语义引擎（零依赖、零子进程、�
                        state / instruction / merge / archive / skills / skill-adaptation / init / fsio
 src/native-snapshot/   固定版本 spec-driven schema + 模板 + 12 个 OPSX SKILL.md 快照（ATTRIBUTION 记录上游）
 src/client.js          浏览器半：main 工作区面板 + sidebar.panellist 图标 +
-                       conversation.composer.dock 快捷条；只渲染 Host 推导的原生状态
-src/client-helpers.js  纯展示辅助（artifact 标签/排序、delta 摘要、日期分组、分页切片）
+                       conversation.composer.dock 快捷条 + conversation.hero.options
+                       （对话开始前并入工作区行的入口）；只渲染 Host 推导的原生状态
+src/client-helpers.js  纯展示辅助（artifact 标签/排序、delta 摘要、日期分组、分页切片、
+                       工件/任务双进度口径与任务清单视图）
 tools/build.mjs        构建（Host 半拷贝 + client 半内联，无打包器）
 tools/sync-native-snapshot.mjs  开发期刷新内置 schema/模板/skills 快照与版本标记
 tests/                 node:test 单元与集成测试（fixtures/workspace 为提交的稳定夹具）
@@ -182,7 +189,7 @@ node tools/sync-native-snapshot.mjs --source <path-to-OpenSpec-repo>
 - **AI 智能合并的写盘风险**：默认 AI 工作流会直接编辑主 specs；提示词内嵌 canonical 验证契约并在收尾前要求校验，确定性 `--yes` 路径始终可作为对照与回退。
 - **YAML 子集**：自研解析器覆盖评论、标量、块标量、缩进序列/映射、flow 集合与引号；anchor / merge key / 多行 flow 等结构会带行号报错，schema 解析失败时面板显示 schema 错误而不是静默回退默认 schema。
 - **上下文长度**：`openspec/config.yaml` 的 `context` 超过 50KB 会被忽略并给出警告。
-- **会话作用域**：快捷条与 `/` 菜单只在有会话时出现（DSH composer 槽位机制）；没有会话时请用面板（面板走 Host 只读接口，无需会话）。
+- **会话作用域**：快捷条在新会话（还没发第一条消息）时并入「工作区 / 模式」行右端（`conversation.hero.options`），对话开始后由输入框下方的 `conversation.composer.dock` 接棒（二者由 hero 状态天然互斥，不会同时出现）；完全无会话时请用面板（面板走 Host 只读接口，无需会话）。`/` 菜单仍只在有会话时出现。
 - **写操作只走命令**：面板不直接写盘；sync / archive 由用户执行命令触发（默认 AI 工作流不写盘，`--yes` 才确定性写盘）。
 - **expanded 命令族**：new / continue / ff / verify / bulk-archive / onboard 只通过内置 OPSX skills（文件语义）提供，不提供对应 `/opsx-*` 命令。
 - 提案/实施由 AI 执行，需要会话已配置模型；插件本身不调用模型（AI 工作流提示词由命令提交给会话模型）。

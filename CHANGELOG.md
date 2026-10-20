@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.0
+
+工作区概览拆成「工件 / 任务」两个独立进度圈；变更详情与归档详情恢复默认收起、可展开的任务清单。
+
+### Added
+
+- **双进度圈**：工作区概览同时显示工件进度圈（`(done + skipped) / artifact 总数`）与任务进度圈（`已勾选 / 任务总数`），两圈各自独立聚合、独立配色、各自到 100% 才变绿；没有任务清单时任务圈显示 `—` 并提示还没有任务清单，不再出现「工件 100% 但任务仍有几十项未完成」的单一 100% 误导。原本的 artifact 状态分布条保留，标题改为「工件状态」。
+- **任务清单折叠块**：进行中与已归档 change 的详情新增「任务清单 done/total 已完成」一行，默认收起；展开后逐条显示勾选状态、文本、编号与层级缩进。文件监听/轮询刷新时清单随状态实时更新。
+- **Host 契约**：`ChangeState.tasks` 新增 `items`（`id` / `text` / `done` / `depth`），单 change 最多 200 条；超出时面板提示「还有 N 项，打开 tasks.md」，不静默截断；旧 Host 未提供明细时面板给出降级提示。
+
+### Changed
+
+- `src/native/state.js` 新增 `limitTaskItems`（导出，供单测与面板契约使用）并在 `computeChangeState` 中携带任务明细；`docs/native-module-contract.md` 的 `ChangeState` 契约同步更新。
+- `src/client-helpers.js` 新增 `workspaceProgress`（双进度口径）与 `taskChecklistView`（勾选明细视图，含超上限 / 旧 Host 降级标记）两个纯函数，并补齐单测。
+- `artifactProgress` 文案保留给工件圈；阶段分布条改用新文案「工件状态」。
+- **概览排版打磨**：圈内只留百分比、口径标签移到环下方（不再挤在 64px 环内），两个进度环成组呈现；「工件状态」标题与「原生技能 / 内置技能」徽标并排，去掉底部孤零零的技能行；状态条加高、卡片内边距收紧，整体更紧凑。
+- **快捷动作不再弹窗**：面板与快捷条的「探索」「提案」入口不再先弹输入弹窗，点击直接把 `/opsx-explore ` / `/opsx-propose ` 填入会话输入框（不自动发送），主题与 change 名由用户在输入框补充；校验、同步预览、能力 spec 问题等只读结果弹窗保持不变。
+- 插件版本 `0.3.1` → `0.4.0`。
+
+## 0.3.1
+
+对话开始前也显示快捷条按钮。
+
+### Added
+
+- **对话开始前的快捷条入口**：新会话（还没有任何消息）时，快捷条通过 `conversation.hero.options` 槽位显示在「工作区 / 模式」那一行的右端——DSH 的 `conversation.composer.dock` 只在对话开始后挂载，此前插件完全看不到入口。hero 工作区行本身只在空白会话渲染，与 composer.dock 天然互斥：对话开始后自动切换到输入框下方的条，不会同时出现两条。
+
+### Changed
+
+- `src/client.js` 的 QuickBar 新增 `heroOnly` 行内变体；注册面新增 `conversation.hero.options`（id 仍为 `openspec-quickbar`，与 composer.dock 共用注入）。
+- **对话开始前的快捷条排版**：不再横向铺满整宽、中间留一大片空白，改为并入工作区行右端的紧凑行内簇（无容器描边、更小字号、变更名限宽、去掉重复的「提案」按钮）。
+- 插件版本 `0.3.0` → `0.3.1`。
+
 ## 0.3.0
 
 直接复用上游 OpenSpec OPSX 工作流逻辑（MIT，标注出处），sync / archive 默认由 AI 参与。

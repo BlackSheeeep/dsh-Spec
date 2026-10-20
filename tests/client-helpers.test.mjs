@@ -36,10 +36,12 @@ import {
   paginate,
   schemaSourceText,
   sortArtifacts,
+  taskChecklistView,
   taskProgressInfo,
   taskProgressText,
   validationIssueLocation,
   validationSummaryText,
+  workspaceProgress,
 } from '../src/client-helpers.js'
 
 /** Fake translator built from the same placeholder convention as the panel dictionaries. */
@@ -297,6 +299,80 @@ test('taskProgressInfo / taskProgressText: independent task progress', () => {
   assert.deepEqual(taskProgressInfo(null), { total: 0, done: 0, remaining: 0, percent: 0, complete: false })
   assert.equal(taskProgressText(t, { total: 8, done: 3 }), '3/8')
   assert.equal(taskProgressText(t, null), '')
+})
+
+test('workspaceProgress: artifacts and tasks are two independent meters', () => {
+  assert.deepEqual(workspaceProgress([]), {
+    changes: 0,
+    artifacts: { done: 0, total: 0, percent: 0, empty: true },
+    tasks: { done: 0, total: 0, percent: 0, empty: true },
+    hasContent: false,
+  })
+
+  // The reported regression shape: every artifact is done/skipped while tasks are open.
+  const planningDone = workspaceProgress([
+    {
+      artifacts: [{ status: 'done' }, { status: 'skipped' }, { status: 'done' }],
+      tasks: { total: 69, done: 21, items: [] },
+    },
+  ])
+  assert.deepEqual(planningDone.artifacts, { done: 3, total: 3, percent: 100, empty: false })
+  assert.deepEqual(planningDone.tasks, { done: 21, total: 69, percent: 30, empty: false })
+  assert.equal(planningDone.hasContent, true)
+
+  // No task list anywhere: the task meter is empty (rendered as —), not 0%.
+  const noTasks = workspaceProgress([{ artifacts: [{ status: 'ready' }], tasks: null }])
+  assert.equal(noTasks.artifacts.percent, 0)
+  assert.equal(noTasks.tasks.empty, true)
+
+  // Multiple changes aggregate numerators and denominators per meter, never merged.
+  const multi = workspaceProgress([
+    { artifacts: [{ status: 'done' }, { status: 'ready' }], tasks: { total: 4, done: 1 } },
+    { artifacts: [{ status: 'done' }], tasks: { total: 2, done: 2 } },
+  ])
+  assert.deepEqual(multi.artifacts, { done: 2, total: 3, percent: 67, empty: false })
+  assert.deepEqual(multi.tasks, { done: 3, total: 6, percent: 50, empty: false })
+  assert.equal(multi.changes, 2)
+})
+
+test('taskChecklistView: bounded detail rows and explicit remainder', () => {
+  const full = taskChecklistView({
+    total: 3,
+    done: 1,
+    items: [
+      { id: '1.1', text: 'a', done: true, depth: 0 },
+      { id: '1.2', text: 'b', done: false, depth: 1 },
+      { id: '1.3', text: 'c', done: false, depth: 2 },
+    ],
+  })
+  assert.equal(full.total, 3)
+  assert.equal(full.done, 1)
+  assert.equal(full.shown, 3)
+  assert.equal(full.hidden, 0)
+  assert.equal(full.missing, false)
+  assert.equal(full.limited, false)
+  assert.deepEqual(full.items[1], { id: '1.2', text: 'b', done: false, depth: 1 })
+
+  const capped = taskChecklistView({
+    total: 250,
+    done: 10,
+    items: Array.from({ length: 200 }, (_, index) => ({ id: `${index + 1}`, text: `t${index + 1}`, done: false, depth: 0 })),
+  })
+  assert.equal(capped.shown, 200)
+  assert.equal(capped.hidden, 50)
+  assert.equal(capped.limited, true)
+  assert.equal(capped.missing, false)
+
+  // Older Host: counts but no detail rows — the panel offers tasks.md instead of a false 0.
+  const oldHost = taskChecklistView({ total: 8, done: 2 })
+  assert.equal(oldHost.missing, true)
+  assert.equal(oldHost.limited, false)
+  assert.equal(oldHost.shown, 0)
+  assert.equal(oldHost.hidden, 0)
+
+  assert.equal(taskChecklistView(null).total, 0)
+  const malformed = taskChecklistView({ total: 1, done: 0, items: [null, { text: 1, done: 1, depth: '2' }] })
+  assert.deepEqual(malformed.items, [{ id: null, text: '1', done: false, depth: 0 }])
 })
 
 test('countTaskCheckboxes: native task parity for the archive fallback', () => {

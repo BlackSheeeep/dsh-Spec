@@ -397,6 +397,94 @@ export function taskProgressText(t, tasks) {
   return fillText(t, 'taskProgress', { done: info.done, total: info.total })
 }
 
+/** Round an integer ratio to a whole percent (0 for an empty denominator). */
+function helperPercent(done, total) {
+  return total > 0 ? Math.round((done / total) * 100) : 0
+}
+
+/**
+ * Workspace overview progress: two independent meters, one per workflow stage.
+ *
+ * `artifacts` counts planning artifacts (done and skipped are both satisfied,
+ * exactly like the native dependency graph); `tasks` counts tracked checkboxes
+ * across the changes that have a task list. The two meters never merge — a fully
+ * planned workspace can still have an unfinished task meter — which is what the
+ * panel's dual rings show side by side.
+ *
+ * @param {Array<{artifacts?: object[], tasks?: {total?: number, done?: number}|null}>} changes - `WorkspaceState.changes`.
+ * @returns {{changes: number, artifacts: {done: number, total: number, percent: number, empty: boolean}, tasks: {done: number, total: number, percent: number, empty: boolean}, hasContent: boolean}} stage meters.
+ */
+export function workspaceProgress(changes) {
+  const list = Array.isArray(changes) ? changes : []
+  let artifactDone = 0
+  let artifactTotal = 0
+  let taskDone = 0
+  let taskTotal = 0
+  for (const change of list) {
+    if (change === null || typeof change !== 'object') continue
+    const artifacts = artifactProgress(change.artifacts)
+    artifactDone += artifacts.done
+    artifactTotal += artifacts.total
+    const tasks = taskProgressInfo(change.tasks)
+    taskDone += tasks.done
+    taskTotal += tasks.total
+  }
+  return {
+    changes: list.length,
+    artifacts: {
+      done: artifactDone,
+      total: artifactTotal,
+      percent: helperPercent(artifactDone, artifactTotal),
+      empty: artifactTotal === 0,
+    },
+    tasks: {
+      done: taskDone,
+      total: taskTotal,
+      percent: helperPercent(taskDone, taskTotal),
+      empty: taskTotal === 0,
+    },
+    hasContent: artifactTotal > 0 || taskTotal > 0,
+  }
+}
+
+/**
+ * Render view of one change's task checklist (`ChangeState.tasks`).
+ *
+ * `missing` marks "the Host sent no detail rows at all" (older Host, the panel
+ * can only offer the raw `tasks.md`); `limited` marks "more tracked tasks exist
+ * than the capped payload carries" (`total - items.length` remain unloaded).
+ *
+ * @param {{total?: number, done?: number, items?: Array<{id?: unknown, text?: unknown, done?: unknown, depth?: unknown}>}|null} [tasks] - `ChangeState.tasks`.
+ * @returns {{total: number, done: number, remaining: number, percent: number, complete: boolean, items: Array<{id: string|null, text: string, done: boolean, depth: number}>, shown: number, hidden: number, missing: boolean, limited: boolean}} checklist view.
+ */
+export function taskChecklistView(tasks) {
+  const info = taskProgressInfo(tasks)
+  const raw = Array.isArray(tasks?.items) ? tasks.items : []
+  const items = []
+  for (const item of raw) {
+    if (item === null || typeof item !== 'object') continue
+    items.push({
+      id: typeof item.id === 'string' && item.id !== '' ? item.id : null,
+      text: String(item.text ?? ''),
+      done: item.done === true,
+      depth: Number.isInteger(item.depth) && item.depth >= 0 ? Math.min(item.depth, 3) : 0,
+    })
+  }
+  const hidden = items.length > 0 ? Math.max(0, info.total - items.length) : 0
+  return {
+    total: info.total,
+    done: info.done,
+    remaining: info.remaining,
+    percent: info.percent,
+    complete: info.complete,
+    items,
+    shown: items.length,
+    hidden,
+    missing: info.total > 0 && items.length === 0,
+    limited: items.length > 0 && hidden > 0,
+  }
+}
+
 /**
  * Native task checkbox count from `tasks.md` text (archive-view fallback where
  * the host state only exposes per-change task counts).

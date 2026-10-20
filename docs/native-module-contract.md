@@ -201,6 +201,7 @@ export async function computeChangeState(cwd, changeName, { projectConfig } = {}
 export async function validateChangeByName(cwd, changeName)
 // -> { name, validation, metadata, schemaName, deltas, tasks }
 export async function listMainSpecs(cwd)  // -> [SpecState]
+export function limitTaskItems(items)     // -> <= 200 normalized { id, text, done, depth } rows
 ```
 `computeWorkspaceState`: read config, project schemas, bundled schemas, list `openspec/changes/*`
 (skip `archive`), compute each change (metadata, resolved schema, artifact states, tasks, docs,
@@ -208,7 +209,9 @@ delta summary, validation), read main specs under `openspec/specs/**`, list arch
 (local-date grouping data), detect native skills via `./skills.js` `detectNativeSkills(cwd, {
 dshHome })`, collect workspace `warnings`. `status`: `'missing'` when `openspec/changes` cannot be
 listed (uninitialized), `'error'` on a fatal read error, else `'ready'`. Include `archivedCount`.
-Never throw for one bad change; surface it with `validation` errors and `schemaError`.
+`ChangeState.tasks` carries `items` through `limitTaskItems` (200-row payload cap; `total` / `done`
+stay complete). Never throw for one bad change; surface it with `validation` errors and
+`schemaError`.
 
 ## 3. Prompt modules (B)
 
@@ -272,7 +275,7 @@ ChangeState = {
   artifacts: [{ id, outputPath, status: 'done'|'skipped'|'ready'|'blocked', missingDeps?: [] }],
   applyRequires: [], tracks: string|null, isPlanningComplete: boolean, nextSteps: [],
   listStatus: 'no-tasks'|'in-progress'|'complete',
-  tasks: { total, done } | null,
+  tasks: { total, done, items: [{ id: string|null, text, done: boolean, depth: 0..3 }] } | null,
   docs: [{ path, label, artifactId, kind: 'artifact'|'delta' }],
   delta: { ADDED: n, MODIFIED: n, REMOVED: n, RENAMED: n, files: [paths] },
   validation: { errors, warnings, infos, issues: [{ level, path, line?, message }] },
@@ -283,6 +286,11 @@ SpecState = { name, path, purpose, requirementCount, scenarioCount, validation: 
 `listStatus`: `no-tasks` when the change has no tasks artifact/file, `complete` when every task is
 checked, else `in-progress`. `docs`: one row per artifact that exists (path from `generates`; glob
 artifacts expand to matched files) plus delta spec paths.
+
+`tasks.items` carries at most 200 tracked-task rows per change (`state.js` `TASK_ITEM_LIMIT`,
+normalized by the exported `limitTaskItems`); `total` / `done` always count the whole `tasks.md`, so
+`total > items.length` means the panel must surface the remaining count explicitly (never silently
+drop rows). `items[].depth` is the native two-space nesting depth (0–3).
 
 ## 5. Host route, init, commands
 

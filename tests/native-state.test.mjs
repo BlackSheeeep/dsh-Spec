@@ -18,9 +18,11 @@ import { fileURLToPath } from 'node:url'
 import {
   computeChangeState,
   computeWorkspaceState,
+  limitTaskItems,
   listMainSpecs,
   validateChangeByName,
 } from '../src/native/state.js'
+import { parseTasks } from '../src/native/tasks.js'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const workspaceRoot = path.join(repoRoot, 'tests', 'fixtures', 'workspace')
@@ -138,6 +140,10 @@ test('real workspace: validateChangeByName returns merge and archive inputs', { 
   const changeState = await missing
   assert.equal(changeState.tasks.total, result.tasks.total)
   assert.equal(changeState.validation.errors, 0)
+  // The panel payload carries the detail rows too (the fixture is below the cap).
+  assert.equal(changeState.tasks.items.length, changeState.tasks.total)
+  assert.equal(changeState.tasks.items.filter((item) => item.done).length, changeState.tasks.done)
+  assert.deepEqual(Object.keys(changeState.tasks.items[0]).sort(), ['depth', 'done', 'id', 'text'])
 })
 
 test('real workspace: main specs listing tolerates an empty specs/ tree', { skip: !hasWorkspace }, async () => {
@@ -148,4 +154,32 @@ test('real workspace: main specs listing tolerates an empty specs/ tree', { skip
     assert.equal(typeof spec.requirementCount, 'number')
     assert.equal(typeof spec.scenarioCount, 'number')
   }
+})
+
+test('limitTaskItems: bounds the panel payload at 200 rows without losing counts', async () => {
+  // Below / equal to the cap: every row is kept (the real-workspace fixture has 57).
+  const under = Array.from({ length: 57 }, (_, index) => ({ id: `${index + 1}`, text: `task ${index + 1}`, done: index < 3, depth: index % 3 }))
+  const underRows = limitTaskItems(under)
+  assert.equal(underRows.length, 57)
+  assert.deepEqual(Object.keys(underRows[0]).sort(), ['depth', 'done', 'id', 'text'])
+  assert.equal(underRows[0].done, true)
+  assert.equal(underRows[3].done, false)
+
+  const exact = Array.from({ length: 200 }, (_, index) => ({ id: null, text: `task ${index + 1}`, done: false, depth: 0 }))
+  assert.equal(limitTaskItems(exact).length, 200)
+
+  // Above the cap: rows are capped but total/done stay complete on the state side.
+  const text = Array.from({ length: 205 }, (_, index) => `- [${index < 4 ? 'x' : ' '}] 1.${index + 1} task ${index + 1}`).join('\n')
+  const parsed = parseTasks(text)
+  assert.equal(parsed.total, 205)
+  assert.equal(parsed.done, 4)
+  const capped = limitTaskItems(parsed.items)
+  assert.equal(capped.length, 200)
+  assert.equal(capped[0].text, '1.1 task 1')
+  assert.equal(capped[199].text, '1.200 task 200')
+  assert.equal(parsed.total - capped.length, 5)
+
+  // Malformed rows normalize instead of leaking unknown shapes into the panel.
+  assert.deepEqual(limitTaskItems(null), [])
+  assert.deepEqual(limitTaskItems([{ text: 1, done: 1, depth: '2' }]), [{ id: null, text: '1', done: false, depth: 0 }])
 })

@@ -143,6 +143,12 @@ test('state method answers with the native workspace snapshot', async () => {
   assert.ok(Array.isArray(value.archived))
   assert.ok(value.skills !== null && typeof value.skills === 'object')
   assert.ok(value.changes.some((change) => change.name === 'align-native-openspec'))
+  // The panel payload carries bounded task detail rows (state.js limitTaskItems).
+  const change = value.changes.find((entry) => entry.name === 'align-native-openspec')
+  assert.ok(Array.isArray(change.tasks.items))
+  assert.equal(change.tasks.items.length, Math.min(change.tasks.total, 200))
+  assert.equal(change.tasks.items.filter((item) => item.done).length, change.tasks.done)
+  assert.deepEqual(Object.keys(change.tasks.items[0]).sort(), ['depth', 'done', 'id', 'text'])
 })
 
 test('state method reports an uninitialized workspace as missing', async () => {
@@ -332,6 +338,10 @@ test('archive-detail returns an archived change with tasks, docs and metadata', 
   assert.equal(change.metadata.found, true)
   assert.equal(change.tasks.done, change.tasks.total)
   assert.equal(change.listStatus, 'complete')
+  // archive-detail reuses the same ChangeState shape, task rows included.
+  assert.ok(Array.isArray(change.tasks.items))
+  assert.equal(change.tasks.items.length, change.tasks.total)
+  assert.equal(change.tasks.items.filter((item) => item.done).length, change.tasks.done)
   assert.ok(change.docs.some((doc) => doc.path.endsWith('proposal.md')))
   assert.ok(change.docs.some((doc) => doc.kind === 'delta'))
 })
