@@ -69,6 +69,36 @@ function createOpenSpecPlugin(require) {
       changeCount: '{count} 个变更',
       archived: '已归档 {count} 个变更',
       watchDown: '目录监听不可用，已改用轮询刷新。',
+      workspaceLabel: '工作区',
+      specOverview: 'Spec 概览',
+      activeChanges: '进行中的变更',
+      capabilitySpecs: '已定稿 Spec',
+      archivedChanges: '已归档',
+      archivedHint: '按归档时间倒序沉底展示',
+      noCapabilities: '还没有定稿的 Spec',
+      noCapabilitiesHint: '实施并归档变更后，delta specs 会同步到这里。',
+      noArchived: '还没有归档的变更。',
+      noDocs: '没有可查看的文档',
+      docs: '文档',
+      taskList: '任务清单',
+      tasksDone: '{done}/{total} 已完成',
+      progressLabel: '任务进度',
+      phaseDistribution: '阶段分布',
+      statActive: '进行中',
+      statSpecs: '能力 Spec',
+      statArchived: '已归档',
+      loadingDoc: '正在读取文档…',
+      readDocFailed: '读取文档失败',
+      docEmpty: '这个文档是空的。',
+      docTruncated: '文档较长，仅显示前 2000 行。',
+      viewDoc: '查看文档',
+      expand: '展开',
+      collapse: '收起',
+      archiveDated: '{date} 归档',
+      noTasks: '还没有任务清单',
+      moreTasks: '还有 {count} 项',
+      requirementCount: '{count} 项需求',
+      switchFailed: '没有可用会话，无法切换到该工作区',
       explore: '探索',
       propose: '提案',
       apply: '实施',
@@ -127,6 +157,36 @@ function createOpenSpecPlugin(require) {
       changeCount: '{count} changes',
       archived: '{count} archived changes',
       watchDown: 'Directory watch unavailable; falling back to polling.',
+      workspaceLabel: 'Workspace',
+      specOverview: 'Spec overview',
+      activeChanges: 'Changes in motion',
+      capabilitySpecs: 'Capability specs',
+      archivedChanges: 'Archived',
+      archivedHint: 'Newest first, kept at the bottom',
+      noCapabilities: 'No capability spec yet',
+      noCapabilitiesHint: 'Archiving a change syncs its delta specs here.',
+      noArchived: 'No archived change yet.',
+      noDocs: 'No document to view',
+      docs: 'Documents',
+      taskList: 'Tasks',
+      tasksDone: '{done}/{total} done',
+      progressLabel: 'Task progress',
+      phaseDistribution: 'Phase split',
+      statActive: 'Active',
+      statSpecs: 'Capabilities',
+      statArchived: 'Archived',
+      loadingDoc: 'Reading document…',
+      readDocFailed: 'Failed to read the document',
+      docEmpty: 'This document is empty.',
+      docTruncated: 'Long document — showing the first 2000 lines.',
+      viewDoc: 'View document',
+      expand: 'Expand',
+      collapse: 'Collapse',
+      archiveDated: 'archived {date}',
+      noTasks: 'No task list yet',
+      moreTasks: '{count} more',
+      requirementCount: '{count} requirements',
+      switchFailed: 'No session available to open this workspace.',
       explore: 'Explore',
       propose: 'Propose',
       apply: 'Apply',
@@ -169,7 +229,7 @@ function createOpenSpecPlugin(require) {
   /** Plugin-scoped styles; only --dsw-* theme tokens (plus host radii/elevation). */
   const CSS = `
 .dshspec-root{height:100%;min-height:0;overflow-y:auto;color:var(--dsw-alias-label-primary);font-size:14px;line-height:1.55}
-.dshspec-page{max-width:960px;margin:0 auto;padding:28px clamp(24px,4vw,48px) 56px;display:flex;flex-direction:column;gap:22px}
+.dshspec-page{max-width:960px;margin:0 auto;padding:28px clamp(24px,4vw,48px) 56px;display:flex;flex-direction:column;gap:20px}
 .dshspec-pageHead{display:flex;align-items:flex-start;gap:16px}
 .dshspec-pageHeadText{min-width:0;flex:1}
 .dshspec-title{margin:0;font-size:20px;line-height:28px;font-weight:500;letter-spacing:0}
@@ -177,24 +237,104 @@ function createOpenSpecPlugin(require) {
 .dshspec-pageActions{display:flex;align-items:center;gap:8px;flex:none}
 .dshspec-space{flex:1}
 
-.dshspec-card{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l2));border-radius:var(--dsw-radius-lg,16px);padding:18px 20px 16px;display:flex;flex-direction:column;gap:14px}
-.dshspec-wsHead{display:flex;align-items:center;gap:12px;min-width:0}
-.dshspec-wsIcon{flex:none;width:36px;height:36px;border-radius:12px;border:.5px solid var(--dsw-alias-border-l3);display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-secondary)}
-.dshspec-wsText{min-width:0;display:flex;flex-direction:column;gap:1px;flex:1}
-.dshspec-wsName{font-size:14px;line-height:20px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dshspec-wsPath{font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dshspec-wsMeta{flex:none;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
-.dshspec-wsActions{flex:none;display:flex;align-items:center;gap:4px;margin-left:4px}
+/* Workspace switcher --------------------------------------------------- */
+.dshspec-wsbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dshspec-wsbarLabel{flex:none;font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.dshspec-wstabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
+.dshspec-wstab{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;min-width:0;max-width:280px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;cursor:pointer;transition:background .12s ease,border-color .12s ease,color .12s ease}
+.dshspec-wstab:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshspec-wstab:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.dshspec-wstab[data-active='true']{background:var(--dsw-alias-bg-layer-1);border-color:var(--dsw-alias-border-l3);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-shadow-lv1)}
+.dshspec-wstab .dshspec-icon{color:var(--dsw-alias-label-tertiary)}
+.dshspec-wstabName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.dshspec-wstabCount{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 
-.dshspec-changes{display:flex;flex-direction:column;border-top:.5px solid var(--dsw-alias-border-l1)}
-.dshspec-change{display:flex;align-items:center;gap:16px;padding:12px 0}
-.dshspec-change+.dshspec-change{border-top:.5px solid var(--dsw-alias-border-l1)}
-.dshspec-changeMain{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
-.dshspec-changeHead{display:flex;align-items:center;gap:8px;min-width:0}
-.dshspec-changeName{font-size:14px;line-height:20px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dshspec-changeMeta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--dsw-alias-label-tertiary);min-height:20px}
-.dshspec-changeActions{flex:none;display:flex;align-items:center;gap:6px}
+/* Detail toolbar ------------------------------------------------------- */
+.dshspec-detail{display:flex;flex-direction:column;gap:16px}
+.dshspec-detailBar{display:flex;align-items:center;gap:10px;min-width:0}
+.dshspec-detailBarIcon{color:var(--dsw-alias-label-tertiary)}
+.dshspec-detailBarPath{flex:1;min-width:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshspec-detailActions{flex:none;display:flex;align-items:center;gap:8px}
 
+/* Spec overview -------------------------------------------------------- */
+.dshspec-summary{display:flex;align-items:center;gap:clamp(18px,3vw,32px);flex-wrap:wrap;background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l2));border-radius:var(--dsw-radius-lg,16px);padding:16px 20px}
+.dshspec-ringWrap{position:relative;width:72px;height:72px;flex:none}
+.dshspec-ringText{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;pointer-events:none}
+.dshspec-ringValue{font-size:16px;line-height:19px;font-weight:600;font-variant-numeric:tabular-nums}
+.dshspec-ringLabel{font-size:11px;line-height:14px;color:var(--dsw-alias-label-tertiary);text-align:center}
+.dshspec-summaryPhase{flex:1 1 240px;min-width:200px;display:flex;flex-direction:column;gap:8px}
+.dshspec-summaryLabel{font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dshspec-phaseBar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--dsw-alias-interactive-bg-hover)}
+.dshspec-phaseSeg{height:100%;min-width:3px;transition:flex-grow .24s ease}
+.dshspec-phaseLegend{display:flex;flex-wrap:wrap;gap:6px 16px}
+.dshspec-legendItem{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+.dshspec-legendItem b{font-weight:500;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}
+.dshspec-summaryStats{display:flex;align-items:flex-start;gap:clamp(16px,2.4vw,26px);flex:none}
+.dshspec-stat{display:flex;flex-direction:column;gap:2px;min-width:48px}
+.dshspec-statValue{font-size:18px;line-height:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.dshspec-statLabel{font-size:11.5px;line-height:15px;color:var(--dsw-alias-label-tertiary);white-space:nowrap}
+
+/* Sections ------------------------------------------------------------- */
+.dshspec-section{display:flex;flex-direction:column;gap:8px}
+.dshspec-sectionHead{display:flex;align-items:center;gap:8px;min-height:28px}
+.dshspec-sectionTitle{font-size:13px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.dshspec-sectionCount{flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-interactive-bg-hover);border-radius:999px;padding:1px 7px;font-variant-numeric:tabular-nums}
+.dshspec-sectionActions{margin-left:auto;display:flex;align-items:center;gap:6px}
+.dshspec-sectionToggle{display:inline-flex;align-items:center;gap:8px;padding:2px 4px 2px 0;margin:0;border:none;border-radius:8px;background:transparent;font:inherit;color:inherit;cursor:pointer}
+.dshspec-sectionToggle:hover .dshspec-sectionTitle{color:var(--dsw-alias-label-primary)}
+.dshspec-sectionToggle:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.dshspec-sectionBody{display:flex;flex-direction:column;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;overflow:hidden}
+.dshspec-sectionEmpty{display:flex;flex-direction:column;align-items:center;gap:7px;padding:24px 16px;text-align:center}
+.dshspec-sectionEmptyIcon{width:36px;height:36px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
+.dshspec-sectionEmptyTitle{font-size:13px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-primary)}
+.dshspec-sectionEmptyHint{font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary);max-width:420px}
+.dshspec-sectionEmpty .dshspec-btn{margin-top:4px}
+.dshspec-note{font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
+
+/* Rows / collapsible items -------------------------------------------- */
+.dshspec-rowItem{display:flex;align-items:center;gap:10px;width:100%;padding:10px 14px;border:none;background:transparent;font:inherit;text-align:left;color:inherit;cursor:pointer;min-width:0;transition:background .12s ease}
+.dshspec-rowItem+.dshspec-rowItem{border-top:1px solid var(--dsw-alias-border-l1)}
+.dshspec-rowItem:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshspec-rowItem:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
+.dshspec-rowIcon{flex:none;width:30px;height:30px;border-radius:9px;border:.5px solid var(--dsw-alias-border-l3);display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-secondary)}
+.dshspec-rowText{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.dshspec-rowName{font-size:13.5px;line-height:19px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshspec-rowMeta{font-size:11.5px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshspec-rowEnd{flex:none;display:flex;align-items:center;gap:8px;color:var(--dshspec-label-tertiary,var(--dsw-alias-label-tertiary))}
+
+.dshspec-item{display:flex;flex-direction:column;min-width:0}
+.dshspec-item+.dshspec-item{border-top:1px solid var(--dsw-alias-border-l1)}
+.dshspec-itemHead{display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:0;cursor:pointer;user-select:none}
+.dshspec-itemHead:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshspec-itemHead:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
+.dshspec-itemHeadRow{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.dshspec-itemBody{display:flex;flex-direction:column;gap:12px;padding:12px 14px 14px;border-top:1px solid var(--dsw-alias-border-l1)}
+.dshspec-chev{flex:none;color:var(--dsw-alias-label-tertiary);transition:transform .15s ease}
+.dshspec-chevOpen{transform:rotate(90deg)}
+.dshspec-changeName{font-size:13.5px;line-height:19px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshspec-changeButtons{flex:none;display:flex;align-items:center;gap:6px}
+.dshspec-changeProgress{flex:0 1 150px;min-width:96px}
+.dshspec-dateChip{flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-interactive-bg-hover);border-radius:6px;padding:1px 6px;font-variant-numeric:tabular-nums}
+.dshspec-decoIcon{opacity:.5}
+
+/* Documents & tasks inside an expanded item --------------------------- */
+.dshspec-subHead{display:flex;align-items:center;gap:8px;font-size:11.5px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+.dshspec-subHead b{font-weight:400;color:var(--dsw-alias-label-secondary)}
+.dshspec-docGrid{display:flex;flex-wrap:wrap;gap:8px}
+.dshspec-docBtn{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12.5px;cursor:pointer;transition:background .12s ease,border-color .12s ease}
+.dshspec-docBtn:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l3)}
+.dshspec-docBtn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.dshspec-docBtn .dshspec-icon{color:var(--dsw-alias-label-tertiary)}
+.dshspec-docKind{font-size:10.5px;color:var(--dsw-alias-label-tertiary)}
+.dshspec-taskBlock{display:flex;flex-direction:column;gap:6px}
+.dshspec-taskList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.dshspec-task{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.dshspec-task .dshspec-icon{margin-top:2px;color:var(--dsw-alias-label-tertiary)}
+.dshspec-taskDone{color:var(--dsw-alias-label-tertiary)}
+.dshspec-taskDone .dshspec-icon{color:var(--dsw-alias-state-success-primary)}
+.dshspec-inlineLoad{display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
+
+/* Badges, progress, chips (shared) ------------------------------------ */
 .dshspec-badge{flex:none;display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 8px 0 7px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1;white-space:nowrap;font-weight:400}
 .dshspec-badgeDot{width:5px;height:5px;border-radius:50%;flex:none}
 .dshspec-progress{display:flex;align-items:center;gap:8px;flex:0 1 170px;min-width:110px;max-width:220px}
@@ -203,6 +343,7 @@ function createOpenSpecPlugin(require) {
 .dshspec-progressCount{flex:none;font-size:11.5px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 .dshspec-fileChip{display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:6px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:11px;font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);white-space:nowrap}
 
+/* Buttons -------------------------------------------------------------- */
 .dshspec-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;border:none;font:inherit;cursor:pointer;white-space:nowrap;border-radius:12px;transition:background .12s ease,border-color .12s ease,color .12s ease,opacity .12s ease;-webkit-app-region:no-drag}
 .dshspec-btn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
 .dshspec-btn:disabled{opacity:.4;cursor:default}
@@ -220,6 +361,7 @@ function createOpenSpecPlugin(require) {
 .dshspec-iconBtn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
 .dshspec-icon{display:block;flex:none}
 
+/* Composer dock -------------------------------------------------------- */
 .dshspec-dock{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:2px 2px 6px;font-size:12.5px;color:var(--dsw-alias-label-tertiary);min-width:0}
 .dshspec-dockStatus{display:flex;align-items:center;gap:7px;min-width:0}
 .dshspec-dockName{font-size:12.5px;font-weight:500;color:var(--dsw-alias-label-primary);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -231,13 +373,15 @@ function createOpenSpecPlugin(require) {
 .dshspec-seg .dshspec-btn-primary:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-accent)}
 .dshspec-dot{width:7px;height:7px;border-radius:50%;flex:none}
 
+/* Modal ---------------------------------------------------------------- */
 .dshspec-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.24);animation:dshspec-fade .12s ease-out}
-.dshspec-modal{width:100%;max-height:calc(100vh - 48px);overflow:auto;background:var(--dsw-alias-bg-layer-1);border-radius:var(--dsw-radius-panel,28px);box-shadow:var(--dsw-elevation-prominent);padding:22px 24px 20px;display:flex;flex-direction:column;gap:16px;animation:dshspec-pop .14s cubic-bezier(.2,.8,.2,1)}
+.dshspec-modal{width:100%;max-height:calc(100vh - 48px);overflow:auto;box-sizing:border-box;background:var(--dsw-alias-bg-layer-1);border-radius:var(--dsw-radius-panel,28px);box-shadow:var(--dsw-elevation-prominent);padding:22px 24px 20px;display:flex;flex-direction:column;gap:16px;animation:dshspec-pop .14s cubic-bezier(.2,.8,.2,1)}
+.dshspec-modal:focus,.dshspec-modal:focus-visible{outline:none}
 .dshspec-modalHead{display:flex;align-items:flex-start;gap:12px}
 .dshspec-modalHeadText{flex:1;min-width:0}
-.dshspec-modalTitle{margin:0;font-size:16px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary)}
-.dshspec-modalDesc{margin:6px 0 0;font-size:13px;line-height:19px;color:var(--dsw-alias-label-tertiary)}
-.dshspec-modalBody{display:flex;flex-direction:column;gap:12px}
+.dshspec-modalTitle{margin:0;font-size:16px;line-height:22px;font-weight:500;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
+.dshspec-modalDesc{margin:6px 0 0;font-size:13px;line-height:19px;color:var(--dsw-alias-label-tertiary);overflow-wrap:anywhere}
+.dshspec-modalBody{display:flex;flex-direction:column;gap:12px;min-width:0}
 .dshspec-modalFoot{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .dshspec-field{display:flex;flex-direction:column;gap:6px}
 .dshspec-fieldLabel{font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary)}
@@ -252,6 +396,31 @@ function createOpenSpecPlugin(require) {
 .dshspec-pickRow:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
 .dshspec-pickName{flex:1;min-width:0;font-size:13.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+/* Document viewer ------------------------------------------------------ */
+.dshspec-docViewport{max-height:min(62vh,620px);overflow:auto;padding:2px 2px 8px;border-top:.5px solid var(--dsw-alias-border-l1);margin-top:2px}
+.dshspec-docPath{font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow-wrap:anywhere}
+.dshspec-markdown{font-size:14px;line-height:1.7;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
+.dshspec-markdown>*:first-child{margin-top:0}
+.dshspec-markdown>*:last-child{margin-bottom:0}
+.dshspec-mdH{margin:18px 0 8px;font-weight:600;line-height:1.4}
+.dshspec-mdH1{font-size:20px}
+.dshspec-mdH2{font-size:17px}
+.dshspec-mdH3{font-size:15px}
+.dshspec-mdH4{font-size:14px}
+.dshspec-mdP{margin:0 0 10px}
+.dshspec-mdList{margin:0 0 10px;padding-left:20px}
+.dshspec-mdLi{margin:2px 0}
+.dshspec-mdCheck{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-right:6px;border:.5px solid var(--dsw-alias-border-l3);border-radius:4px;font-size:10px;line-height:1;vertical-align:-2px;color:transparent}
+.dshspec-mdCheckOn{background:var(--dsw-alias-state-success-secondary);border-color:transparent;color:var(--dsw-alias-label-primary-foreground)}
+.dshspec-mdPre{background:var(--dsw-alias-markdown-code-block,var(--dsw-alias-interactive-bg-hover));border-radius:10px;padding:10px 12px;margin:0 0 12px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace)}
+.dshspec-mdCode{font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:12.5px;background:var(--dsw-alias-markdown-inline-code,var(--dsw-alias-interactive-bg-hover));border-radius:4px;padding:1px 5px}
+.dshspec-mdQuote{margin:0 0 12px;padding:4px 0 4px 12px;border-left:2px solid var(--dsw-alias-border-l3);color:var(--dsw-alias-label-secondary)}
+.dshspec-mdHr{border:none;border-top:.5px solid var(--dsw-alias-border-l2);margin:16px 0}
+.dshspec-markdown a{color:var(--dsw-alias-link);text-decoration:none}
+.dshspec-markdown a:hover{text-decoration:underline}
+
+/* State panels --------------------------------------------------------- */
+.dshspec-card{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1));border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l2));border-radius:var(--dsw-radius-lg,16px);padding:18px 20px 16px;display:flex;flex-direction:column;gap:14px}
 .dshspec-empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:30px 16px 26px}
 .dshspec-emptyIcon{flex:none;width:44px;height:44px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
 .dshspec-emptyTitle{font-size:14px;line-height:20px;font-weight:500}
@@ -280,7 +449,7 @@ function createOpenSpecPlugin(require) {
 @keyframes dshspec-pop{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}
 @keyframes dshspec-rotate{to{transform:rotate(360deg)}}
 @keyframes dshspec-pulse{0%,100%{opacity:.65}50%{opacity:1}}
-@media (prefers-reduced-motion:reduce){.dshspec-overlay,.dshspec-modal,.dshspec-toast,.dshspec-spin,.dshspec-skelLine{animation:none}}
+@media (prefers-reduced-motion:reduce){.dshspec-overlay,.dshspec-modal,.dshspec-toast,.dshspec-spin,.dshspec-skelLine,.dshspec-chev,.dshspec-progressFill{animation:none;transition:none}}
 `
 
   /** Inject the stylesheet once, tagged like shipped plugin CSS. */
@@ -351,6 +520,25 @@ function createOpenSpecPlugin(require) {
     send: [
       ['path', { d: 'M8 13V3.2' }],
       ['path', { d: 'M4 7.1 8 3.1l4 4' }],
+    ],
+    file: [
+      ['path', { d: 'M9 2H4.6A1.6 1.6 0 0 0 3 3.6v8.8A1.6 1.6 0 0 0 4.6 14h6.8a1.6 1.6 0 0 0 1.6-1.6V6z' }],
+      ['path', { d: 'M9 2v4h4' }],
+      ['path', { d: 'M5.4 8.4h5.2M5.4 10.8h3.6' }],
+    ],
+    layers: [
+      ['path', { d: 'M8 2.2 13.4 5 8 7.8 2.6 5z' }],
+      ['path', { d: 'M2.8 8 8 10.7 13.2 8' }],
+      ['path', { d: 'M2.8 11 8 13.7 13.2 11' }],
+    ],
+    checkSquare: [
+      ['rect', { x: 2.4, y: 2.4, width: 11.2, height: 11.2, rx: 2.4 }],
+      ['path', { d: 'M5.4 8.2 7.3 10l3.6-4' }],
+    ],
+    square: [['rect', { x: 2.4, y: 2.4, width: 11.2, height: 11.2, rx: 2.4 }]],
+    clock: [
+      ['circle', { cx: 8, cy: 8, r: 5.6 }],
+      ['path', { d: 'M8 4.9V8l2.1 1.3' }],
     ],
   }
 
@@ -472,7 +660,7 @@ function createOpenSpecPlugin(require) {
    * button, Esc / backdrop close, autofocus and focus restore.
    * ------------------------------------------------------------------ */
 
-  function Modal({ t, title, description, children, footer, onClose, width = 512 }) {
+  function Modal({ t, title, description, children, footer, onClose, width = 512, focusCard }) {
     const cardRef = useRef(null)
     const restoreRef = useRef(null)
     const closeRef = useRef(onClose)
@@ -481,7 +669,8 @@ function createOpenSpecPlugin(require) {
     useEffect(() => {
       restoreRef.current = typeof document === 'undefined' ? null : document.activeElement
       const card = cardRef.current
-      const target = card?.querySelector('[data-autofocus]') ?? card?.querySelector('input, textarea, button')
+      const target =
+        focusCard === true ? card : card?.querySelector('[data-autofocus]') ?? card?.querySelector('input, textarea, button')
       if (target !== null && target !== undefined && typeof target.focus === 'function') target.focus()
       const onKey = (event) => {
         if (event.key === 'Escape') {
@@ -568,8 +757,25 @@ function createOpenSpecPlugin(require) {
     const execute = useCallback(
       (line) => {
         if (typeof insert === 'function') {
-          const inserted = insert(line)
-          if (inserted === false) onResult?.({ ok: false, text: t('insertFailed') }, line)
+          let result
+          try {
+            result = insert(line)
+          } catch (failure) {
+            onResult?.({ ok: false, text: failure instanceof Error ? failure.message : String(failure) }, line)
+            return
+          }
+          if (result === false) {
+            onResult?.({ ok: false, text: t('insertFailed') }, line)
+            return
+          }
+          if (result !== null && typeof result === 'object' && typeof result.then === 'function') {
+            void result.then(
+              (outcome) => {
+                if (outcome !== undefined && outcome !== null && outcome.ok === false) onResult?.(outcome, line)
+              },
+              (failure) => onResult?.({ ok: false, text: failure instanceof Error ? failure.message : String(failure) }, line),
+            )
+          }
           return
         }
         let promise
@@ -593,9 +799,21 @@ function createOpenSpecPlugin(require) {
       async (line) => {
         if (busy || line === undefined || line === null || line === '') return
         if (typeof insert === 'function') {
-          const inserted = insert(line)
-          if (inserted === false) setError(t('insertFailed'))
-          else close()
+          setBusy(true)
+          setError(null)
+          let outcome
+          try {
+            outcome = await insert(line)
+          } catch (failure) {
+            outcome = { ok: false, text: failure instanceof Error ? failure.message : String(failure) }
+          }
+          setBusy(false)
+          if (outcome !== undefined && outcome !== null && outcome.ok === false) {
+            setError(outcome.text ?? t('commandFailed'))
+            return
+          }
+          close()
+          if (typeof onResult === 'function') onResult(outcome, line)
           return
         }
         setBusy(true)
@@ -742,13 +960,27 @@ function createOpenSpecPlugin(require) {
   function parseTasks(text) {
     let total = 0
     let done = 0
-    for (const line of String(text ?? '').split(/\r?\n/)) {
-      const match = /^\s*[-*]\s+\[([ xX])\]\s+/.exec(line)
+    const items = []
+    for (const raw of String(text ?? '').split(/\r?\n/)) {
+      const match = /^(\s*)[-*]\s+\[([ xX])\]\s+(.*)$/.exec(raw)
       if (match === null) continue
       total += 1
-      if (match[1].toLowerCase() === 'x') done += 1
+      const checked = match[2].toLowerCase() === 'x'
+      if (checked) done += 1
+      if (items.length < 200) {
+        items.push({ text: match[3].trim(), done: checked, depth: Math.min(3, Math.floor(match[1].length / 2)) })
+      }
     }
-    return { total, done }
+    return { total, done, items }
+  }
+
+  /** Count requirement headings in a spec document (`### Requirement: …`). */
+  function countRequirements(text) {
+    let count = 0
+    for (const line of String(text ?? '').split(/\r?\n/)) {
+      if (/^###\s+\S/.test(line)) count += 1
+    }
+    return count
   }
 
   /**
@@ -771,24 +1003,114 @@ function createOpenSpecPlugin(require) {
       for (const listener of listeners) listener()
     }
 
+    const listDir = async (path) => {
+      const listing = await ctx.remote.workspaceFiles.list(sessionId, path)
+      if (!listing.ok) throw Object.assign(new Error(listing.error?.message ?? 'list failed'), { code: listing.error?.code })
+      return listing.value.entries
+    }
+
+    const readFile = async (path, limit = 2000) => {
+      try {
+        const page = await ctx.remote.workspaceFiles.read(sessionId, path, { offset: 1, limit })
+        if (!page.ok) {
+          return { ok: false, path, text: '', error: page.error?.message ?? String(page.error?.code ?? 'read failed') }
+        }
+        const text = page.value?.text ?? ''
+        return { ok: true, path, text, truncated: text.split(/\r?\n/).length >= limit }
+      } catch (error) {
+        return { ok: false, path, text: '', error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
+    /** Markdown documents directly inside a change / capability folder. */
+    const docsIn = (base, entries) => {
+      const docs = []
+      for (const entry of entries) {
+        if (entry.type !== 'file' || !entry.name.endsWith('.md')) continue
+        const kind = entry.name === 'proposal.md' ? 'proposal' : entry.name === 'design.md' ? 'design' : entry.name === 'tasks.md' ? 'tasks' : 'doc'
+        docs.push({ path: `${base}/${entry.name}`, label: entry.name, kind })
+      }
+      const order = { proposal: 0, design: 1, tasks: 2 }
+      docs.sort((left, right) => (order[left.kind] ?? 3) - (order[right.kind] ?? 3) || left.label.localeCompare(right.label))
+      return docs
+    }
+
+    /** Delta-spec documents under `<base>/specs/<capability>/spec.md`. */
+    const deltaDocs = async (base) => {
+      const docs = []
+      try {
+        const capabilities = (await listDir(`${base}/specs`)).filter((entry) => entry.type === 'directory')
+        for (const capability of capabilities.slice(0, 12)) {
+          let entries = []
+          try {
+            entries = await listDir(`${base}/specs/${capability.name}`)
+          } catch {
+            continue
+          }
+          if (entries.some((entry) => entry.name === 'spec.md' && entry.type === 'file')) {
+            docs.push({ path: `${base}/specs/${capability.name}/spec.md`, label: `${capability.name}/spec.md`, kind: 'delta' })
+          }
+        }
+      } catch {
+        /* no specs/ folder inside this change */
+      }
+      return docs
+    }
+
     const readChange = async (root, name) => {
       const base = `${root}/changes/${name}`
-      const listing = await ctx.remote.workspaceFiles.list(sessionId, base)
-      if (!listing.ok) throw Object.assign(new Error(listing.error?.message ?? 'list failed'), { code: listing.error?.code })
-      const names = []
-      let hasProposal = false
-      let hasSpecs = false
-      for (const entry of listing.value.entries) {
-        if (entry.name === 'proposal.md') hasProposal = true
-        if (entry.name === 'specs' && entry.type === 'directory') hasSpecs = true
-        names.push(entry.name)
-      }
+      const entries = await listDir(base)
+      const names = entries.map((entry) => entry.name)
       let tasks = null
       if (names.includes('tasks.md')) {
-        const page = await ctx.remote.workspaceFiles.read(sessionId, `${base}/tasks.md`, { offset: 1, limit: 400 })
-        if (page.ok) tasks = parseTasks(page.value.text)
+        const page = await readFile(`${base}/tasks.md`, 400)
+        if (page.ok) tasks = parseTasks(page.text)
       }
-      return { name, hasProposal, hasSpecs, tasks, phase: null, files: names.slice(0, 10) }
+      return {
+        name,
+        hasProposal: names.includes('proposal.md'),
+        hasSpecs: names.includes('specs'),
+        tasks,
+        phase: null,
+        files: names.slice(0, 10),
+        docs: docsIn(base, entries).concat(await deltaDocs(base)),
+      }
+    }
+
+    const readCapability = async (root, name) => {
+      const base = `${root}/specs/${name}`
+      let entries = []
+      try {
+        entries = await listDir(base)
+      } catch {
+        /* unreadable capability folder */
+      }
+      const docs = docsIn(base, entries)
+      let requirementCount = 0
+      const spec = docs.find((doc) => doc.label === 'spec.md')
+      if (spec !== undefined) {
+        const page = await readFile(spec.path, 400)
+        if (page.ok) requirementCount = countRequirements(page.text)
+      }
+      return { name, docs, requirementCount }
+    }
+
+    /** Load one archived change on demand (the panel lists names only). */
+    const loadArchive = async (name) => {
+      const cwd = cwdOf(ctx, sessionId)
+      if (!cwd) return { ok: false, error: 'no workspace path' }
+      const base = `${joinPath(cwd, 'openspec')}/changes/archive/${name}`
+      try {
+        const entries = await listDir(base)
+        let tasks = null
+        if (entries.some((entry) => entry.name === 'tasks.md' && entry.type === 'file')) {
+          const page = await readFile(`${base}/tasks.md`, 400)
+          if (page.ok) tasks = parseTasks(page.text)
+        }
+        return { ok: true, name, docs: docsIn(base, entries).concat(await deltaDocs(base)), tasks }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
     }
 
     const refresh = async () => {
@@ -815,14 +1137,6 @@ function createOpenSpecPlugin(require) {
           return
         }
         const dirs = topLevel.value.entries.filter((entry) => entry.type === 'directory' && entry.name !== 'archive')
-        let archived = 0
-        const archiveEntry = topLevel.value.entries.find((entry) => entry.name === 'archive' && entry.type === 'directory')
-        if (archiveEntry !== undefined) {
-          const archiveList = await ctx.remote.workspaceFiles.list(sessionId, `${root}/changes/archive`)
-          if (archiveList.ok && request === epoch) {
-            archived = archiveList.value.entries.filter((entry) => entry.type === 'directory').length
-          }
-        }
         const changes = []
         for (const dir of dirs.slice(0, MAX_CHANGES)) {
           try {
@@ -834,7 +1148,43 @@ function createOpenSpecPlugin(require) {
           }
           if (request !== epoch) return
         }
-        publish({ status: 'ready', cwd, root, changes, archived, watchDown: snapshot.watchDown === true })
+        let archived = []
+        const archiveEntry = topLevel.value.entries.find((entry) => entry.name === 'archive' && entry.type === 'directory')
+        if (archiveEntry !== undefined) {
+          try {
+            archived = (await listDir(`${root}/changes/archive`))
+              .filter((entry) => entry.type === 'directory')
+              .map((entry) => entry.name)
+              .sort((left, right) => right.localeCompare(left))
+          } catch {
+            /* empty archive folder */
+          }
+        }
+        if (request !== epoch) return
+        const specs = []
+        try {
+          const capabilityDirs = (await listDir(`${root}/specs`)).filter((entry) => entry.type === 'directory')
+          for (const dir of capabilityDirs.slice(0, 30)) {
+            try {
+              specs.push(await readCapability(root, dir.name))
+            } catch {
+              /* skip an unreadable capability */
+            }
+            if (request !== epoch) return
+          }
+        } catch {
+          /* no specs/ folder yet */
+        }
+        publish({
+          status: 'ready',
+          cwd,
+          root,
+          changes,
+          specs,
+          archived,
+          archivedCount: archived.length,
+          watchDown: snapshot.watchDown === true,
+        })
         ensureWatch(root)
       } catch (error) {
         if (request !== epoch) return
@@ -939,6 +1289,10 @@ function createOpenSpecPlugin(require) {
         },
       },
       refresh,
+      /** Read one Markdown document for the viewer. */
+      readFile,
+      /** Load one archived change's artifacts on demand. */
+      loadArchive,
       /** Run one /command line in this session and normalize the outcome.
        * The wire takes the exact receiving agent id plus the line; the dock
        * renders inside the session it targets. */
@@ -1108,8 +1462,10 @@ function createOpenSpecPlugin(require) {
       selection.removeAllRanges()
       selection.addRange(range)
     }
+    const hadText = (editor.textContent ?? '').trim() !== ''
+    if (hadText) document.execCommand('insertLineBreak', false, '')
     if (document.execCommand('insertText', false, text)) return true
-    editor.textContent += text
+    editor.textContent += (hadText ? '\n' : '') + text
     editor.dispatchEvent(new Event('input', { bubbles: true }))
     return true
   }
@@ -1122,6 +1478,8 @@ function createOpenSpecPlugin(require) {
   /* ------------------------------------------------------------------ *
    * Panel surfaces.
    * ------------------------------------------------------------------ */
+
+  const PHASE_ORDER = ['draft', 'proposed', 'apply', 'ready']
 
   /** One-click init control: posts the workspace to the Host's session-less init route, then refreshes. */
   function InitControl({ t, cwd, init, refresh }) {
@@ -1164,17 +1522,6 @@ function createOpenSpecPlugin(require) {
     )
   }
 
-  function EmptyBody({ t, onPropose }) {
-    return h(
-      'div',
-      { className: 'dshspec-empty' },
-      h('span', { className: 'dshspec-emptyIcon' }, h(Icon, { name: 'sparkle', size: 20 })),
-      h('div', { className: 'dshspec-emptyTitle' }, t('noChanges')),
-      h('div', { className: 'dshspec-emptyDesc' }, t('noChangesHint')),
-      h(Button, { variant: 'primary', size: 'md', icon: 'filePlus', onClick: onPropose }, t('newProposal')),
-    )
-  }
-
   function LoadingBody() {
     return h(
       'div',
@@ -1185,69 +1532,574 @@ function createOpenSpecPlugin(require) {
     )
   }
 
-  /** One change row: identity + phase + progress on the left, actions on the right. */
-  function ChangeRow({ t, change, execute }) {
-    const meta = PHASE_META[change.phase] ?? PHASE_META.draft
-    const archiveFirst = change.phase === 'ready'
-    const taskProgress = change.tasks !== null && change.tasks.total > 0
+  function SectionEmpty({ icon, title, hint, action }) {
     return h(
       'div',
-      { className: 'dshspec-change', 'data-dshspec-change': change.name },
+      { className: 'dshspec-sectionEmpty' },
+      h('span', { className: 'dshspec-sectionEmptyIcon' }, h(Icon, { name: icon, size: 18 })),
+      h('div', { className: 'dshspec-sectionEmptyTitle' }, title),
+      hint === undefined ? null : h('div', { className: 'dshspec-sectionEmptyHint' }, hint),
+      action ?? null,
+    )
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Small document renderer — a safe Markdown subset, no HTML injection.
+   * ------------------------------------------------------------------ */
+
+  function renderInline(text, keyBase) {
+    const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g
+    const out = []
+    let last = 0
+    let index = 0
+    let match
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > last) out.push(text.slice(last, match.index))
+      const token = match[0]
+      if (token.startsWith('`')) {
+        out.push(h('code', { key: `${keyBase}-c${index++}`, className: 'dshspec-mdCode' }, token.slice(1, -1)))
+      } else if (token.startsWith('**')) {
+        out.push(h('strong', { key: `${keyBase}-b${index++}` }, token.slice(2, -2)))
+      } else {
+        const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token)
+        if (link === null) out.push(token)
+        else out.push(h('a', { key: `${keyBase}-a${index++}`, href: link[2], target: '_blank', rel: 'noreferrer' }, link[1]))
+      }
+      last = match.index + token.length
+    }
+    if (last < text.length) out.push(text.slice(last))
+    return out
+  }
+
+  function Markdown({ text }) {
+    const lines = String(text ?? '').split(/\r?\n/)
+    const blocks = []
+    let i = 0
+    while (i < lines.length) {
+      const line = lines[i]
+      if (line.trim() === '') {
+        i += 1
+        continue
+      }
+      if (/^\s*```/.test(line)) {
+        i += 1
+        const code = []
+        while (i < lines.length && !/^\s*```/.test(lines[i])) {
+          code.push(lines[i])
+          i += 1
+        }
+        if (i < lines.length) i += 1
+        blocks.push(h('pre', { key: `b${blocks.length}`, className: 'dshspec-mdPre' }, h('code', null, code.join('\n'))))
+        continue
+      }
+      const heading = /^(#{1,6})\s+(.*)$/.exec(line)
+      if (heading !== null) {
+        const level = heading[1].length
+        const keyBase = `b${blocks.length}`
+        blocks.push(
+          h(
+            `h${Math.min(level + 1, 4)}`,
+            { key: keyBase, className: `dshspec-mdH dshspec-mdH${level}` },
+            renderInline(heading[2], keyBase),
+          ),
+        )
+        i += 1
+        continue
+      }
+      if (/^\s*([-*_])\1{2,}\s*$/.test(line)) {
+        blocks.push(h('hr', { key: `b${blocks.length}`, className: 'dshspec-mdHr' }))
+        i += 1
+        continue
+      }
+      if (/^\s*>/.test(line)) {
+        const quote = []
+        while (i < lines.length && /^\s*>/.test(lines[i])) {
+          quote.push(lines[i].replace(/^\s*>\s?/, ''))
+          i += 1
+        }
+        const keyBase = `b${blocks.length}`
+        blocks.push(
+          h(
+            'blockquote',
+            { key: keyBase, className: 'dshspec-mdQuote' },
+            quote.map((piece, qi) => h('p', { key: qi, className: 'dshspec-mdP' }, renderInline(piece, `${keyBase}-${qi}`))),
+          ),
+        )
+        continue
+      }
+      if (/^\s*\|/.test(line)) {
+        const table = []
+        while (i < lines.length && /^\s*\|/.test(lines[i])) {
+          table.push(lines[i])
+          i += 1
+        }
+        blocks.push(h('pre', { key: `b${blocks.length}`, className: 'dshspec-mdPre' }, h('code', null, table.join('\n'))))
+        continue
+      }
+      const listItem = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line)
+      if (listItem !== null) {
+        const ordered = /\d/.test(listItem[2])
+        const baseIndent = listItem[1].length
+        const items = []
+        while (i < lines.length) {
+          const item = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i])
+          if (item === null) break
+          const indent = item[1].length
+          if (indent < baseIndent) break
+          const checkbox = /^\[([ xX])\]\s*(.*)$/.exec(item[3])
+          const content = checkbox === null ? item[3] : checkbox[2]
+          const keyBase = `b${blocks.length}-${items.length}`
+          items.push(
+            h(
+              'li',
+              { key: keyBase, className: 'dshspec-mdLi', style: indent > baseIndent ? { marginLeft: 16 } : undefined },
+              checkbox === null
+                ? null
+                : h('span', { className: 'dshspec-mdCheck' + (checkbox[1] !== ' ' ? ' dshspec-mdCheckOn' : '') }, checkbox[1] !== ' ' ? '✓' : ''),
+              renderInline(content, keyBase),
+            ),
+          )
+          i += 1
+        }
+        blocks.push(h(ordered ? 'ol' : 'ul', { key: `b${blocks.length}`, className: 'dshspec-mdList' }, items))
+        continue
+      }
+      const paragraph = []
+      while (
+        i < lines.length &&
+        lines[i].trim() !== '' &&
+        !/^\s*(```|#{1,6}\s|>|\||[-*+]\s|\d+[.)]\s)/.test(lines[i])
+      ) {
+        paragraph.push(lines[i])
+        i += 1
+      }
+      const keyBase = `b${blocks.length}`
+      blocks.push(h('p', { key: keyBase, className: 'dshspec-mdP' }, renderInline(paragraph.join(' '), keyBase)))
+    }
+    return h('div', { className: 'dshspec-markdown' }, blocks)
+  }
+
+  /** Read-only Markdown preview modal for one openspec/ document. */
+  function DocModal({ t, doc, onClose }) {
+    return h(
+      Modal,
+      {
+        t,
+        title: doc.title,
+        description: doc.relPath ?? doc.path,
+        onClose,
+        width: 800,
+        focusCard: true,
+      },
       h(
         'div',
-        { className: 'dshspec-changeMain' },
+        { className: 'dshspec-docViewport' },
+        doc.status === 'loading'
+          ? h(LoadingBody)
+          : doc.status === 'error'
+            ? h(Banner, { tone: 'error', wrap: true }, `${t('readDocFailed')}：${doc.error ?? ''}`)
+            : doc.text.trim() === ''
+              ? h('div', { className: 'dshspec-sectionEmpty' }, t('docEmpty'))
+              : h(Markdown, { text: doc.text }),
+        doc.status === 'ready' && doc.truncated === true ? h(Banner, { tone: 'warn' }, t('docTruncated')) : null,
+      ),
+    )
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Spec overview widgets + expandable rows.
+   * ------------------------------------------------------------------ */
+
+  function Stat({ label, value }) {
+    return h('div', { className: 'dshspec-stat' }, h('span', { className: 'dshspec-statValue' }, String(value)), h('span', { className: 'dshspec-statLabel' }, label))
+  }
+
+  function ProgressRing({ t, done, total }) {
+    const size = 72
+    const stroke = 7
+    const radius = (size - stroke) / 2
+    const circumference = 2 * Math.PI * radius
+    const ratio = total > 0 ? Math.max(0, Math.min(1, done / total)) : 0
+    const color = total > 0 && ratio >= 1 ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-warn-primary)'
+    return h(
+      'div',
+      {
+        className: 'dshspec-ringWrap',
+        title: t('tasksDone').replace('{done}', String(done)).replace('{total}', String(total)),
+      },
+      h(
+        'svg',
+        { width: size, height: size, viewBox: `0 0 ${size} ${size}`, 'aria-hidden': 'true' },
+        h('circle', {
+          cx: size / 2,
+          cy: size / 2,
+          r: radius,
+          fill: 'none',
+          stroke: 'var(--dsw-alias-interactive-bg-hover)',
+          strokeWidth: stroke,
+        }),
+        ratio > 0
+          ? h('circle', {
+              cx: size / 2,
+              cy: size / 2,
+              r: radius,
+              fill: 'none',
+              stroke: color,
+              strokeWidth: stroke,
+              strokeLinecap: 'round',
+              strokeDasharray: `${circumference * ratio} ${circumference}`,
+              transform: `rotate(-90 ${size / 2} ${size / 2})`,
+              style: { transition: 'stroke-dasharray .3s ease' },
+            })
+          : null,
+      ),
+      h(
+        'div',
+        { className: 'dshspec-ringText' },
+        h('span', { className: 'dshspec-ringValue' }, `${Math.round(ratio * 100)}%`),
+        h('span', { className: 'dshspec-ringLabel' }, t('progressLabel')),
+      ),
+    )
+  }
+
+  function SpecSummary({ t, state }) {
+    const changes = state.changes
+    const done = changes.reduce((sum, change) => sum + (change.tasks?.done ?? 0), 0)
+    const total = changes.reduce((sum, change) => sum + (change.tasks?.total ?? 0), 0)
+    const counts = { draft: 0, proposed: 0, apply: 0, ready: 0 }
+    for (const change of changes) counts[change.phase] = (counts[change.phase] ?? 0) + 1
+    return h(
+      'div',
+      { className: 'dshspec-summary' },
+      h(ProgressRing, { t, done, total }),
+      h(
+        'div',
+        { className: 'dshspec-summaryPhase' },
+        h('div', { className: 'dshspec-summaryLabel' }, t('phaseDistribution')),
+        changes.length === 0
+          ? h('div', { className: 'dshspec-note' }, t('noChanges'))
+          : h(
+              'div',
+              { className: 'dshspec-phaseBar' },
+              PHASE_ORDER.map((phase) =>
+                counts[phase] > 0
+                  ? h('span', {
+                      key: phase,
+                      className: 'dshspec-phaseSeg',
+                      style: { flexGrow: counts[phase], background: PHASE_META[phase].color },
+                      title: `${t(PHASE_META[phase].key)} ${counts[phase]}`,
+                    })
+                  : null,
+              ),
+            ),
         h(
           'div',
-          { className: 'dshspec-changeHead' },
-          h('span', { className: 'dshspec-changeName', title: change.name }, change.name),
-          h(PhaseBadge, { t, phase: change.phase }),
-        ),
-        h(
-          'div',
-          { className: 'dshspec-changeMeta' },
-          taskProgress ? h(Progress, { done: change.tasks.done, total: change.tasks.total, color: meta.color }) : null,
-          taskProgress && change.files.length > 0
-            ? h('span', { style: { width: 3, height: 3, borderRadius: '50%', background: 'var(--dsw-alias-label-dimmed)', flex: 'none' } })
-            : null,
-          change.files.map((file) => h('span', { key: file, className: 'dshspec-fileChip' }, file)),
+          { className: 'dshspec-phaseLegend' },
+          PHASE_ORDER.map((phase) =>
+            h(
+              'span',
+              { key: phase, className: 'dshspec-legendItem' },
+              h('span', { className: 'dshspec-badgeDot', style: { background: PHASE_META[phase].color } }),
+              t(PHASE_META[phase].key),
+              h('b', null, String(counts[phase] ?? 0)),
+            ),
+          ),
         ),
       ),
       h(
         'div',
-        { className: 'dshspec-changeActions' },
+        { className: 'dshspec-summaryStats' },
+        h(Stat, { label: t('statActive'), value: changes.length }),
+        h(Stat, { label: t('statSpecs'), value: state.specs.length }),
+        h(Stat, { label: t('statArchived'), value: state.archivedCount ?? state.archived.length }),
+      ),
+    )
+  }
+
+  function DocGrid({ t, docs, openDoc }) {
+    if (docs.length === 0) return h('div', { className: 'dshspec-note' }, t('noDocs'))
+    return h(
+      'div',
+      { className: 'dshspec-docGrid' },
+      docs.map((doc) =>
         h(
-          Button,
+          'button',
           {
-            variant: archiveFirst ? 'outline' : 'primary',
-            size: 'md',
-            icon: 'play',
-            onClick: () => execute(`/opsx-apply ${change.name}`),
+            key: doc.path,
+            type: 'button',
+            className: 'dshspec-docBtn',
+            title: doc.path,
+            onClick: () => openDoc(doc),
           },
-          change.phase === 'apply' ? t('applyContinue') : t('apply'),
-        ),
-        h(
-          Button,
-          {
-            variant: archiveFirst ? 'primary' : 'ghost',
-            size: 'md',
-            icon: 'archive',
-            onClick: () => execute(`/opsx-archive ${change.name}`),
-          },
-          t('archive'),
+          h(Icon, { name: 'file', size: 14 }),
+          h('span', null, doc.label),
         ),
       ),
     )
   }
 
-  /** One workspace section in the panel. */
-  function WorkspaceCard({ t, row, source, dispatch, init, onRefreshAll }) {
+  function TaskPreview({ t, tasks }) {
+    if (tasks === null || tasks === undefined || tasks.items.length === 0) {
+      return h('div', { className: 'dshspec-note' }, t('noTasks'))
+    }
+    const shown = tasks.items.slice(0, 12)
+    return h(
+      'div',
+      { className: 'dshspec-taskBlock' },
+      h(
+        'div',
+        { className: 'dshspec-subHead' },
+        h('b', null, t('taskList')),
+        h('span', null, t('tasksDone').replace('{done}', String(tasks.done)).replace('{total}', String(tasks.total))),
+      ),
+      h(
+        'ul',
+        { className: 'dshspec-taskList' },
+        shown.map((item, index) =>
+          h(
+            'li',
+            { key: index, className: 'dshspec-task' + (item.done ? ' dshspec-taskDone' : '') },
+            h(Icon, { name: item.done ? 'checkSquare' : 'square', size: 14 }),
+            h('span', null, item.text),
+          ),
+        ),
+      ),
+      tasks.items.length > shown.length
+        ? h('div', { className: 'dshspec-note' }, t('moreTasks').replace('{count}', String(tasks.items.length - shown.length)))
+        : null,
+    )
+  }
+
+  /** One collapsible change row: status line always, artifacts + tasks when open. */
+  function ChangeItem({ t, change, open, onToggle, execute, openDoc }) {
+    const meta = PHASE_META[change.phase] ?? PHASE_META.draft
+    const ready = change.phase === 'ready'
+    const tasks = change.tasks
+    const toggle = () => onToggle()
+    return h(
+      'div',
+      { className: 'dshspec-item', 'data-dshspec-change': change.name },
+      h(
+        'div',
+        {
+          className: 'dshspec-itemHead',
+          role: 'button',
+          tabIndex: 0,
+          'aria-expanded': open,
+          onClick: toggle,
+          onKeyDown: (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault()
+              toggle()
+            }
+          },
+        },
+        h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (open ? ' dshspec-chevOpen' : '') }),
+        h('span', { className: 'dshspec-changeName', title: change.name }, change.name),
+        h(PhaseBadge, { t, phase: change.phase }),
+        tasks !== null && tasks.total > 0
+          ? h('div', { className: 'dshspec-changeProgress' }, h(Progress, { done: tasks.done, total: tasks.total, color: meta.color }))
+          : null,
+        h('span', { className: 'dshspec-space' }),
+        h(
+          'div',
+          { className: 'dshspec-changeButtons' },
+          h(
+            Button,
+            {
+              variant: ready ? 'outline' : 'primary',
+              size: 'md',
+              icon: 'play',
+              onClick: (event) => {
+                event.stopPropagation()
+                execute(`/opsx-apply ${change.name}`)
+              },
+            },
+            change.phase === 'apply' ? t('applyContinue') : t('apply'),
+          ),
+          h(
+            Button,
+            {
+              variant: ready ? 'primary' : 'ghost',
+              size: 'md',
+              icon: 'archive',
+              onClick: (event) => {
+                event.stopPropagation()
+                execute(`/opsx-archive ${change.name}`)
+              },
+            },
+            t('archive'),
+          ),
+        ),
+      ),
+      open
+        ? h(
+            'div',
+            { className: 'dshspec-itemBody' },
+            h('div', { className: 'dshspec-subHead' }, h('b', null, t('docs'))),
+            h(DocGrid, { t, docs: change.docs, openDoc }),
+            h(TaskPreview, { t, tasks }),
+          )
+        : null,
+    )
+  }
+
+  /** One finalized capability spec row: click opens its spec.md. */
+  function CapabilityRow({ t, capability, openDoc }) {
+    const doc = capability.docs.find((item) => item.label === 'spec.md') ?? capability.docs[0]
+    return h(
+      'button',
+      {
+        type: 'button',
+        className: 'dshspec-rowItem',
+        title: doc === undefined ? t('noDocs') : doc.path,
+        onClick: () => {
+          if (doc !== undefined) openDoc(doc)
+        },
+      },
+      h('span', { className: 'dshspec-rowIcon' }, h(Icon, { name: 'layers', size: 15 })),
+      h(
+        'span',
+        { className: 'dshspec-rowText' },
+        h('span', { className: 'dshspec-rowName' }, capability.name),
+        h('span', { className: 'dshspec-rowMeta' }, doc === undefined ? t('noDocs') : doc.label),
+      ),
+      capability.requirementCount > 0
+        ? h('span', { className: 'dshspec-legendItem' }, t('requirementCount').replace('{count}', String(capability.requirementCount)))
+        : null,
+      h(Icon, { name: 'chevronRight', size: 14 }),
+    )
+  }
+
+  function archiveParts(name) {
+    const match = /^(\d{4}-\d{2}-\d{2})-(.*)$/.exec(name)
+    return match === null ? { date: null, label: name } : { date: match[1], label: match[2] }
+  }
+
+  /** Archived changes live at the bottom, newest first, loaded on demand. */
+  function ArchiveSection({ t, source, archived, openDoc }) {
+    const [open, setOpen] = useState(false)
+    const [expanded, setExpanded] = useState({})
+    const [details, setDetails] = useState({})
+
+    const load = useCallback(
+      (name) => {
+        setDetails((prev) => (prev[name] === undefined ? { ...prev, [name]: { status: 'loading' } } : prev))
+        if (source === undefined) {
+          setDetails((prev) => ({ ...prev, [name]: { status: 'error', error: t('commandFailed') } }))
+          return
+        }
+        void source.loadArchive(name).then((result) => {
+          setDetails((prev) => ({
+            ...prev,
+            [name]:
+              result !== null && result !== undefined && result.ok === true
+                ? { status: 'ready', docs: result.docs, tasks: result.tasks }
+                : { status: 'error', error: result?.error ?? t('commandFailed') },
+          }))
+        })
+      },
+      [source, t],
+    )
+
+    const toggleItem = (name) => {
+      const willOpen = expanded[name] !== true
+      setExpanded((prev) => ({ ...prev, [name]: willOpen }))
+      if (willOpen && details[name] === undefined) load(name)
+    }
+
+    return h(
+      'section',
+      { className: 'dshspec-section' },
+      h(
+        'div',
+        { className: 'dshspec-sectionHead' },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'dshspec-sectionToggle',
+            'aria-expanded': open,
+            onClick: () => setOpen((value) => !value),
+          },
+          h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (open ? ' dshspec-chevOpen' : '') }),
+          h('span', { className: 'dshspec-sectionTitle' }, t('archivedChanges')),
+          h('span', { className: 'dshspec-sectionCount' }, String(archived.length)),
+        ),
+        h('span', { className: 'dshspec-space' }),
+        h('span', { className: 'dshspec-note' }, t('archivedHint')),
+      ),
+      open
+        ? h(
+            'div',
+            { className: 'dshspec-sectionBody' },
+            archived.length === 0
+              ? h('div', { className: 'dshspec-sectionEmpty' }, t('noArchived'))
+              : archived.map((name) => {
+                  const parts = archiveParts(name)
+                  const isOpen = expanded[name] === true
+                  const detail = details[name]
+                  return h(
+                    'div',
+                    { key: name, className: 'dshspec-item' },
+                    h(
+                      'div',
+                      {
+                        className: 'dshspec-itemHead',
+                        role: 'button',
+                        tabIndex: 0,
+                        'aria-expanded': isOpen,
+                        onClick: () => toggleItem(name),
+                        onKeyDown: (event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            toggleItem(name)
+                          }
+                        },
+                      },
+                      h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (isOpen ? ' dshspec-chevOpen' : '') }),
+                      h('span', { className: 'dshspec-changeName', title: name }, parts.label),
+                      parts.date === null ? null : h('span', { className: 'dshspec-dateChip' }, parts.date),
+                      detail !== undefined && detail.status === 'ready' && detail.tasks !== null && detail.tasks.total > 0
+                        ? h('div', { className: 'dshspec-changeProgress' }, h(Progress, { done: detail.tasks.done, total: detail.tasks.total, color: 'var(--dsw-alias-state-success-primary)' }))
+                        : null,
+                      h('span', { className: 'dshspec-space' }),
+                      h(Icon, { name: 'archive', size: 14, className: 'dshspec-decoIcon' }),
+                    ),
+                    isOpen
+                      ? h(
+                          'div',
+                          { className: 'dshspec-itemBody' },
+                          detail === undefined || detail.status === 'loading'
+                            ? h('div', { className: 'dshspec-inlineLoad' }, h(Icon, { name: 'refresh', size: 14, className: 'dshspec-spin' }), h('span', null, t('loading')))
+                            : detail.status === 'error'
+                              ? h(Banner, { tone: 'error', wrap: true }, detail.error ?? t('error'))
+                              : h(
+                                  'div',
+                                  { style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+                                  h('div', { className: 'dshspec-subHead' }, h('b', null, t('docs'))),
+                                  h(DocGrid, { t, docs: detail.docs, openDoc }),
+                                  h(TaskPreview, { t, tasks: detail.tasks }),
+                                ),
+                        )
+                      : null,
+                  )
+                }),
+          )
+        : null,
+    )
+  }
+
+  /** The selected workspace: overview diagram, changes, specs and archive. */
+  function WorkspaceDetail({ t, row, source, compose, init, onRefresh }) {
     const stateSource = source !== undefined ? source.hooks.state : undefined
     const state = useSyncExternalStore(
       stateSource !== undefined ? stateSource.subscribe : NOOP_SUBSCRIBE,
       stateSource !== undefined ? stateSource.getSnapshot : getNoSession,
     )
+    const [expanded, setExpanded] = useState({})
+    const [doc, setDoc] = useState(null)
     const [notice, setNotice] = useState(null)
-    const [spinning, setSpinning] = useState(false)
     const noticeTimer = useRef(null)
 
     useEffect(
@@ -1264,7 +2116,7 @@ function createOpenSpecPlugin(require) {
         setNotice({
           tone: failed ? 'error' : 'info',
           icon: failed ? 'alert' : 'check',
-          text: failed ? outcome?.text ?? t('commandFailed') : `${t('commandSent')} · ${line ?? ''}`,
+          text: failed ? outcome?.text ?? t('commandFailed') : `${t('fillComposer')} · ${line ?? ''}`,
         })
         noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS)
       },
@@ -1273,56 +2125,62 @@ function createOpenSpecPlugin(require) {
 
     const commands = useCommands({
       t,
-      run: (line) => dispatch(row, line),
+      insert: typeof compose === 'function' ? (line) => compose(row)(line) : undefined,
       changes: state.status === 'ready' ? state.changes : [],
       onResult: report,
     })
 
-    const refreshSelf = useCallback(async () => {
-      if (source === undefined) return
-      setSpinning(true)
-      try {
-        await source.refresh()
-      } finally {
-        setSpinning(false)
-      }
-    }, [source])
+    const openDoc = useCallback(
+      (item) => {
+        const relative = item.path.startsWith(row.cwd)
+          ? item.path.slice(row.cwd.length).replace(/^[\\/]+/, '')
+          : item.path
+        const base = { title: item.label, path: item.path, relPath: relative, status: 'loading', text: '', truncated: false }
+        setDoc(base)
+        if (source === undefined) {
+          setDoc({ ...base, status: 'error', error: t('commandFailed') })
+          return
+        }
+        void source.readFile(item.path).then((page) => {
+          setDoc((prev) => {
+            if (prev === null || prev.path !== item.path) return prev
+            return page.ok
+              ? { ...prev, status: 'ready', text: page.text, truncated: page.truncated === true }
+              : { ...prev, status: 'error', error: page.error ?? '' }
+          })
+        })
+      },
+      [row.cwd, source, t],
+    )
 
-    const refresh = () => {
-      if (source !== undefined) void refreshSelf()
-      else if (typeof onRefreshAll === 'function') void onRefreshAll()
-    }
+    const reload = useCallback(async () => {
+      if (source === undefined) {
+        if (typeof onRefresh === 'function') await onRefresh()
+        return
+      }
+      await source.refresh()
+    }, [source, onRefresh])
+
+    const toggleChange = (name) => setExpanded((prev) => ({ ...prev, [name]: !prev[name] }))
 
     const changes = state.status === 'ready' ? state.changes : []
-    const archived = state.status === 'ready' ? state.archived : 0
-    const metaText = state.status === 'ready' ? t('changeCount').replace('{count}', String(changes.length)) : null
+    const specs = state.status === 'ready' ? state.specs : []
+    const archived = state.status === 'ready' ? state.archived : []
 
     return h(
       'section',
-      { className: 'dshspec-card', 'data-dshspec-workspace': row.cwd },
+      { className: 'dshspec-detail', 'data-dshspec-workspace': row.cwd },
       h(
         'div',
-        { className: 'dshspec-wsHead' },
-        h('span', { className: 'dshspec-wsIcon' }, h(Icon, { name: 'folder', size: 16 })),
+        { className: 'dshspec-detailBar' },
+        h(Icon, { name: 'folder', size: 15, className: 'dshspec-detailBarIcon' }),
+        h('span', { className: 'dshspec-detailBarPath', title: row.cwd }, row.cwd),
         h(
           'div',
-          { className: 'dshspec-wsText' },
-          h('span', { className: 'dshspec-wsName', title: row.cwd }, basenameOf(row.cwd)),
-          h('span', { className: 'dshspec-wsPath', title: row.cwd }, row.cwd),
-        ),
-        metaText === null ? null : h('span', { className: 'dshspec-wsMeta' }, metaText),
-        h(
-          'div',
-          { className: 'dshspec-wsActions' },
+          { className: 'dshspec-detailActions' },
           h(Button, { variant: 'ghost', size: 'md', icon: 'compass', title: '/opsx-explore [主题]', onClick: () => commands.open('explore') }, t('explore')),
           h(Button, { variant: 'outline', size: 'md', icon: 'filePlus', title: '/opsx-propose <change-name> [说明]', onClick: () => commands.open('propose') }, t('propose')),
           h(Button, { variant: 'ghost', size: 'md', icon: 'activity', title: '/opsx-status', onClick: () => commands.execute('/opsx-status') }, t('status')),
-          h(IconButton, {
-            icon: 'refresh',
-            label: t('refresh'),
-            onClick: refresh,
-            className: spinning ? 'dshspec-spin' : undefined,
-          }),
         ),
       ),
       notice === null ? null : h(Banner, { tone: notice.tone, icon: notice.icon, wrap: notice.tone === 'error' }, notice.text),
@@ -1330,47 +2188,107 @@ function createOpenSpecPlugin(require) {
       state.status === 'nosession'
         ? h(
             'div',
-            { className: 'dshspec-nosession' },
-            h(Icon, { name: 'info', size: 14 }),
-            h('span', null, row.sessionId === undefined ? t('nosessionHint') : t('nosession')),
+            { className: 'dshspec-card' },
+            h(
+              'div',
+              { className: 'dshspec-nosession' },
+              h(Icon, { name: 'info', size: 14 }),
+              h('span', null, row.sessionId === undefined ? t('nosessionHint') : t('nosession')),
+            ),
           )
         : null,
       state.status === 'error'
         ? h(
             'div',
-            { style: { display: 'flex', alignItems: 'center', gap: 10 } },
-            h(Banner, { tone: 'error', wrap: true }, `${t('error')}：${state.error ?? ''}`),
-            h(Button, { variant: 'ghost', size: 'sm', icon: 'refresh', onClick: () => void refreshSelf() }, t('retry')),
-          )
-        : null,
-      state.status === 'missing' ? h(MissingBody, { t, init, refresh: () => void refreshSelf(), cwd: row.cwd }) : null,
-      state.status === 'ready'
-        ? changes.length === 0
-          ? h(EmptyBody, { t, onPropose: () => commands.open('propose') })
-          : h(
+            { className: 'dshspec-card' },
+            h(
               'div',
-              { className: 'dshspec-changes' },
-              changes.map((change) => h(ChangeRow, { key: change.name, t, change, execute: commands.execute })),
-            )
-        : null,
-      archived > 0
-        ? h(
-            'div',
-            { className: 'dshspec-foot' },
-            h(Icon, { name: 'archive', size: 14 }),
-            h('span', null, t('archived').replace('{count}', String(archived))),
+              { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+              h(Banner, { tone: 'error', wrap: true }, `${t('error')}：${state.error ?? ''}`),
+              h(Button, { variant: 'ghost', size: 'sm', icon: 'refresh', onClick: () => void reload() }, t('retry')),
+            ),
           )
         : null,
-      state.watchDown === true ? h('div', { className: 'dshspec-foot' }, h(Icon, { name: 'alert', size: 14 }), h('span', null, t('watchDown'))) : null,
+      state.status === 'missing' ? h('div', { className: 'dshspec-card' }, h(MissingBody, { t, init, refresh: () => void reload(), cwd: row.cwd })) : null,
+      state.status === 'ready'
+        ? [
+            h(SpecSummary, { key: 'summary', t, state }),
+            h(
+              'section',
+              { key: 'changes', className: 'dshspec-section' },
+              h(
+                'div',
+                { className: 'dshspec-sectionHead' },
+                h('span', { className: 'dshspec-sectionTitle' }, t('activeChanges')),
+                h('span', { className: 'dshspec-sectionCount' }, String(changes.length)),
+              ),
+              h(
+                'div',
+                { className: 'dshspec-sectionBody' },
+                changes.length === 0
+                  ? h(SectionEmpty, {
+                      icon: 'sparkle',
+                      title: t('noChanges'),
+                      hint: t('noChangesHint'),
+                      action: h(Button, { variant: 'primary', size: 'md', icon: 'filePlus', onClick: () => commands.open('propose') }, t('newProposal')),
+                    })
+                  : changes.map((change) =>
+                      h(ChangeItem, {
+                        key: change.name,
+                        t,
+                        change,
+                        open: expanded[change.name] === true,
+                        onToggle: () => toggleChange(change.name),
+                        execute: commands.execute,
+                        openDoc,
+                      }),
+                    ),
+              ),
+            ),
+            h(
+              'section',
+              { key: 'specs', className: 'dshspec-section' },
+              h(
+                'div',
+                { className: 'dshspec-sectionHead' },
+                h('span', { className: 'dshspec-sectionTitle' }, t('capabilitySpecs')),
+                h('span', { className: 'dshspec-sectionCount' }, String(specs.length)),
+              ),
+              h(
+                'div',
+                { className: 'dshspec-sectionBody' },
+                specs.length === 0
+                  ? h(SectionEmpty, { icon: 'layers', title: t('noCapabilities'), hint: t('noCapabilitiesHint') })
+                  : specs.map((capability) => h(CapabilityRow, { key: capability.name, t, capability, openDoc })),
+              ),
+            ),
+            h(ArchiveSection, { key: 'archive', t, source, archived, openDoc }),
+            state.watchDown === true
+              ? h('div', { key: 'watch', className: 'dshspec-foot' }, h(Icon, { name: 'alert', size: 14 }), h('span', null, t('watchDown')))
+              : null,
+          ]
+        : null,
       commands.modal,
+      doc === null ? null : h(DocModal, { t, doc, onClose: () => setDoc(null) }),
     )
   }
 
-  /** The monitoring page: one card per known workspace. */
-  function OpenspecPanel({ t, rowsSource, sourceFor, dispatchFor, initFor, onRefreshSessions }) {
+  /** Cached workspace selection so navigating away and back keeps the pick. */
+  let lastSelectedWorkspace = null
+
+  /** The monitoring page: workspace switcher on top, selected workspace below. */
+  function OpenspecPanel({ t, rowsSource, sourceFor, composeFor, initFor, onRefreshSessions }) {
     const rows = useSyncExternalStore(rowsSource.subscribe, rowsSource.getSnapshot)
+    const [selected, setSelected] = useState(() => lastSelectedWorkspace)
     const [nonce, setNonce] = useState(0)
     const [spinning, setSpinning] = useState(false)
+    const selectedRow = rows.find((row) => row.cwd === selected) ?? rows[0]
+
+    const select = (cwd) => {
+      lastSelectedWorkspace = cwd
+      setSelected(cwd)
+    }
+
     const refreshAll = async () => {
       setSpinning(true)
       try {
@@ -1380,6 +2298,7 @@ function createOpenSpecPlugin(require) {
         setNonce((value) => value + 1)
       }
     }
+
     return h(
       'div',
       { className: 'dshspec-root', 'data-dshspec-panel': true, 'data-dshspec-build': BUILD },
@@ -1418,26 +2337,50 @@ function createOpenSpecPlugin(require) {
                 h('div', { className: 'dshspec-emptyTitle' }, t('nosession')),
               ),
             )
-          : rows.map((row) =>
-              h(WorkspaceCard, {
-                key: `${row.cwd}#${nonce}`,
-                t,
-                row,
-                source: row.sessionId !== undefined ? sourceFor(row.sessionId) : undefined,
-                dispatch: dispatchFor,
-                init: initFor,
-                onRefreshAll: onRefreshSessions,
-              }),
-            ),
+          : [
+              h(
+                'div',
+                { key: 'wsbar', className: 'dshspec-wsbar' },
+                h('span', { className: 'dshspec-wsbarLabel' }, t('workspaceLabel')),
+                h(
+                  'div',
+                  { className: 'dshspec-wstabs' },
+                  rows.map((row) =>
+                    h(
+                      'button',
+                      {
+                        key: row.cwd,
+                        type: 'button',
+                        className: 'dshspec-wstab',
+                        title: row.cwd,
+                        'data-active': selectedRow !== undefined && row.cwd === selectedRow.cwd ? 'true' : undefined,
+                        onClick: () => select(row.cwd),
+                      },
+                      h(Icon, { name: 'folder', size: 15 }),
+                      h('span', { className: 'dshspec-wstabName' }, basenameOf(row.cwd)),
+                    ),
+                  ),
+                ),
+              ),
+              selectedRow === undefined
+                ? null
+                : h(WorkspaceDetail, {
+                    key: `${selectedRow.cwd}#${nonce}`,
+                    t,
+                    row: selectedRow,
+                    source: selectedRow.sessionId !== undefined ? sourceFor(selectedRow.sessionId) : undefined,
+                    compose: composeFor,
+                    init: initFor,
+                    onRefresh: onRefreshSessions,
+                  }),
+            ],
       ),
     )
   }
 
-  /* ------------------------------------------------------------------ *
-   * Composer dock — the compact phase bar under the input.
-   * ------------------------------------------------------------------ */
 
-  function DockBody({ t, state, source, openPanel, init }) {
+
+  function DockBody({ t, state, source, openPanel, init, sessionId }) {
     const [toast, setToast] = useState(null)
     const toastTimer = useRef(null)
     useEffect(
@@ -1481,7 +2424,7 @@ function createOpenSpecPlugin(require) {
 
     return h(
       'div',
-      { className: 'dshspec-dock', 'data-dshspec-quickbar': 'ready' },
+      { className: 'dshspec-dock', 'data-dshspec-quickbar': 'ready', 'data-dshspec-session': sessionId },
       h(
         'div',
         { className: 'dshspec-dockStatus' },
@@ -1534,14 +2477,14 @@ function createOpenSpecPlugin(require) {
   }
 
   /** The quick bar under the composer: status + one-click phase commands. */
-  function QuickBar({ state: stateSource, source, openPanel, t, init }) {
+  function QuickBar({ state: stateSource, source, openPanel, t, init, sessionId }) {
     if (stateSource === undefined) return null
     const state = useSyncExternalStore(stateSource.subscribe, stateSource.getSnapshot)
     if (state.status === 'loading' || state.status === 'nosession') return null
     if (state.status === 'error') {
       return h(
         'div',
-        { className: 'dshspec-dock', 'data-dshspec-quickbar': 'error' },
+        { className: 'dshspec-dock', 'data-dshspec-quickbar': 'error', 'data-dshspec-session': sessionId },
         h(
           'div',
           { className: 'dshspec-banner dshspec-bannerError', style: { flex: 1, minWidth: 0 } },
@@ -1555,7 +2498,7 @@ function createOpenSpecPlugin(require) {
     if (state.status === 'missing') {
       return h(
         'div',
-        { className: 'dshspec-dock', 'data-dshspec-quickbar': 'missing' },
+        { className: 'dshspec-dock', 'data-dshspec-quickbar': 'missing', 'data-dshspec-session': sessionId },
         h('span', { className: 'dshspec-dot', style: { background: 'var(--dsw-alias-state-warn-primary)' } }),
         h('span', { className: 'dshspec-dockName' }, `OpenSpec · ${t('quickMissing')}`),
         h('span', { className: 'dshspec-space' }),
@@ -1563,7 +2506,7 @@ function createOpenSpecPlugin(require) {
         h(IconButton, { icon: 'layout', label: t('openPanel'), size: 28, onClick: openPanel }),
       )
     }
-    return h(DockBody, { t, state, source, openPanel, init })
+    return h(DockBody, { t, state, source, openPanel, init, sessionId })
   }
 
   /* ------------------------------------------------------------------ *
@@ -1589,7 +2532,7 @@ function createOpenSpecPlugin(require) {
   }
 
   /** Build marker for served-bundle verification. */
-  const BUILD = '20261019-ui2'
+  const BUILD = '20261020-spec-browser'
 
   /**
    * Register the locale dictionaries, the monitoring page, the sidebar glyph,
@@ -1612,55 +2555,67 @@ function createOpenSpecPlugin(require) {
       return source
     }
 
-    /** Normalize one raw commands.execute outcome. */
-    const normalizeOutcome = (outcome, line) => {
-      if (outcome === undefined) return { ok: false, text: `${line} 不是可用命令` }
-      if (!outcome.ok) return { ok: false, text: outcome.error?.message ?? `${line} 执行失败（${outcome.error?.code ?? 'unknown'}）` }
-      const execution = outcome.value
-      if (execution === undefined || execution.result === undefined) return { ok: false, text: `${line} 不是可用命令` }
-      const result = execution.result
-      return result.kind === 'success'
-        ? { ok: true, text: result.text ?? '' }
-        : { ok: false, text: result.text ?? `${line} 执行失败（无错误信息）` }
-    }
-    const rawExecute = (agentId, line) => ctx.remote.commands.execute(agentId, line, [])
+    /** Wait until the target session's composer dock has mounted. */
+    const waitForDock = (target, timeoutMs) =>
+      new Promise((resolve) => {
+        const started = Date.now()
+        const probe = () => {
+          if (typeof document === 'undefined') {
+            resolve(false)
+            return
+          }
+          const escaped = String(target).replace(/["\\]/g, '')
+          if (document.querySelector('[data-dshspec-quickbar][data-dshspec-session="' + escaped + '"]') !== null) {
+            resolve(true)
+            return
+          }
+          if (Date.now() - started >= timeoutMs) {
+            resolve(false)
+            return
+          }
+          setTimeout(probe, 120)
+        }
+        probe()
+      })
 
     /**
-     * Dispatch one command line for a panel workspace row. The commands wire
-     * requires the client's CURRENT session scope and the exact receiving
-     * agent id, and the panel itself is root-scoped — so dispatch first
-     * brings the workspace's conversation on screen (starting one when
-     * needed) and then executes against that session. The user lands in the
-     * conversation, where the command's direct output renders.
+     * Bring one workspace's conversation on screen and put the command line
+     * into its composer draft — never auto-send. An existing session is opened
+     * first; only a workspace without any session asks the host to create one.
+     * The dock marker tells us the target session has been mounted before we
+     * type into the editor.
      */
-    const dispatchFor = (row) => async (line) => {
+    const composeFor = (row) => async (line) => {
+      const fill = () => {
+        const inserted = insertIntoComposer(line)
+        return inserted === false ? { ok: false, text: t('insertFailed') } : { ok: true, text: line }
+      }
       try {
-        let connectedId
+        const existing = [
+          ...(Array.isArray(row.sessionIds) ? row.sessionIds : []),
+          row.sessionId,
+        ].filter((id) => typeof id === 'string')
+        for (const candidate of [...new Set(existing)]) {
+          if (typeof ctx.uiWorkspace?.openSession === 'function') ctx.uiWorkspace.openSession(candidate)
+          if (await waitForDock(candidate, 1800)) return fill()
+        }
+        let created
         if (row.workspaceId !== undefined && typeof ctx.uiWorkspace?.connectWorkspace === 'function') {
           const connected = await withTimeout(
             Promise.resolve(ctx.uiWorkspace.connectWorkspace(row.workspaceId)),
             15000,
             '连接工作区',
           )
-          if (typeof connected === 'string') connectedId = connected
+          if (typeof connected === 'string') created = connected
           else if (connected !== null && typeof connected === 'object') {
-            if (typeof connected.sessionId === 'string') connectedId = connected.sessionId
-            else if (typeof connected.id === 'string') connectedId = connected.id
+            if (typeof connected.sessionId === 'string') created = connected.sessionId
+            else if (typeof connected.id === 'string') created = connected.id
           }
         }
-        const candidates = [connectedId, row.sessionId, ...(Array.isArray(row.sessionIds) ? row.sessionIds : [])]
-          .filter((id) => typeof id === 'string')
-        const deduped = [...new Set(candidates)]
-        if (deduped.length === 0) return { ok: false, text: '没有可用会话，无法执行该操作' }
-        let lastOutcome
-        for (const candidate of deduped) {
-          if (typeof ctx.uiWorkspace?.openSession === 'function') ctx.uiWorkspace.openSession(candidate)
-          await new Promise((resolve) => setTimeout(resolve, 600))
-          const outcome = await withTimeout(rawExecute(candidate, line), 20000, line)
-          if (outcome !== undefined && outcome.ok) return normalizeOutcome(outcome, line)
-          lastOutcome = outcome
-        }
-        return normalizeOutcome(lastOutcome, line)
+        if (typeof created !== 'string') return { ok: false, text: t('switchFailed') }
+        if (typeof ctx.uiWorkspace?.openSession === 'function') ctx.uiWorkspace.openSession(created)
+        await waitForDock(created, 10000)
+        return fill()
       } catch (error) {
         return { ok: false, text: error instanceof Error ? error.message : String(error) }
       }
@@ -1717,7 +2672,7 @@ function createOpenSpecPlugin(require) {
         t,
         rowsSource,
         sourceFor,
-        dispatchFor,
+        composeFor,
         initFor,
         onRefreshSessions: refreshAll,
       }),
@@ -1739,6 +2694,7 @@ function createOpenSpecPlugin(require) {
       inject: (sessionId) => {
         const source = sourceFor(sessionId)
         return {
+          sessionId,
           state: source.hooks.state,
           source,
           init: initFor,

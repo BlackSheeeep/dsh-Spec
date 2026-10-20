@@ -1,6 +1,6 @@
 {
   "name": "dsh-spec",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "OpenSpec 工作流的 DSH 适配插件：openspec/ 目录监控面板 + 会话快捷命令条 + /opsx-* 阶段命令桥接。",
   "type": "module",
