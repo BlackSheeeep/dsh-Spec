@@ -1358,12 +1358,12 @@ function createOpenSpecPlugin(require) {
       if (listeners.size === 0) return
       const sessionId = row.sessionId
       if (typeof sessionId === 'string' && sessionId !== '') {
-        if (watchFailed) {
-          if (pollTimer === null) poll(FALLBACK_POLL_MS)
-          return
-        }
-        clearPoll()
-        startWatch(sessionId)
+        // A directory move (archive/rename) is not always visible to the file
+        // watch, so keep a low-frequency Host poll in addition to the watch.
+        // Both paths only publish a new snapshot, so the quick bar's archive
+        // button flips to the next native step a few seconds after archiving.
+        if (pollTimer === null) poll(POLL_MS)
+        if (!watchFailed) startWatch(sessionId)
         return
       }
       // No session: a workspace with no live session polls the Host route.
