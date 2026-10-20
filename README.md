@@ -11,6 +11,24 @@
 /opsx-explore    /opsx-propose                     /opsx-apply      /opsx-sync   /opsx-archive
 ```
 
+## 截图（本机 DSH Web 验证实例，0.4.0）
+
+| 面板（工件/任务双进度圈 · artifact chips · 原生下一步） | 项目配置与可用 schema |
+|---|---|
+| ![面板](docs/panel.png) | ![项目配置](docs/config-view.png) |
+
+| 同步 dry-run 预览 | 归档视图（本地日期分组 + 按需详情） |
+|---|---|
+| ![同步预览](docs/sync-preview.png) | ![归档](docs/archive.png) |
+
+| 长文档截断提示 + 继续读取 | 检测到原生 OpenSpec skills |
+|---|---|
+| ![文档截断](docs/doc-truncation.png) | ![原生 skills](docs/native-skills.png) |
+
+| 会话快捷条（原生下一步 / 任务进度 / skills 指示） | 变更详情（任务清单默认收起 / 展开） |
+|---|---|
+| ![快捷条](docs/quickbar.png) | ![任务清单](docs/tasks-expand.png) |
+
 ## 命令面与原生映射
 
 DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注册，因此统一映射为 kebab-case。每条命令的描述里也标注了对应原生动作。
@@ -71,24 +89,6 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 面板按钮**不自动执行**：点击会切到对应工作区的会话并把 `/opsx-*` 指令填入输入框；确认后再回车，避免误触直接跑模型。其中「探索」「提案」入口也走同一条路径——点击直接把 `/opsx-explore ` / `/opsx-propose ` 填入输入框（不再弹输入弹窗），主题或 change 名在输入框里补充。
 
 界面完全使用 DSH 宿主的主题 token（`--dsw-*`）与弹窗规范：浅色 / 深色自动跟随。
-
-### 截图（本机 DSH Web 验证实例）
-
-| 面板（工件/任务双进度圈 · artifact chips · 原生下一步） | 项目配置与可用 schema |
-|---|---|
-| ![面板](docs/panel.png) | ![项目配置](docs/config-view.png) |
-
-| 同步 dry-run 预览 | 归档视图（本地日期分组 + 按需详情） |
-|---|---|
-| ![同步预览](docs/sync-preview.png) | ![归档](docs/archive.png) |
-
-| 长文档截断提示 + 继续读取 | 检测到原生 OpenSpec skills |
-|---|---|
-| ![文档截断](docs/doc-truncation.png) | ![原生 skills](docs/native-skills.png) |
-
-| 会话快捷条（原生下一步 / 任务进度 / skills 指示） | 变更详情（任务清单默认收起 / 展开） |
-|---|---|
-| ![快捷条](docs/quickbar.png) | ![任务清单](docs/tasks-expand.png) |
 
 ## 原生语义：状态与校验
 
