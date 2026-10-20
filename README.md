@@ -1,6 +1,6 @@
 # dsh-spec — OpenSpec 工作流的 DSH 适配插件
 
-把 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 的规格驱动开发（SDD）工作流完整桥接进 DeepSeek Harness（DSH）：**实时监控面板 + 会话快捷命令条 + `/opsx-*` 阶段命令**，不依赖 openspec CLI。
+把 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 的规格驱动开发（SDD）工作流完整桥接进 DeepSeek Harness（DSH）：**工作区 Spec 主从面板（概览 / 变更 / 文档 / 归档）+ 会话快捷命令条 + `/opsx-*` 阶段命令**，不依赖 openspec CLI。
 
 ```text
 探索 想清楚 ──► 提案 写计划 ──► 人工评审 ──► 实施 逐项勾选 ──► 归档 同步 specs
@@ -14,20 +14,23 @@
 侧栏点 **OpenSpec** 图标进入。顶部是工作区切换条，点选一个工作区，下方展示它的 Spec 全貌：
 
 - **Spec 概览**：任务进度环、阶段分布条，以及「进行中 / 能力 Spec / 已归档」数量；
-- **进行中的变更**：每行显示阶段徽标与任务进度；点开展开文档按钮和任务清单，点文档即可阅读 Markdown 原文；
+- **进行中的变更**：每行显示阶段徽标与任务进度；点开行展开文档按钮和任务清单；
+- **任务清单**：默认显示前 12 项，点「展开剩余 N 项」看全部，点「收起」还原；
 - **已定稿 Spec**：`openspec/specs/` 下每个 capability 一行，点开查看 `spec.md`；
 - **已归档**：按归档时间倒序沉底，展开后同样能查看文档与任务勾选情况；
 - 目录监听实时刷新，界面不存任何隐藏状态。
 
 ![监控面板](docs/panel.png)
 
-展开变更可以看到工件文档和 `tasks.md` 任务清单：
+展开变更可以看到工件文档和 `tasks.md` 任务清单（任务多时可手动展开全部）：
 
 ![变更详情](docs/spec-detail.png)
+![任务展开](docs/tasks-expand.png)
 
-点任意文档打开 Markdown 阅读器（标题、列表、任务勾选、代码块都能正常渲染）：
+点任意文档打开 Markdown 阅读器（标题、列表、任务勾选、代码块都能正常渲染）。阅读器右上角的 **去工作区对齐** 会在文档所属工作区新建一个会话，并把「对齐这份文档：`openspec/…/xxx.md`」写进输入框——补充问题后发送，即可让 AI 带着这份文档上下文开始对齐：
 
 ![文档阅读](docs/doc-viewer.png)
+![去工作区对齐](docs/align-workspace.png)
 
 归档区域默认沉在页面最下方，点开分组和条目后查看：
 
@@ -124,8 +127,9 @@ dsh plugin --profile <profile> add https://github.com/space-spacee-clamation/dsh
 src/host.js     Host 半：注册 /opsx-* 命令（ctx.commands）；ctx.fs 读写 openspec/；
                 agent.followup() 把阶段指令作为用户消息提交（同 /plan、/goal 机制）
 src/prompts.js  工作流提示词模板 + parseTasks / derivePhase 纯函数（语义对齐 OpenSpec 官方）
-src/client.js   浏览器半：main 监控面板 + sidebar.panellist 图标 + conversation.composer.dock
-                快捷条；状态经 workspaceFiles Remote（list/read/changes 流）从文件推导
+src/client.js   浏览器半：main 工作区 Spec 面板（切换/概览/展开/文档阅读/归档）+
+                 sidebar.panellist 图标 + conversation.composer.dock 快捷条；状态经
+                 workspaceFiles Remote（list/read/changes 流）从文件推导，归档详情按需读取
 tools/build.mjs 构建：Host 半原样拷贝，client 半内联进 __ModuleLoader__ 闭包（无打包器）
 tests/          parseTasks / derivePhase / slugify 单元测试
 ```
