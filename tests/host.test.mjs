@@ -5,6 +5,8 @@
  */
 
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
@@ -21,7 +23,7 @@ const WORKSPACE = slashed(path.join(repoRoot, 'tests', 'fixtures', 'workspace'))
 const PLUGIN_ROOT = slashed(repoRoot)
 
 /** Build a fake Cordis plugin context and the collected registrations. */
-function fakeContext({ skills } = {}) {
+function fakeContext({ skills, extraPaths = [] } = {}) {
   const registered = []
   const routes = []
   const effects = []
@@ -41,7 +43,7 @@ function fakeContext({ skills } = {}) {
     },
     connection: { admit: () => ({ principal: 'test' }) },
     workspaceRegistry: {
-      resolveByPath: async (path) => (path === WORKSPACE || path === PLUGIN_ROOT ? { path } : undefined),
+      resolveByPath: async (path) => (path === WORKSPACE || path === PLUGIN_ROOT || extraPaths.includes(path) ? { path } : undefined),
     },
     workingDirectory: {},
     get(key) {
@@ -148,7 +150,17 @@ test('state method answers with the native workspace snapshot', async () => {
   assert.ok(Array.isArray(change.tasks.items))
   assert.equal(change.tasks.items.length, Math.min(change.tasks.total, 200))
   assert.equal(change.tasks.items.filter((item) => item.done).length, change.tasks.done)
-  assert.deepEqual(Object.keys(change.tasks.items[0]).sort(), ['depth', 'done', 'id', 'text'])
+  assert.deepEqual(Object.keys(change.tasks.items[0]).sort(), ['depth', 'done', 'id', 'line', 'manual', 'text'])
+  assert.ok(change.tasks.items[0].line > 0)
+  assert.equal(typeof change.tasks.items[0].manual, 'boolean')
+  // The panel overview carries the proposal's Why / What Changes summary.
+  assert.ok(change.summary !== null && typeof change.summary === 'object')
+  assert.match(change.summary.description, /dsh-spec/)
+  assert.equal(typeof change.summary.headline, 'string')
+  assert.ok(change.summary.headline.length > 0)
+  assert.ok(change.summary.headline.length <= 32)
+  assert.ok(Array.isArray(change.summary.highlights))
+  assert.ok(change.summary.highlights.length > 0)
 })
 
 test('state method reports an uninitialized workspace as missing', async () => {
@@ -306,6 +318,43 @@ test('sync-preview builds a dry-run plan and renders preview text', async () => 
   assert.ok(Array.isArray(value.files))
   assert.ok(Array.isArray(value.writes))
   assert.ok(value.validation !== undefined)
+})
+
+test('task-toggle writes only the requested task checkbox on a temp workspace copy', async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-spec-task-'))
+  const workspace = slashed(path.join(temp, 'workspace'))
+  try {
+    fs.cpSync(WORKSPACE, workspace, { recursive: true })
+    const { ctx, routes } = fakeContext({ extraPaths: [workspace] })
+    apply(ctx)
+    const tasksPath = path.join(workspace, 'openspec', 'changes', 'align-native-openspec', 'tasks.md')
+    const before = fs.readFileSync(tasksPath, 'utf8').split('\n')
+    const sourceLine = before.findIndex((line) => /^- \[x\] 1\.1/.test(line)) + 1
+    assert.ok(sourceLine > 0, 'fixture first task must be checked')
+    const response = await callRoute(routes[0], {
+      endpoint: 'task-toggle',
+      envelope: envelope('task-toggle', { cwd: workspace, change: 'align-native-openspec', line: sourceLine, done: false }),
+    })
+    assert.equal(response.json.result.ok, true, JSON.stringify(response.json.result))
+    assert.equal(response.json.result.value.done, false)
+    const after = fs.readFileSync(tasksPath, 'utf8').split('\n')
+    assert.match(after[sourceLine - 1], /^- \[ \] 1\.1/)
+    // Everything outside that one marker is unchanged.
+    after[sourceLine - 1] = before[sourceLine - 1]
+    assert.deepEqual(after, before)
+
+    // A stale line (now not the same task text? still a task) is accepted only
+    // when it is still a checkbox; a prose line is refused.
+    const proseLine = before.findIndex((line) => line.startsWith('## ')) + 1
+    const refused = await callRoute(routes[0], {
+      endpoint: 'task-toggle',
+      envelope: envelope('task-toggle', { cwd: workspace, change: 'align-native-openspec', line: proseLine, done: true }),
+    })
+    assert.equal(refused.json.result.ok, false)
+    assert.match(refused.json.result.error.message, /不是任务复选框/)
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
 })
 
 test('initialization on an uninitialized workspace is idempotent for missing dirs only', async () => {

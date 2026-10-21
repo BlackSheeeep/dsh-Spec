@@ -454,8 +454,8 @@ export function workspaceProgress(changes) {
  * can only offer the raw `tasks.md`); `limited` marks "more tracked tasks exist
  * than the capped payload carries" (`total - items.length` remain unloaded).
  *
- * @param {{total?: number, done?: number, items?: Array<{id?: unknown, text?: unknown, done?: unknown, depth?: unknown}>}|null} [tasks] - `ChangeState.tasks`.
- * @returns {{total: number, done: number, remaining: number, percent: number, complete: boolean, items: Array<{id: string|null, text: string, done: boolean, depth: number}>, shown: number, hidden: number, missing: boolean, limited: boolean}} checklist view.
+ * @param {{total?: number, done?: number, items?: Array<{id?: unknown, text?: unknown, done?: unknown, depth?: unknown, line?: unknown, manual?: unknown}>}|null} [tasks] - `ChangeState.tasks`.
+ * @returns {{total: number, done: number, remaining: number, percent: number, complete: boolean, items: Array<{id: string|null, text: string, done: boolean, depth: number, line: number|null, manual: boolean}>, shown: number, hidden: number, missing: boolean, limited: boolean}} checklist view.
  */
 export function taskChecklistView(tasks) {
   const info = taskProgressInfo(tasks)
@@ -468,6 +468,8 @@ export function taskChecklistView(tasks) {
       text: String(item.text ?? ''),
       done: item.done === true,
       depth: Number.isInteger(item.depth) && item.depth >= 0 ? Math.min(item.depth, 3) : 0,
+      line: Number.isInteger(item.line) && item.line > 0 ? item.line : null,
+      manual: item.manual === true,
     })
   }
   const hidden = items.length > 0 ? Math.max(0, info.total - items.length) : 0
@@ -483,6 +485,54 @@ export function taskChecklistView(tasks) {
     missing: info.total > 0 && items.length === 0,
     limited: items.length > 0 && hidden > 0,
   }
+}
+
+/**
+ * Pending tasks across every active change, split into human-acceptance and
+ * other work.
+ *
+ * The panel's "waiting for acceptance" list is an aggregate view: one row per
+ * unchecked task, with the owning change so the row can open its `tasks.md`.
+ * Only the capped `tasks.items` payload is available, so changes with more than
+ * 200 tasks expose the first 200; the per-change detail already surfaces the
+ * remaining count.
+ *
+ * @param {Array<{name?: unknown, tasks?: {items?: Array<{id?: unknown, text?: unknown, done?: unknown, line?: unknown, manual?: unknown}>}|null}>|undefined} changes
+ * @returns {{total: number, manual: Array<{change: string, id: string|null, text: string, line: number|null, manual: boolean}>, automatic: Array<{change: string, id: string|null, text: string, line: number|null, manual: boolean}>}}
+ */
+export function pendingAcceptanceTasks(changes) {
+  const manual = []
+  const automatic = []
+  for (const change of Array.isArray(changes) ? changes : []) {
+    if (change === null || typeof change !== 'object') continue
+    const changeName = typeof change.name === 'string' ? change.name : ''
+    if (changeName === '') continue
+    const items = Array.isArray(change.tasks?.items) ? change.tasks.items : []
+    for (const item of items) {
+      if (item === null || typeof item !== 'object' || item.done === true) continue
+      const rawText = String(item.text ?? '')
+      const isManual = item.manual === true || /(?:\[|【)\s*人工验收\s*(?:\]|】)/.test(rawText)
+      const text = rawText.replace(/(?:\[|【)\s*人工验收\s*(?:\]|】)/g, '').replace(/\s+/g, ' ').trim()
+      const row = {
+        change: changeName,
+        id: typeof item.id === 'string' && item.id !== '' ? item.id : null,
+        text: text === '' ? rawText.trim() : text,
+        line: Number.isInteger(item.line) && item.line > 0 ? item.line : null,
+        manual: isManual,
+      }
+      ;(isManual ? manual : automatic).push(row)
+    }
+  }
+  const byChange = (left, right) => {
+    if (left.change !== right.change) return left.change < right.change ? -1 : 1
+    const leftLine = left.line ?? Number.MAX_SAFE_INTEGER
+    const rightLine = right.line ?? Number.MAX_SAFE_INTEGER
+    if (leftLine !== rightLine) return leftLine - rightLine
+    return String(left.id ?? '').localeCompare(String(right.id ?? ''))
+  }
+  manual.sort(byChange)
+  automatic.sort(byChange)
+  return { total: manual.length + automatic.length, manual, automatic }
 }
 
 /**

@@ -100,7 +100,10 @@ const helpers = stripExports('src/client-helpers.js', read('src/client-helpers.j
 if (!client.includes(HELPER_MARKER)) {
   throw new Error(`src/client.js: helper marker ${HELPER_MARKER} not found`)
 }
-const clientWithHelpers = client.replace(HELPER_MARKER, helpers.trimEnd())
+// A function replacement keeps `$&`/`$\`` sequences inside the helper source
+// literal (JSDoc regex examples contain `$``), instead of letting String.replace
+// interpret them as replacement patterns.
+const clientWithHelpers = client.replace(HELPER_MARKER, () => helpers.trimEnd())
 assertClassicScript('src/client.js', clientWithHelpers)
 
 // Rebuild lib/ from scratch so deleted sources never linger in the shipped tree.

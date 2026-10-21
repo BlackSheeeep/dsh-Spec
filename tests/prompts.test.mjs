@@ -16,6 +16,7 @@ import * as promptsModule from '../src/prompts.js'
 import {
   buildApplyPrompt,
   buildArchiveWorkflowPrompt,
+  buildAutoProposePrompt,
   buildExplorePrompt,
   buildProposePrompt,
   buildSyncWorkflowPrompt,
@@ -97,6 +98,7 @@ test('prompt builders expose exactly the contract surface', () => {
   assert.deepEqual(Object.keys(promptsModule).sort(), [
     'buildApplyPrompt',
     'buildArchiveWorkflowPrompt',
+    'buildAutoProposePrompt',
     'buildExplorePrompt',
     'buildProposePrompt',
     'buildSyncWorkflowPrompt',
@@ -181,6 +183,28 @@ test('propose composes every planning artifact in schema order and stops at the 
   assert.equal(prompt.match(/<context>/g).length, 1, 'project context is injected once, not once per artifact')
   assert.ok(prompt.includes(SNAPSHOT_VERSION), 'the bundled-snapshot fallback note names the pinned version')
   assert.match(prompt, /bundled OpenSpec snapshot/)
+})
+
+test('auto-propose asks the model to summarize, name, scaffold, then plan', async () => {
+  const prompt = await buildAutoProposePrompt({
+    cwd: CWD,
+    description: '支持实时状态和人工验收',
+    schema: bundledSpecDriven(),
+    config: config(),
+    created: '2026-10-21',
+    existingNames: ['add-dark-mode', 'fix-login'],
+  })
+  assert.match(prompt, /choose the change name/)
+  assert.match(prompt, /kebab-case only/i)
+  assert.match(prompt, /支持实时状态和人工验收/)
+  assert.match(prompt, /schema: spec-driven/)
+  assert.match(prompt, /created: 2026-10-21/)
+  assert.match(prompt, /goal: <一句话中文总结/)
+  assert.match(prompt, /openspec\/changes\/<change-name>\/\.openspec\.yaml/)
+  assert.match(prompt, /add-dark-mode, fix-login/)
+  assert.match(prompt, /变更名：<change-name>/)
+  assert.match(prompt, /### 1\. proposal — ready now/)
+  assert.match(prompt, /\/opsx-apply <change-name>/)
 })
 
 test('propose excludes skipped artifacts and offers the rest', async () => {
