@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 
 import { SNAPSHOT_VERSION, composeArtifactPrompt, readNativeInstruction } from '../src/native/instruction.js'
 import { loadBundledSchemas } from '../src/native/schema.js'
+import { buildArchiveWorkflowPrompt } from '../src/prompts.js'
 
 const CWD = fileURLToPath(new URL('..', import.meta.url))
 
@@ -278,6 +279,47 @@ test('bare schema definitions still resolve their templates and fallback note', 
   })
   assert.match(withoutVersion.text, /# Design/)
   assert.match(withoutVersion.text, /<snapshot_note>/)
+})
+
+test('archive workflow prompt blocks writes on validation ERROR and an existing archive target', async () => {
+  // The archive workflow prompt carries the same instruction contract as the
+  // other native prompts: both write-blocking STOP gates must be present, so
+  // the model stops and reports before touching the main specs or the change
+  // directory.
+  const prompt = await buildArchiveWorkflowPrompt({
+    cwd: CWD,
+    changeName: 'blocked-change',
+    schema: bundledSpecDriven(),
+    config: config(),
+    facts: {
+      validation: {
+        errors: 2,
+        warnings: 0,
+        infos: 0,
+        issues: [{ level: 'ERROR', path: 'specs/cap/spec.md', message: 'missing scenario' }],
+      },
+      artifacts: [{ id: 'proposal', status: 'done' }],
+      tasks: { total: 2, done: 2, pending: [] },
+      deltas: [],
+      mainSpecs: [],
+      isPlanningComplete: true,
+      archiveTarget: 'openspec/changes/archive/2026-10-21-blocked-change',
+      archiveTargetExists: true,
+    },
+  })
+  assert.match(prompt, /Validation: 2 ERROR/)
+  assert.match(prompt, /\[ERROR\] specs\/cap\/spec\.md — missing scenario/)
+  assert.match(prompt, /Archive target exists: yes/)
+
+  const finishIndex = prompt.indexOf('## Finish contract (archive)')
+  assert.ok(finishIndex >= 0, 'the archive prompt must carry its finish contract')
+  const finish = prompt.slice(finishIndex)
+  assert.match(finish, /Validation: N ERROR/)
+  assert.match(finish, /validation\.errors > 0/)
+  assert.match(finish, /Archive target exists: yes/)
+  assert.match(finish, /do not merge specs/)
+  assert.match(finish, /do not move or archive the change/)
+  assert.match(finish, /`\/opsx-archive <name> --yes`/)
 })
 
 test('readNativeInstruction reads instructions from resolved, bare and named schemas', async () => {

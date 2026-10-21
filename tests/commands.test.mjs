@@ -820,7 +820,7 @@ test('opsx-sync --yes applies the merge and reports written files', async () => 
   assert.equal(h.calls.prompt.syncWorkflow, undefined, 'deterministic path produces no AI workflow prompt')
 })
 
-test('opsx-sync refuses native validation ERROR before any work on both paths', async () => {
+test('opsx-sync submits the AI workflow on a validation ERROR and refuses only the deterministic paths', async () => {
   const invalidState = {
     validateChangeByName: async (cwd, name) => ({
       name,
@@ -835,24 +835,40 @@ test('opsx-sync refuses native validation ERROR before any work on both paths', 
     }),
   }
 
-  // AI (default) path: refused without submitting a workflow prompt.
+  // AI (default) path: the workflow prompt is submitted together with the
+  // ERROR facts, so the model can stop and report. The command itself returns
+  // success and writes nothing; the DSH hero page therefore gets a visible
+  // model turn instead of a direct result that has no transcript to render in.
   const aiPath = createHarness({ state: invalidState })
   const aiResult = await aiPath.run('opsx-sync', 'add-x')
-  assert.equal(aiResult.kind, 'error')
-  assert.match(aiResult.text, /拒绝同步/)
-  assert.match(aiResult.text, /\[ERROR\] proposal\.md:4 — Why is empty/)
-  assert.equal(aiPath.agent.messages.length, 0)
-  assert.equal(aiPath.calls.prompt.syncWorkflow, undefined)
-  assert.equal(aiPath.calls.planSync.length, 0)
+  assert.equal(aiResult.kind, 'success')
+  assert.match(aiResult.text, /已发送 OPSX 同步工作流：add-x/)
+  assert.match(aiResult.text, /1 个 ERROR/)
+  assert.match(aiResult.text, /AI 会先停止并报告/)
+  assert.equal(aiPath.agent.messages.length, 1)
+  assert.deepEqual(aiPath.agent.messages[0].content, [{ type: 'text', text: 'SYNC_WORKFLOW_PROMPT' }])
+  const args = aiPath.calls.prompt.syncWorkflow
+  assert.equal(args.facts.validation.errors, 1, 'the ERROR count reaches the workflow facts')
+  assert.equal(args.facts.validation.issues[0].message, 'Why is empty', 'the ERROR issue reaches the workflow facts')
+  assert.equal(aiPath.calls.planSync.length, 0, 'the AI path composes no deterministic plan')
+  assert.equal(aiPath.calls.applySyncPlan.length, 0)
+  assert.equal(aiPath.calls.writes.length, 0)
+  assert.deepEqual(aiPath.calls.titles, [{ sessionId: 'session-test', title: '[同步] add-x' }])
 
-  // Deterministic path: same refusal, nothing planned or applied.
-  const deterministic = createHarness({ state: invalidState })
-  const yesResult = await deterministic.run('opsx-sync', 'add-x --yes')
-  assert.equal(yesResult.kind, 'error')
-  assert.match(yesResult.text, /拒绝同步/)
-  assert.equal(deterministic.calls.planSync.length, 0)
-  assert.equal(deterministic.calls.applySyncPlan.length, 0)
-  assert.equal(deterministic.agent.messages.length, 0)
+  // Deterministic paths: the validation gate still refuses before any work and
+  // produces no model message.
+  for (const flags of ['--yes', '--dry-run']) {
+    const deterministic = createHarness({ state: invalidState })
+    const refused = await deterministic.run('opsx-sync', `add-x ${flags}`)
+    assert.equal(refused.kind, 'error', `sync ${flags} must still refuse on validation ERROR`)
+    assert.match(refused.text, /拒绝同步/)
+    assert.match(refused.text, /\[ERROR\] proposal\.md:4 — Why is empty/)
+    assert.equal(deterministic.calls.prompt.syncWorkflow, undefined)
+    assert.equal(deterministic.calls.planSync.length, 0)
+    assert.equal(deterministic.calls.applySyncPlan.length, 0)
+    assert.equal(deterministic.agent.messages.length, 0)
+    assert.deepEqual(deterministic.calls.titles, [])
+  }
 })
 
 test('opsx-sync reports validation WARNINGs without blocking the write', async () => {
@@ -1036,7 +1052,7 @@ test('opsx-archive --yes --skip-specs only moves the change and writes no main s
   assert.equal(h.agent.messages.length, 0)
 })
 
-test('opsx-archive refuses validation ERROR and an existing archive target on every path', async () => {
+test('opsx-archive submits the AI workflow on validation ERROR or an existing target and refuses only the deterministic paths', async () => {
   const invalidState = {
     validateChangeByName: async (cwd, name) => ({
       name,
@@ -1051,33 +1067,56 @@ test('opsx-archive refuses validation ERROR and an existing archive target on ev
     }),
   }
 
-  const refused = createHarness({ state: invalidState })
-  const aiRefused = await refused.run('opsx-archive', 'add-x')
-  assert.equal(aiRefused.kind, 'error')
-  assert.match(aiRefused.text, /拒绝归档/)
-  assert.equal(refused.calls.prompt.archiveWorkflow, undefined, 'an ERROR refuses before composing the workflow prompt')
-  assert.equal(refused.agent.messages.length, 0)
-
-  const deterministic = createHarness({ state: invalidState })
-  const yesRefused = await deterministic.run('opsx-archive', 'add-x --yes')
-  assert.equal(yesRefused.kind, 'error')
-  assert.match(yesRefused.text, /拒绝归档/)
-  assert.equal(deterministic.calls.planArchive.length, 0)
-
-  const existing = createHarness({
+  // AI (default) path with both blockers: the workflow prompt is submitted with
+  // the ERROR facts and the archive-target collision fact, so the model can
+  // stop and report. The command itself writes/moves nothing.
+  const blocked = createHarness({
+    state: invalidState,
     fs: { pathExists: async (cwd, rel) => rel.startsWith('openspec/changes/archive/') },
   })
-  const collision = await existing.run('opsx-archive', 'add-x --yes')
-  assert.equal(collision.kind, 'error')
-  assert.match(collision.text, /归档目标 .* 已存在/)
-  assert.equal(existing.calls.planArchive.length, 0)
-  assert.equal(existing.calls.executeArchive.length, 0)
+  const aiBlocked = await blocked.run('opsx-archive', 'add-x')
+  assert.equal(aiBlocked.kind, 'success')
+  assert.match(aiBlocked.text, /已发送 OPSX 归档工作流：add-x/)
+  assert.match(aiBlocked.text, /1 个 ERROR/)
+  assert.match(aiBlocked.text, /AI 会先停止并报告/)
+  assert.match(aiBlocked.text, /已存在/)
+  assert.match(aiBlocked.text, /不会合并主 specs/)
+  assert.equal(blocked.agent.messages.length, 1)
+  assert.deepEqual(blocked.agent.messages[0].content, [{ type: 'text', text: 'ARCHIVE_WORKFLOW_PROMPT' }])
+  const args = blocked.calls.prompt.archiveWorkflow
+  assert.equal(args.facts.validation.errors, 1, 'the ERROR count reaches the workflow facts')
+  assert.equal(args.facts.archiveTargetExists, true, 'the archive-target collision reaches the workflow facts')
+  assert.equal(blocked.calls.planSync.length, 0, 'the AI path composes no deterministic merge plan')
+  assert.equal(blocked.calls.planArchive.length, 0)
+  assert.equal(blocked.calls.executeArchive.length, 0)
+  assert.deepEqual(blocked.calls.titles, [{ sessionId: 'session-test', title: '[归档] add-x' }])
 
-  // The AI path shares the target-exists refusal (it can never archive anywhere).
-  const aiCollision = await existing.run('opsx-archive', 'add-x')
-  assert.equal(aiCollision.kind, 'error')
-  assert.match(aiCollision.text, /归档目标 .* 已存在/)
-  assert.equal(existing.agent.messages.length, 0)
+  // Deterministic paths: validation ERROR still refuses before any work and
+  // produces no model message.
+  for (const flags of ['--yes', '--dry-run']) {
+    const deterministic = createHarness({ state: invalidState })
+    const refused = await deterministic.run('opsx-archive', `add-x ${flags}`)
+    assert.equal(refused.kind, 'error', `archive ${flags} must still refuse on validation ERROR`)
+    assert.match(refused.text, /拒绝归档/)
+    assert.equal(deterministic.calls.prompt.archiveWorkflow, undefined)
+    assert.equal(deterministic.calls.planArchive.length, 0)
+    assert.equal(deterministic.calls.executeArchive.length, 0)
+    assert.equal(deterministic.agent.messages.length, 0)
+    assert.deepEqual(deterministic.calls.titles, [])
+  }
+
+  // Deterministic paths: an existing archive target still refuses before any work.
+  for (const flags of ['--yes', '--dry-run']) {
+    const existing = createHarness({
+      fs: { pathExists: async (cwd, rel) => rel.startsWith('openspec/changes/archive/') },
+    })
+    const collision = await existing.run('opsx-archive', `add-x ${flags}`)
+    assert.equal(collision.kind, 'error')
+    assert.match(collision.text, /归档目标 .* 已存在/)
+    assert.equal(existing.calls.planArchive.length, 0)
+    assert.equal(existing.calls.executeArchive.length, 0)
+    assert.equal(existing.agent.messages.length, 0)
+  }
 })
 
 test('opsx-archive honors metadata skip_specs by passing a null sync plan', async () => {
@@ -1193,7 +1232,9 @@ test('failed commands never change the session title', async () => {
       }),
     },
   })
-  const syncRefused = await invalid.run('opsx-sync', 'add-x')
+  // The default sync path now succeeds (AI workflow submitted before the
+  // validation gate), so a deterministic refusal is the failing case here.
+  const syncRefused = await invalid.run('opsx-sync', 'add-x --yes')
   assert.equal(syncRefused.kind, 'error')
   assert.deepEqual(invalid.calls.titles, [])
 })

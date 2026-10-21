@@ -634,10 +634,13 @@ async function submitSyncWorkflow(deps, invocation, { cwd, autoNote, change, sta
   })
   const counts = validationCounts(validated?.validation ?? change.validation)
   const warningNote = counts.warnings > 0 ? `（校验有 ${counts.warnings} 个 WARNING，AI 会一并评估）` : ''
+  const blockingNote = counts.errors > 0
+    ? `\n校验有 ${counts.errors} 个 ERROR：AI 会先停止并报告问题与修复建议，不会合并主 specs。`
+    : ''
   return submit(
     invocation.agent,
     prompt,
-    `${autoNote}已发送 OPSX 同步工作流：${change.name}。命令本身没有写入任何文件。AI 会先评估 delta 与主 specs 并向你确认，再按 OPSX 智能合并、按 canonical 契约验证，最后运行 /opsx-validate${warningNote}。`,
+    `${autoNote}已发送 OPSX 同步工作流：${change.name}。命令本身没有写入任何文件。AI 会先评估 delta 与主 specs 并向你确认，再按 OPSX 智能合并、按 canonical 契约验证，最后运行 /opsx-validate${warningNote}。${blockingNote}`,
   )
 }
 
@@ -665,6 +668,12 @@ async function submitArchiveWorkflow(deps, invocation, { cwd, autoNote, change, 
   const counts = validationCounts(validated?.validation ?? change.validation)
   const tasks = workflowTaskFacts(validated)
   const notes = []
+  if (counts.errors > 0) {
+    notes.push(`校验有 ${counts.errors} 个 ERROR：AI 会先停止并报告问题与修复建议，不会合并主 specs、不会移动目录。`)
+  }
+  if (targetExists === true) {
+    notes.push(`归档目标 ${archiveRel} 已存在：AI 会先停止并报告冲突，不会合并主 specs、不会移动目录或覆盖已归档内容。`)
+  }
   if (tasks !== null && tasks.total > tasks.done) {
     notes.push(`变更还有 ${tasks.total - tasks.done} 项任务未完成（${tasks.done}/${tasks.total}），AI 会先与你确认。`)
   }
@@ -938,13 +947,17 @@ async function runUpdate(ctx, deps, invocation) {
 }
 
 /**
- * `/opsx-sync`: validation gate → default OPSX AI workflow → `--dry-run`
+ * `/opsx-sync`: default OPSX AI workflow → validation gate → `--dry-run`
  * preview → `--yes` deterministic merge.
  *
- * The default path composes the vendored OPSX sync prompt and submits it; it
- * never plans or writes. `--dry-run` returns the deterministic preview only,
- * `--yes` applies the deterministic merge. Both direct paths produce no model
- * message. Validation ERROR refuses every path before any work.
+ * The default path composes the vendored OPSX sync prompt and submits it before
+ * the validation gate, so a command sent from the DSH hero page (where direct
+ * command results have no transcript to render in) always produces a visible
+ * model turn; the prompt facts still carry every issue, and the finish
+ * contract's STOP gate makes the model stop and report them. It never plans or
+ * writes. `--dry-run` returns the deterministic preview only, `--yes` applies
+ * the deterministic merge; the gate still refuses both direct paths before any
+ * work and neither produces a model message.
  */
 async function runSync(ctx, deps, invocation) {
   const cwd = await resolveCwd(ctx, invocation.agent)
@@ -960,6 +973,18 @@ async function runSync(ctx, deps, invocation) {
 
   const validated = await deps.state.validateChangeByName(cwd, change.name)
   const validation = validated?.validation ?? change.validation
+
+  // Default: submit the OPSX AI workflow before the validation gate; no plan,
+  // no writes, no move. The facts (and the result text) still carry every
+  // issue, so the prompt's STOP gate reports a blocking state instead of the
+  // command returning a direct result the hero page cannot render. A change
+  // that declares skip_specs has nothing to sync, so it keeps its direct
+  // result (and therefore keeps the gate below).
+  if (!flags.yes && !flags.dryRun && change?.metadata?.skip_specs !== true) {
+    const result = await submitSyncWorkflow(deps, invocation, { cwd, autoNote, change, state, validated })
+    return withPhaseTitle(ctx, invocation.agent, 'sync', change.name, result)
+  }
+
   const gate = validationGate(change.name, validation, '同步')
   if (gate) return gate
 
@@ -968,12 +993,6 @@ async function runSync(ctx, deps, invocation) {
       kind: 'success',
       text: `${autoNote}变更 ${change.name} 声明了 skip_specs：没有 delta specs 可同步，无需执行 sync。用 /opsx-archive ${change.name} 直接归档。`,
     }
-  }
-
-  // Default: submit the OPSX AI workflow; no plan, no writes, no move.
-  if (!flags.yes && !flags.dryRun) {
-    const result = await submitSyncWorkflow(deps, invocation, { cwd, autoNote, change, state, validated })
-    return withPhaseTitle(ctx, invocation.agent, 'sync', change.name, result)
   }
 
   const { mainSpecs, deltas } = await collectMergeInput(deps, cwd, state, validated, change.name)
@@ -1006,15 +1025,20 @@ async function runSync(ctx, deps, invocation) {
 }
 
 /**
- * `/opsx-archive`: validation gate → default OPSX AI workflow → `--dry-run`
- * preview → `--yes` deterministic plan+execute.
+ * `/opsx-archive`: default OPSX AI workflow → validation gate + archive target
+ * check → `--dry-run` preview → `--yes` deterministic plan+execute.
  *
- * The default path composes the vendored OPSX archive prompt and submits it; it
- * never plans, writes or moves. Incomplete tasks no longer block: the AI path
- * asks the user to confirm, and the deterministic `--yes` path warns and
- * continues (upstream CLI parity). Validation ERROR refuses every path. The
- * archive target collision refusal applies to every path. `--skip-specs` makes
- * the deterministic path move the change without writing any main spec.
+ * The default path composes the vendored OPSX archive prompt and submits it
+ * before either gate, so a command sent from the DSH hero page (where direct
+ * command results have no transcript to render in) always produces a visible
+ * model turn; the prompt facts and result text still carry every validation
+ * issue and the archive-target state, and the finish contract's STOP gates make
+ * the model stop and report them. It never plans, writes or moves. Incomplete
+ * tasks no longer block: the AI path asks the user to confirm, and the
+ * deterministic `--yes` path warns and continues (upstream CLI parity). The
+ * deterministic `--dry-run` / `--yes` paths still refuse on validation ERROR
+ * and on an existing archive target before any work. `--skip-specs` makes the
+ * deterministic path move the change without writing any main spec.
  */
 async function runArchive(ctx, deps, invocation) {
   const cwd = await resolveCwd(ctx, invocation.agent)
@@ -1030,23 +1054,18 @@ async function runArchive(ctx, deps, invocation) {
 
   const validated = await deps.state.validateChangeByName(cwd, change.name)
   const validation = validated?.validation ?? change.validation
-  const gate = validationGate(change.name, validation, '归档')
-  if (gate) return gate
-
   const localDate = deps.metadata.formatLocalDate()
   const archiveRel = `openspec/changes/archive/${localDate}-${change.name}`
   const targetExists = await deps.fs.pathExists(cwd, archiveRel)
-  if (targetExists) {
-    return {
-      kind: 'error',
-      text: `归档目标 ${archiveRel} 已存在，已拒绝归档；不会覆盖已归档内容。`,
-    }
-  }
 
   const progress = normalizeTaskProgress(validated?.tasks, change.tasks)
   const incomplete = progress.total > 0 && progress.done < progress.total
 
-  // Default: submit the OPSX AI workflow; no plan, no writes, no move.
+  // Default: submit the OPSX AI workflow before the deterministic gates; no
+  // plan, no writes, no move. The facts (and the result text) still carry the
+  // validation issues and the archive-target state, so the prompt's STOP gates
+  // report a blocking state instead of the command returning a direct result
+  // the hero page cannot render.
   if (!flags.yes && !flags.dryRun) {
     const result = await submitArchiveWorkflow(deps, invocation, {
       cwd,
@@ -1059,6 +1078,16 @@ async function runArchive(ctx, deps, invocation) {
       skipSpecsRequested: flags.skipSpecs,
     })
     return withPhaseTitle(ctx, invocation.agent, 'archive', change.name, result)
+  }
+
+  const gate = validationGate(change.name, validation, '归档')
+  if (gate) return gate
+
+  if (targetExists) {
+    return {
+      kind: 'error',
+      text: `归档目标 ${archiveRel} 已存在，已拒绝归档；不会覆盖已归档内容。`,
+    }
   }
 
   const skippedByFlag = flags.skipSpecs

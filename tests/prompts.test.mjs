@@ -601,11 +601,17 @@ test('archive workflow prompt embeds completion facts and the deterministic fina
   assert.match(prompt, /Archive target: openspec\/changes\/archive\/2026-10-20-add-dark-mode/)
   assert.match(prompt, /Archive target exists: no/)
 
-  // Finish contract: confirm → stop on ERROR → merge or skip → validate → deterministic finalize.
+  // Finish contract: confirm → stop on ERROR or an existing target → merge or
+  // skip → validate → deterministic finalize.
   const finish = fromMarker(prompt, '## Finish contract (archive)')
   assert.match(finish, /ask the user to confirm/)
   assert.match(finish, /validation\.errors > 0/)
+  assert.match(finish, /Validation: N ERROR/)
+  assert.match(finish, /Archive target exists: yes/)
   assert.match(finish, /STOP/)
+  assert.match(finish, /do not merge specs/)
+  assert.match(finish, /do not move or archive the change/)
+  assert.match(finish, /`\/opsx-archive <name> --yes`/)
   assert.match(finish, /Intelligent merge/i)
   assert.match(finish, /Skip sync/)
   assert.ok(finish.includes('leave `openspec/specs/**` untouched'))
@@ -613,6 +619,33 @@ test('archive workflow prompt embeds completion facts and the deterministic fina
   assert.match(finish, /Finalize deterministically/)
   assert.ok(finish.includes('/opsx-archive add-dark-mode --yes --skip-specs'), 'archive finish contract names the exact finalize command')
   assert.match(finish, /only moves the change directory/)
+})
+
+test('archive workflow prompt stops on an existing archive target before any write', async () => {
+  const collisionTarget = 'openspec/changes/archive/2026-10-20-add-dark-mode'
+  const prompt = await buildArchiveWorkflowPrompt({
+    cwd: CWD,
+    changeName: 'add-dark-mode',
+    schema: bundledSpecDriven(),
+    config: config(),
+    change: changeState([artifactRow('proposal', 'done')]),
+    facts: workflowFacts({ archiveTarget: collisionTarget, archiveTargetExists: true }),
+  })
+
+  // The collision is a current fact...
+  assert.match(prompt, /Archive target: openspec\/changes\/archive\/2026-10-20-add-dark-mode/)
+  assert.match(prompt, /Archive target exists: yes/)
+
+  // ...and a write-blocking STOP gate, parallel to the validation-ERROR gate.
+  const finish = fromMarker(prompt, '## Finish contract (archive)')
+  assert.match(finish, /Validation: N ERROR/)
+  assert.match(finish, /validation\.errors > 0/)
+  assert.match(finish, /Archive target exists: yes/)
+  assert.match(finish, /do not merge specs/)
+  assert.match(finish, /do not move or archive the change/)
+  assert.match(finish, /do not overwrite already-archived content/)
+  assert.match(finish, /`\/opsx-archive <name> --yes`/)
+  assert.match(finish, /deterministic finalize command/)
 })
 
 test('sync and archive workflow prompts include context, rules and operation guidance only when configured', async () => {

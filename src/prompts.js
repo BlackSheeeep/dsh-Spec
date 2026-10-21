@@ -857,7 +857,9 @@ function archiveFinishContract(name) {
     '## Finish contract (archive)',
     '',
     '1. Completion check first: inspect the artifact and task state above. If `Planning complete` is `no`, tasks are pending, or validation reports WARNINGs, summarize that state and ask the user to confirm they want to continue. Do not write, move or archive anything until the user confirms.',
-    '2. STOP gate: when `validation.errors > 0`, stop before any edit. Report every ERROR issue listed above with a suggested fix; do not merge specs, do not move or archive the change.',
+    '2. STOP gates: stop before any edit when either gate below is set. Report the blocking condition with a suggested fix, then wait for the user.',
+    '   - `Validation: N ERROR` (when `validation.errors > 0`): report every ERROR issue listed above; do not merge specs, do not move or archive the change.',
+    '   - `Archive target exists: yes`: report the conflict with the existing archive target; do not merge specs, do not move or archive the change, do not overwrite already-archived content, and do not run `/opsx-archive <name> --yes` (or any other deterministic finalize command) to bypass the conflict.',
     '3. Choose the sync route with the user:',
     '   - Intelligent merge (default): perform the OPSX merge described by the workflow above by directly editing `openspec/specs/<capability>/spec.md`; verify the title, `## Purpose`, absence of delta operation headings, the `### Requirement:` + `#### Scenario:` structure and the ADDED / MODIFIED / REMOVED / RENAMED results; then run `/opsx-validate` and fix any ERROR.',
     '   - Skip sync: only when the main specs are already merged (or the change declares `skip_specs`); leave `openspec/specs/**` untouched.',
@@ -964,8 +966,8 @@ export async function buildSyncWorkflowPrompt({ cwd, changeName, schema = null, 
  * Archive AI workflow prompt: the adapted vendored OPSX `archive-change` skill
  * body, completion facts (artifacts, tasks, deltas, main specs, archive target)
  * and the archive finish contract (confirm completion, stop on validation
- * ERROR, intelligent-merge or skip sync, validate, then finalize with
- * `/opsx-archive <name> --yes --skip-specs`).
+ * ERROR or an existing archive target, intelligent-merge or skip sync,
+ * validate, then finalize with `/opsx-archive <name> --yes --skip-specs`).
  *
  * This builder never writes; it only reads the bundled vendored skill text.
  *

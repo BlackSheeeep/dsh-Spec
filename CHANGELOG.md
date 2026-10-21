@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.0
+
+修复新会话（hero 页）里「归档」在 change 有校验 ERROR 或归档目标已存在时仍然「发送后没反应」的问题：命令层不再在提交 AI 工作流之前直接拒绝，阻塞事实交给提示词 STOP gate 由模型先停止并报告。
+
+### Fixed
+
+- **默认 AI 路径被命令层前置门禁截断**：`/opsx-sync`、`/opsx-archive` 未带 `--yes`/`--dry-run` 时，即使原生校验有 ERROR 或归档目标已存在，也先组装并提交 OPSX 工作流提示词；校验问题与 `archiveTargetExists` 作为当前事实进入提示词，由模型按 STOP gate 先停止并报告问题/冲突，命令本身不写盘、不移动目录。此前这类 change 在新会话里点「归档」只会得到一条 hero 页无法渲染的直接命令结果，表现为「指令已填入、回车后没反应」。
+- **命令结果文案注明阻塞事实**：AI 路径的结果现在说明「校验有 N 个 ERROR / 归档目标已存在，AI 会先停止并报告」，即使模型不可用也能解释接下来会发生什么。
+- **archive 收尾契约补强**：`src/prompts.js` 的 archive 工作流提示词在「校验 ERROR 先停」之外并列「`Archive target exists: yes` 先停」，明确禁止合并主 specs、移动目录、覆盖已归档内容，或用确定性收尾命令绕过冲突。
+
+### Changed
+
+- **确定性路径不变**：`--yes` 与 `--dry-run` 仍在命令层执行校验门禁与归档目标冲突拒绝，不产生模型消息；`specs-sync-archive` 引擎的写入前校验与写入安全不变。
+- README 更新 sync / archive 两条路径说明与「新会话里的命令结果可见性」已知限制；`tests/commands.test.mjs` 的「所有路径都拒绝」用例改写为「AI 路径提交提示词、确定性路径仍拒绝」，并补充 `tests/prompts.test.mjs` / `tests/instruction.test.mjs` 的 archive 停止条款断言。
+- 插件版本 `0.7.0` → `0.8.0`。
+
+### Notes
+
+- Host 半改动需要重新构建（`node tools/build.mjs`）、以本地目录安装并重启 DSH 进程后生效。
+- 新会话里其余直接命令结果（`/opsx-status`、`/opsx-validate`、确定性 `--yes`）仍受 hero 页无轨迹限制，不在本次范围内；无效 change 请先用 `/opsx-update <name>` 修复。
+
 ## 0.7.0
 
 阶段命令按工作流阶段命名会话，解决命令会话标题显示提示词开头、难以区分的问题。
