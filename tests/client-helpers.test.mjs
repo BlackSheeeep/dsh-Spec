@@ -439,10 +439,12 @@ test('deriveNextAction: native artifact state, not the legacy phase order', () =
     labelKey: 'nextActionApply',
     line: '/opsx-apply add-dark-mode',
   })
+  // A finished change points at the default AI archive workflow; the
+  // deterministic fast path is opt-in only (`--yes` typed by the user).
   assert.deepEqual(deriveNextAction({ name: 'add-dark-mode', isPlanningComplete: true, listStatus: 'complete' }), {
     kind: 'archive',
     labelKey: 'nextActionArchive',
-    line: '/opsx-archive add-dark-mode --yes',
+    line: '/opsx-archive add-dark-mode',
   })
 })
 

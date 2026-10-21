@@ -2,7 +2,7 @@
 
 把 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 的规格驱动开发（SDD）工作流完整桥接进 DeepSeek Harness（DSH）：**工作区原生面板 + 会话快捷命令条 + 九条 `/opsx-*` 命令**，直接读取仓库里的 `openspec/` 原生文件，**不依赖 openspec CLI**。
 
-当前版本 **0.5.0**：面板概览为「工件进度 / 任务进度」两个独立进度圈，change 详情与归档详情带默认收起、可展开的任务清单；「探索 / 提案」入口点击后直接把命令填入输入框（不弹窗、不自动发送）；DSH Web 客户端里多进行中 change 时，change 名可以从列表选择并自动回填输入框。
+当前版本 **0.6.0**：面板概览为「工件进度 / 任务进度」两个独立进度圈，change 详情与归档详情带默认收起、可展开的任务清单；「探索 / 提案」入口点击后直接把命令填入输入框（不弹窗、不自动发送）；「归档」入口默认填入 `/opsx-archive <name>`（OPSX AI 归档工作流，新会话里回车即可切到对话并看到工作流）；DSH Web 客户端里多进行中 change 时，change 名可以从列表选择并自动回填输入框。
 
 目标原生契约：**OpenSpec 1.14.3**（schema 驱动 OPSX）。插件内置一份带版本与 MIT 归属的 `spec-driven` schema + 四份模板快照，以及全部 12 个 OPSX 工作流 skills 的改编快照（上游 commit `c794978`，见 `src/native-snapshot/ATTRIBUTION.md`）；schema 仅当项目没有同名 `openspec/schemas/<name>/` 时作为回退，skills 仅当工作区没有原生 `openspec-*` 技能时作为 fallback。
 
@@ -11,7 +11,7 @@
 /opsx-explore    /opsx-propose                     /opsx-apply      /opsx-sync   /opsx-archive
 ```
 
-## 截图（本机 DSH Web 验证实例，0.5.0）
+## 截图（本机 DSH Web 验证实例，0.6.0）
 
 | 面板（工件/任务双进度圈 · artifact chips · 原生下一步） | 项目配置与可用 schema |
 |---|---|
@@ -86,7 +86,7 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 
 **新会话（还没发第一条消息）时**，快捷条并入「工作区 / 模式」那一行的右端（`conversation.hero.options` 槽位），不额外占一行；对话开始后它切换到输入框下方（`conversation.composer.dock` 槽位），两者互斥不会重复。条上显示：当前变更名、artifact 状态摘要、任务进度，加上按原生下一步推导的动作按钮（探索 / 提案 / 实施 / 更新 / 同步 / 归档 / 状态）与「检测到的原生 OpenSpec skills」指示。
 
-其中「归档」按钮默认填入 **`/opsx-archive <name> --yes`**：回车即走确定性归档（校验 → 合并 → 移动，不产生模型消息），适合一键收尾；想看 OPSX AI 归档工作流则手动输入不带 `--yes` 的 `/opsx-archive <name>`。
+其中「归档」按钮默认填入 **`/opsx-archive <name>`**：回车即提交 OPSX AI 归档工作流（完成度检查 → 同步评估 → 智能合并 → 验证 → `/opsx-archive <name> --yes --skip-specs` 确定性收尾），AI 会先向用户确认再动手。**新会话（还没进入对话）里也必须用 AI 路径**：确定性 `--yes` 返回的是直接命令结果，DSH 只在会话轨迹里渲染，hero 页没有轨迹会静默丢弃（这正是 0.5.0 里「点归档没反应」的原因）。确定性归档仍可手动输入 `/opsx-archive <name> --yes`（校验 → 合并 → 移动，不产生模型消息）做一键收尾，`--dry-run` 只预览。
 
 面板按钮**不自动执行**：点击会切到对应工作区的会话并把 `/opsx-*` 指令填入输入框；确认后再回车，避免误触直接跑模型。其中「探索」「提案」入口也走同一条路径——点击直接把 `/opsx-explore ` / `/opsx-propose ` 填入输入框（不再弹输入弹窗），主题或 change 名在输入框里补充。
 
@@ -190,6 +190,7 @@ node tools/sync-native-snapshot.mjs --source <path-to-OpenSpec-repo>
 - **YAML 子集**：自研解析器覆盖评论、标量、块标量、缩进序列/映射、flow 集合与引号；anchor / merge key / 多行 flow 等结构会带行号报错，schema 解析失败时面板显示 schema 错误而不是静默回退默认 schema。
 - **上下文长度**：`openspec/config.yaml` 的 `context` 超过 50KB 会被忽略并给出警告。
 - **会话作用域**：快捷条在新会话（还没发第一条消息）时并入「工作区 / 模式」行右端（`conversation.hero.options`），对话开始后由输入框下方的 `conversation.composer.dock` 接棒（二者由 hero 状态天然互斥，不会同时出现）；完全无会话时请用面板（面板走 Host 只读接口，无需会话）。`/` 菜单仍只在有会话时出现。
+- **新会话里的命令结果可见性**：hero 页没有会话轨迹，只有会**产生模型回合**的命令（探索 / 提案 / 实施 / 更新 / 同步 / 归档的默认 AI 路径）能在提交后切到对话并显示结果；返回直接命令结果的命令（`/opsx-status`、`/opsx-validate`、`--yes` 确定性归档等）需要已有会话轨迹才能看到输出，在新会话里提交它们会静默完成/失败、界面停在 hero。归档按钮因此固定走 AI 路径（0.6.0 修复）。
 - **写操作只走命令**：面板不直接写盘；sync / archive 由用户执行命令触发（默认 AI 工作流不写盘，`--yes` 才确定性写盘）。
 - **expanded 命令族**：new / continue / ff / verify / bulk-archive / onboard 只通过内置 OPSX skills（文件语义）提供，不提供对应 `/opsx-*` 命令。
 - **变更选择器边界**：仅在 DSH Web 客户端、且工作区存在 ≥2 个进行中 change 时接管五条 change 命令；不做空格后的内联补全、不提供 sync / archive 标志（`--yes` / `--dry-run` / `--skip-specs`）的第二级选择、不选择已归档 change；`/` 菜单点选这五条命令从不带参数状态变为先弹选择器（Esc 或手打命令 + 空格仍走旧路径）；选择器打开时若 Host 状态读取失败，只在弹层内报错，不执行命令、不发送消息。

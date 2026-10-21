@@ -539,11 +539,12 @@ export function deriveNextAction(change) {
     return { kind: 'update', labelKey: 'nextActionUpdate', line: `/opsx-update ${name}` }
   }
   if (change.listStatus === 'complete') {
-    // The panel/quick-bar "Archive" button fills the composer; appending --yes
-    // makes that one-click path the deterministic archive (validate + merge +
-    // move without a model turn). Typing /opsx-archive without flags still
-    // starts the OPSX AI archive workflow.
-    return { kind: 'archive', labelKey: 'nextActionArchive', line: `/opsx-archive ${name} --yes` }
+    // The panel/quick-bar "Archive" button fills the composer with the default
+    // /opsx-archive command, i.e. the OPSX AI archive workflow (completion
+    // check, merge confirmation, validation, deterministic move). The
+    // deterministic fast path stays available only when the user explicitly
+    // adds `--yes` (or asks for a `--dry-run` preview).
+    return { kind: 'archive', labelKey: 'nextActionArchive', line: `/opsx-archive ${name}` }
   }
   return { kind: 'apply', labelKey: 'nextActionApply', line: `/opsx-apply ${name}` }
 }
