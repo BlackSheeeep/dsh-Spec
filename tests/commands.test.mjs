@@ -103,7 +103,7 @@ function cleanValidation(overrides = {}) {
 }
 
 /** Build fake dependency map + fake ctx/agent, register commands, return a `run()` helper. */
-function createHarness(overrides = {}) {
+function createHarness(overrides = {}, options = {}) {
   const calls = {
     order: [],
     writes: [],
@@ -113,9 +113,29 @@ function createHarness(overrides = {}) {
     planArchive: [],
     prompt: {},
     validations: [],
+    titles: [],
   }
 
+  // Per-session accepted titles, so a repeated command can observe its own title
+  // and the idempotency check behaves like the real title service.
+  const acceptedTitles = new Map()
+  const titles = options.titles === undefined
+    ? {
+        get(session) {
+          const title = acceptedTitles.get(session?.id)
+          return title === undefined ? undefined : { title }
+        },
+        rename(session, title) {
+          calls.titles.push({ sessionId: session?.id, title })
+          acceptedTitles.set(session?.id, title)
+          return { title }
+        },
+      }
+    : options.titles
+  const session = options.session ?? { id: 'session-test' }
+
   const agent = {
+    session,
     messages: [],
     followup(message) {
       calls.order.push(['followup'])
@@ -279,6 +299,9 @@ function createHarness(overrides = {}) {
       register(spec) {
         registry.set(spec.name, spec)
       },
+    },
+    get(key) {
+      return key === 'sessionTitle' ? titles ?? undefined : undefined
     },
   }
   registerCommands(ctx, deps)
@@ -637,6 +660,36 @@ test('opsx-update submits a planning-only prompt with the revision request', asy
   assert.equal(h.calls.prompt.update.changeName, 'add-x')
   assert.equal(h.calls.prompt.update.intent, '完善 proposal 的 Why 部分')
   assert.equal(h.agent.messages[0].content[0].text, 'UPDATE_PROMPT')
+})
+
+test('opsx-explore titles the session with the exploration topic', async () => {
+  const h = createHarness()
+  await h.run('opsx-explore', '深入调查缓存层')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[探索] 深入调查缓存层' }])
+})
+
+test('opsx-explore without a topic keeps only the phase prefix', async () => {
+  const h = createHarness()
+  await h.run('opsx-explore')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[探索]' }])
+})
+
+test('opsx-propose titles the session with the normalized change name', async () => {
+  const h = createHarness()
+  await h.run('opsx-propose', 'Add-Dark-Mode 支持深色主题')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[提案] add-dark-mode' }])
+})
+
+test('opsx-apply titles the session with the auto-selected change', async () => {
+  const h = createHarness()
+  await h.run('opsx-apply')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[实施] add-x' }])
+})
+
+test('opsx-update titles the session with the change name', async () => {
+  const h = createHarness()
+  await h.run('opsx-update', 'add-x 完善 proposal 的 Why 部分')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[更新] add-x' }])
 })
 
 test('opsx-update refuses a target artifact that does not exist yet', async () => {
@@ -1076,6 +1129,134 @@ test('--dry-run wins over --yes so a preview can never write', async () => {
   assert.match(archivePreview.text, /归档预览/)
   assert.equal(archiveHarness.calls.executeArchive.length, 0)
   assert.equal(archiveHarness.agent.messages.length, 0)
+})
+
+test('opsx-sync default and --yes set the sync and completed titles', async () => {
+  const ai = createHarness()
+  await ai.run('opsx-sync', 'add-x')
+  assert.deepEqual(ai.calls.titles, [{ sessionId: 'session-test', title: '[同步] add-x' }])
+
+  const deterministic = createHarness()
+  await deterministic.run('opsx-sync', '--yes add-x')
+  assert.deepEqual(deterministic.calls.titles, [{ sessionId: 'session-test', title: '[已同步] add-x' }])
+})
+
+test('opsx-archive default and --yes set the archive and completed titles', async () => {
+  const ai = createHarness()
+  await ai.run('opsx-archive', 'add-x')
+  assert.deepEqual(ai.calls.titles, [{ sessionId: 'session-test', title: '[归档] add-x' }])
+
+  const deterministic = createHarness()
+  await deterministic.run('opsx-archive', '--yes add-x')
+  assert.deepEqual(deterministic.calls.titles, [{ sessionId: 'session-test', title: '[已归档] add-x' }])
+
+  const skipSpecs = createHarness()
+  await skipSpecs.run('opsx-archive', '--yes --skip-specs add-x')
+  assert.deepEqual(skipSpecs.calls.titles, [{ sessionId: 'session-test', title: '[已归档] add-x' }])
+})
+
+test('dry-run previews never change the session title', async () => {
+  const sync = createHarness()
+  await sync.run('opsx-sync', '--dry-run add-x')
+  assert.deepEqual(sync.calls.titles, [])
+
+  const archive = createHarness()
+  await archive.run('opsx-archive', '--dry-run add-x')
+  assert.deepEqual(archive.calls.titles, [])
+})
+
+test('failed commands never change the session title', async () => {
+  const noChange = createHarness({
+    state: { computeWorkspaceState: async () => workspace({ changes: [] }) },
+  })
+  const applyRefused = await noChange.run('opsx-apply')
+  assert.equal(applyRefused.kind, 'error')
+  assert.deepEqual(noChange.calls.titles, [])
+
+  const existing = createHarness({ fs: { pathExists: async () => true } })
+  const proposeRefused = await existing.run('opsx-propose', 'add-y 说明')
+  assert.equal(proposeRefused.kind, 'error')
+  assert.deepEqual(existing.calls.titles, [])
+
+  const invalid = createHarness({
+    state: {
+      validateChangeByName: async (cwd, name) => ({
+        name,
+        validation: cleanValidation({
+          errors: 1,
+          issues: [{ level: 'ERROR', path: 'specs/cap/spec.md', message: 'missing scenario' }],
+        }),
+        metadata: {},
+        schemaName: 'spec-driven',
+        deltas: [],
+        tasks: { total: 0, done: 0, items: [], issues: [] },
+      }),
+    },
+  })
+  const syncRefused = await invalid.run('opsx-sync', 'add-x')
+  assert.equal(syncRefused.kind, 'error')
+  assert.deepEqual(invalid.calls.titles, [])
+})
+
+test('direct commands never change the session title', async () => {
+  const h = createHarness()
+  assert.equal((await h.run('opsx-status')).kind, 'success')
+  assert.equal((await h.run('opsx-validate')).kind, 'success')
+  assert.equal((await h.run('openspec-init')).kind, 'success')
+  assert.deepEqual(h.calls.titles, [])
+})
+
+test('re-running the same phase command writes the title once', async () => {
+  const h = createHarness()
+  await h.run('opsx-explore', '同一个主题')
+  await h.run('opsx-explore', '同一个主题')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[探索] 同一个主题' }])
+})
+
+test('a phase command replaces a manually chosen title', async () => {
+  const renamed = []
+  const h = createHarness({}, {
+    titles: {
+      get: () => ({ title: '手动标题' }),
+      rename(session, title) {
+        renamed.push({ sessionId: session.id, title })
+        return { title }
+      },
+    },
+  })
+  await h.run('opsx-apply')
+  assert.deepEqual(renamed, [{ sessionId: 'session-test', title: '[实施] add-x' }])
+})
+
+test('a missing title service leaves the command result unchanged', async () => {
+  const h = createHarness({}, { titles: null })
+  const result = await h.run('opsx-explore', '主题')
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /探索任务/)
+  assert.deepEqual(h.calls.titles, [])
+})
+
+test('a rejected title write never fails the command', async () => {
+  const h = createHarness({}, {
+    titles: {
+      get: () => undefined,
+      rename() {
+        throw new Error('session is not live')
+      },
+    },
+  })
+  const result = await h.run('opsx-explore', '主题')
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /探索任务/)
+  assert.deepEqual(h.calls.titles, [])
+})
+
+test('a long exploration topic stays within the title byte budget', async () => {
+  const h = createHarness()
+  await h.run('opsx-explore', '会'.repeat(60))
+  assert.equal(h.calls.titles.length, 1)
+  assert.ok(Buffer.byteLength(h.calls.titles[0].title, 'utf8') <= 80)
+  assert.ok(h.calls.titles[0].title.endsWith('…'))
 })
 
 test('direct commands never submit a model message', async () => {

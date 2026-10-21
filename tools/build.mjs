@@ -1,11 +1,11 @@
 /**
  * Build dsh-spec.
  *
- * Host half: `src/host.js`, `src/prompts.js`, `src/commands.js` are copied to
- * `lib/` verbatim, and the plain-JS native engine (`src/native/**`) plus the
- * pinned upstream snapshot (`src/native-snapshot/**`) are mirrored under `lib/`
- * with their relative layout preserved — plain ESM, relative imports, no
- * bundler.
+ * Host half: `src/host.js`, `src/prompts.js`, `src/commands.js` and
+ * `src/session-titles.js` are copied to `lib/` verbatim, and the plain-JS
+ * native engine (`src/native/**`) plus the pinned upstream snapshot
+ * (`src/native-snapshot/**`) are mirrored under `lib/` with their relative
+ * layout preserved — plain ESM, relative imports, no bundler.
  *
  * Client half: the DSH client module system serves `lib/client.js` as a classic
  * script that registers a closure factory:
@@ -111,14 +111,15 @@ fs.mkdirSync(lib, { recursive: true })
 fs.writeFileSync(path.join(lib, 'index.js'), read('src/host.js'))
 fs.writeFileSync(path.join(lib, 'prompts.js'), read('src/prompts.js'))
 fs.writeFileSync(path.join(lib, 'commands.js'), read('src/commands.js'))
+fs.writeFileSync(path.join(lib, 'session-titles.js'), read('src/session-titles.js'))
 copyTree('src/native', 'lib/native')
 copyTree('src/native-snapshot', 'lib/native-snapshot')
 fs.writeFileSync(path.join(lib, 'client.js'), `${clientWithHelpers.trimEnd()}\n`)
 
-const HOST_MODULES = ['index.js', 'prompts.js', 'commands.js']
+const HOST_MODULES = ['index.js', 'prompts.js', 'commands.js', 'session-titles.js']
 for (const module of HOST_MODULES) {
   await import(pathToFileURL(path.join(lib, module)).href)
 }
 console.log(
-  `dsh-spec: built lib/index.js, lib/prompts.js, lib/commands.js, lib/client.js, lib/native/, lib/native-snapshot/ (v${manifest.version})`,
+  `dsh-spec: built lib/index.js, lib/prompts.js, lib/commands.js, lib/session-titles.js, lib/client.js, lib/native/, lib/native-snapshot/ (v${manifest.version})`,
 )

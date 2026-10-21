@@ -2,7 +2,7 @@
 
 把 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 的规格驱动开发（SDD）工作流完整桥接进 DeepSeek Harness（DSH）：**工作区原生面板 + 会话快捷命令条 + 九条 `/opsx-*` 命令**，直接读取仓库里的 `openspec/` 原生文件，**不依赖 openspec CLI**。
 
-当前版本 **0.6.0**：面板概览为「工件进度 / 任务进度」两个独立进度圈，change 详情与归档详情带默认收起、可展开的任务清单；「探索 / 提案」入口点击后直接把命令填入输入框（不弹窗、不自动发送）；「归档」入口默认填入 `/opsx-archive <name>`（OPSX AI 归档工作流，新会话里回车即可切到对话并看到工作流）；DSH Web 客户端里多进行中 change 时，change 名可以从列表选择并自动回填输入框。
+当前版本 **0.7.0**：面板概览为「工件进度 / 任务进度」两个独立进度圈，change 详情与归档详情带默认收起、可展开的任务清单；「探索 / 提案」入口点击后直接把命令填入输入框（不弹窗、不自动发送）；「归档」入口默认填入 `/opsx-archive <name>`（OPSX AI 归档工作流，新会话里回车即可切到对话并看到工作流）；DSH Web 客户端里多进行中 change 时，change 名可以从列表选择并自动回填输入框；六条阶段命令成功发起后会把会话标题改为 `[阶段] 主题`（`--yes` 收尾用 `[已同步]` / `[已归档]`）。
 
 目标原生契约：**OpenSpec 1.14.3**（schema 驱动 OPSX）。插件内置一份带版本与 MIT 归属的 `spec-driven` schema + 四份模板快照，以及全部 12 个 OPSX 工作流 skills 的改编快照（上游 commit `c794978`，见 `src/native-snapshot/ATTRIBUTION.md`）；schema 仅当项目没有同名 `openspec/schemas/<name>/` 时作为回退，skills 仅当工作区没有原生 `openspec-*` 技能时作为 fallback。
 
@@ -46,6 +46,8 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 | — | `/openspec-init` | 幂等创建原生骨架（`config.yaml` + `specs/` + `changes/archive/`） |
 
 **变更名选择器（DSH Web 客户端）**：需要 change 名的五条命令（`/opsx-update`、`/opsx-apply`、`/opsx-sync`、`/opsx-archive`、`/opsx-validate`）在**存在两个及以上进行中 change** 时，裸提交该命令（或在 `/` 菜单里不带参数选中它）会先弹出「选择变更」列表，而不是直接执行。列表可打字筛选、方向键与回车选择，每行显示 change 名与原生状态摘要（规划中 / 可实施 / 已完成、任务进度、校验问题数、`skip_specs`）；选中后只把 `/opsx-<command> <change-name> ` 填入会话输入框（光标在末尾、不自动发送），补充修订要求或 `--yes` 等参数后回车才执行。只有一个进行中 change 时仍是自动选中、不弹列表；没有进行中 change 时仍是既有提示；手打参数的命令行不受影响；Esc 取消不改写草稿、不发送消息。该交互依赖 DSH 0.2.x Web 客户端的命令选择弹层（`commandUi.decorate` + `popupSelect`，与 `/model` 同款），非 Web 客户端或未提供该能力的组合下命令行为保持不变；DSH 不支持空格后的内联参数补全，所以是「回车 / 菜单选中 → 二级列表」而不是边打边补全。
+
+**阶段会话标题（Host 侧）**：六条模型阶段命令成功发起后，会把当前会话标题设为 `[阶段] 主题`：`[探索]`（用命令输入的主题）、`[提案]` / `[实施]` / `[更新]` / `[同步]` / `[归档]`（用实际选中的 change 名）。`/opsx-sync --yes` 与 `/opsx-archive --yes`（含 `--skip-specs`）成功收尾时分别使用 `[已同步]` 与 `[已归档]`。主题会压成单行并先按 UTF-8 字节裁剪到会话标题服务的 80 字节上限（超长补 `…`），阶段前缀始终保留。`/opsx-status`、`/opsx-validate`、`/openspec-init`、`--dry-run` 与失败命令不改标题；重复执行同一阶段命令不会重复写入标题事件；标题服务缺失或写入失败时静默跳过，不影响命令结果。取舍：显式设置标题会**钉住**该会话（之后不再自动更新标题），用户手动改名也会被下一次阶段命令覆盖；该能力依赖 DSH 组合挂载 `@deepseek-ai/dsh-session-title`。
 
 `sync` / `archive` 有**两条路径**：
 
@@ -156,6 +158,7 @@ src/host.js            Host 半：注册命令族、只读 /dsh-spec 路由（st
 src/commands.js        九条命令：变更选择、原生 propose 脚手架、AI sync/archive 工作流提交、
                        --yes 确定性快路径 / --dry-run 预览 / --skip-specs 收尾、
                        status/validate/init 直出
+src/session-titles.js  阶段会话标题：`[阶段] 主题` 组合、UTF-8 裁剪、幂等写入与失败隔离
 src/prompts.js         原生阶段提示词组合（explore / propose / apply / update）+
                        OPSX sync/archive 工作流提示词（vendored skill 正文 + 引擎事实 + 收尾契约）
 src/native/**          纯 JS 原生语义引擎（零依赖、零子进程、零网络）：
