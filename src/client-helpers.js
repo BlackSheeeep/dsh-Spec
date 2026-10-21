@@ -559,6 +559,99 @@ export function nextActionText(t, action) {
   return fillText(t, action?.labelKey ?? 'nextActionApply')
 }
 
+/** The host commands that act on one change and therefore take a change name. */
+export const CHANGE_PICKER_COMMANDS = Object.freeze([
+  'opsx-update',
+  'opsx-apply',
+  'opsx-sync',
+  'opsx-archive',
+  'opsx-validate',
+])
+
+/**
+ * Whether the Web client's change picker should take over a bare change command.
+ *
+ * Only the ambiguous case needs the picker: two or more changes in motion. A
+ * single change keeps the host's auto-selection, and a loading / missing / error
+ * workspace keeps the host's own diagnostics, so the picker never hides a more
+ * accurate host message.
+ *
+ * @param {{status?: string, changes?: Array<object>}|undefined} state - `WorkspaceState`.
+ * @returns {boolean} true when the picker should intercept the command.
+ */
+export function changePickerAvailable(state) {
+  if (state === null || state === undefined || state.status !== 'ready') return false
+  const changes = Array.isArray(state.changes) ? state.changes : []
+  return changes.length >= 2
+}
+
+/**
+ * Composer line filled after one picker row is chosen:
+ * `/opsx-<command> <change-name> ` — the trailing space lets the user append a
+ * revision request or flags before submitting.
+ *
+ * @param {string} command - command name, with or without its leading slash ({@link CHANGE_PICKER_COMMANDS}).
+ * @param {string} changeName - picked change name, preserved verbatim.
+ * @returns {string} composer draft line.
+ */
+export function changePickerLine(command, changeName) {
+  const name = String(command ?? '').replace(/^\/+/, '')
+  const change = String(changeName ?? '').trim()
+  return `/${name} ${change} `
+}
+
+/** Locale keys for the picker's per-change workflow state. */
+const HELPER_PICKER_STATE_KEYS = {
+  planning: 'pickerPlanning',
+  apply: 'pickerApply',
+  complete: 'pickerComplete',
+}
+
+/**
+ * Compact native status summary for one change row.
+ *
+ * @param {object} change - `ChangeState`.
+ * @param {((key: string) => string) | undefined} t - translate function.
+ * @returns {string} ` · `-joined summary text.
+ */
+function changePickerDetail(change, t) {
+  const parts = []
+  let stateKey = HELPER_PICKER_STATE_KEYS.planning
+  if (change.isPlanningComplete === true) {
+    stateKey = change.listStatus === 'complete' ? HELPER_PICKER_STATE_KEYS.complete : HELPER_PICKER_STATE_KEYS.apply
+  }
+  parts.push(fillText(t, stateKey))
+  const progress = taskProgressInfo(change.tasks)
+  if (progress.total > 0) parts.push(fillText(t, 'pickerTasks', { done: progress.done, total: progress.total }))
+  const errors = helperNumber(change?.validation?.errors)
+  if (errors > 0) parts.push(fillText(t, 'pickerErrors', { count: errors }))
+  const warnings = helperNumber(change?.validation?.warnings)
+  if (warnings > 0) parts.push(fillText(t, 'pickerWarnings', { count: warnings }))
+  if (change?.metadata?.skip_specs === true) parts.push(fillText(t, 'skipSpecs'))
+  return parts.join(' · ')
+}
+
+/**
+ * One picker row per change in motion: `label` is the change name (the popup
+ * shell renders it) and `detail` is the compact native status summary. Rows
+ * without a usable name are filtered instead of rendering an empty option.
+ *
+ * @param {{status?: string, changes?: Array<object>}|undefined} state - `WorkspaceState`.
+ * @param {((key: string) => string) | undefined} t - translate function.
+ * @returns {Array<{name: string, label: string, detail: string}>} picker options.
+ */
+export function changePickerOptions(state, t) {
+  if (state === null || state === undefined || state.status !== 'ready') return []
+  const changes = Array.isArray(state.changes) ? state.changes : []
+  return changes
+    .filter((change) => change !== null && typeof change === 'object' && typeof change.name === 'string' && change.name !== '')
+    .map((change) => ({
+      name: change.name,
+      label: change.name,
+      detail: changePickerDetail(change, t),
+    }))
+}
+
 /**
  * Flatten capability specs into a nested-path ordered row list:
  * `identity/user-auth` renders as a group row `identity` plus a child row

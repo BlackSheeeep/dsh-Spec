@@ -250,6 +250,16 @@ function createOpenSpecPlugin(require) {
       planning: '规划中',
       loadingArchive: '正在读取归档…',
       customArtifactsNote: '自定义/glob 工件已按 generates 展开；未列出的内容不会静默丢弃。',
+      pickerSearch: '搜索进行中的变更…',
+      pickerEmpty: '没有进行中的变更，先用 /opsx-propose 创建一个。',
+      pickerNoResults: '没有匹配的变更',
+      pickerLoadFailed: '读取变更状态失败',
+      pickerPlanning: '规划中',
+      pickerApply: '可实施',
+      pickerComplete: '已完成',
+      pickerTasks: '任务 {done}/{total}',
+      pickerErrors: '{count} ERROR',
+      pickerWarnings: '{count} WARNING',
     },
     en: {
       panel: 'OpenSpec',
@@ -435,6 +445,16 @@ function createOpenSpecPlugin(require) {
       planning: 'Planning',
       loadingArchive: 'Reading archive…',
       customArtifactsNote: 'Custom/glob artifacts are expanded from generates; nothing listed here is silently dropped.',
+      pickerSearch: 'Filter changes in motion…',
+      pickerEmpty: 'No change in motion — start one with /opsx-propose.',
+      pickerNoResults: 'No matching change',
+      pickerLoadFailed: 'Failed to read the change state',
+      pickerPlanning: 'Planning',
+      pickerApply: 'Ready to apply',
+      pickerComplete: 'Complete',
+      pickerTasks: 'Tasks {done}/{total}',
+      pickerErrors: '{count} ERROR',
+      pickerWarnings: '{count} WARNING',
     },
   }
 
@@ -590,7 +610,7 @@ function createOpenSpecPlugin(require) {
 .dshspec-icon{display:block;flex:none}
 
 /* Composer dock -------------------------------------------------------- */
-.dshspec-dock{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:2px 2px 6px;font-size:12.5px;color:var(--dsw-alias-label-tertiary);min-width:0}
+.dshspec-dock{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:nowrap;max-width:100%;padding:2px 2px 6px;font-size:12.5px;color:var(--dsw-alias-label-tertiary);min-width:0}
 /* Hero (pre-conversation) variant: the bar sits at the right end of the
    workspace chip row, so it renders as a plain inline cluster — no container
    chrome, tighter type, and a bounded change name. */
@@ -599,9 +619,12 @@ function createOpenSpecPlugin(require) {
 .dshspec-dock[data-dshspec-variant=hero] .dshspec-dockActions{margin-left:0;gap:4px}
 .dshspec-dock[data-dshspec-variant=hero] .dshspec-seg{padding:0;background:transparent}
 .dshspec-dock[data-dshspec-variant=hero] .dshspec-dockName{max-width:140px}
-.dshspec-dockStatus{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
+/* The hero seat lives at the top-right of the window: open the change switcher
+   downward and align it to the right so it never leaves the viewport. */
+.dshspec-dock[data-dshspec-variant=hero] .dshspec-dockMenu{top:calc(100% + 8px);bottom:auto;right:0;left:auto}
+.dshspec-dockStatus{display:flex;align-items:center;gap:7px;min-width:0;flex:1 1 auto;flex-wrap:nowrap}
 .dshspec-dockTargetWrap{position:relative;display:flex;align-items:center;min-width:0}
-.dshspec-dockTarget{display:inline-flex;align-items:center;gap:7px;min-width:0;padding:2px 6px 2px 3px;margin-left:-3px;border:none;border-radius:8px;background:transparent;font:inherit;color:inherit;cursor:pointer;text-align:left}
+.dshspec-dockTarget{display:inline-flex;align-items:center;gap:7px;min-width:0;overflow:hidden;padding:2px 6px 2px 3px;margin-left:-3px;border:none;border-radius:8px;background:transparent;font:inherit;color:inherit;cursor:pointer;text-align:left}
 .dshspec-dockTarget:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dshspec-dockTarget:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}
 .dshspec-dockCaret{flex:none;color:var(--dsw-alias-label-tertiary)}
@@ -613,8 +636,18 @@ function createOpenSpecPlugin(require) {
 .dshspec-dockMenuItem:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
 .dshspec-dockMenuName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
 .dshspec-dockMenuCount{flex:none;font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
-.dshspec-dockName{font-size:12.5px;font-weight:500;color:var(--dsw-alias-label-primary);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dshspec-dockName{font-size:12.5px;font-weight:500;color:var(--dsw-alias-label-primary);max-width:240px;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dshspec-dockActions{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}
+/* Narrow windows: the dock shares its row with the shell's context meter, so it
+   must stay on ONE line — drop secondary controls first, then truncate the
+   change name. (Wrapping used to put the status on its own line and push the
+   actions far right.) */
+@media (max-width:1440px){.dshspec-dock .dshspec-dockName{max-width:200px}}
+@media (max-width:1300px){.dshspec-dockSkills{display:none}}
+@media (max-width:1200px){.dshspec-dock .dshspec-dockStatus .dshspec-badge{display:none}}
+@media (max-width:1100px){.dshspec-dockStatusBtn{display:none}}
+@media (max-width:1000px){.dshspec-dockGhost{display:none}}
+@media (max-width:900px){.dshspec-dock .dshspec-dockName{max-width:110px}}
 .dshspec-seg{display:flex;align-items:center;gap:2px;padding:2px;border-radius:10px;background:var(--dsw-alias-interactive-bg-hover)}
 .dshspec-seg .dshspec-btn-sm{height:24px;padding:0 8px;font-size:12px;border-radius:8px}
 .dshspec-seg .dshspec-btn-ghost:hover:not(:disabled){background:var(--dsw-alias-button-ghost-active-fill);color:var(--dsw-alias-label-primary)}
@@ -1616,6 +1649,33 @@ function createOpenSpecPlugin(require) {
     if (hadText) document.execCommand('insertLineBreak', false, '')
     if (document.execCommand('insertText', false, text)) return true
     editor.textContent += (hadText ? '\n' : '') + text
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  }
+
+  /**
+   * Replace the whole conversation draft with one command line, WITHOUT
+   * sending it. Used by the change picker when the session input service is not
+   * reachable: select everything in the editor and type over it, so the picked
+   * change never stacks on the command token that opened the picker.
+   *
+   * @param {string} text - full command line, e.g. `/opsx-update add-dark-mode `.
+   * @returns {boolean} whether an editor was found and updated.
+   */
+  function replaceComposerText(text) {
+    const editor = document.querySelector('[contenteditable="true"]')
+    if (editor === null) return false
+    const line = String(text ?? '')
+    editor.focus()
+    const selection = window.getSelection()
+    if (selection !== null) {
+      const range = document.createRange()
+      range.selectNodeContents(editor)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+    if (document.execCommand('insertText', false, line)) return true
+    editor.textContent = line
     editor.dispatchEvent(new Event('input', { bubbles: true }))
     return true
   }
@@ -3549,12 +3609,12 @@ function createOpenSpecPlugin(require) {
         h(
           'div',
           { className: 'dshspec-seg' },
-          h(Button, { variant: 'ghost', size: 'sm', title: '/opsx-explore [主题]', onClick: () => commands.fillExplore() }, t('explore')),
+          h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockGhost', title: '/opsx-explore [主题]', onClick: () => commands.fillExplore() }, t('explore')),
           // The primary button already says「提案」when proposing is the next
           // step — do not repeat it in the segment next to it.
           action.kind === 'propose'
             ? null
-            : h(Button, { variant: 'ghost', size: 'sm', title: '/opsx-propose <change-name> [说明]', onClick: () => commands.fillPropose() }, t('propose')),
+            : h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockGhost', title: '/opsx-propose <change-name> [说明]', onClick: () => commands.fillPropose() }, t('propose')),
           h(
             Button,
             {
@@ -3567,8 +3627,8 @@ function createOpenSpecPlugin(require) {
             nextActionText(t, action),
           ),
         ),
-        skillsBadge,
-        h(Button, { variant: 'ghost', size: 'sm', title: '/opsx-status', onClick: () => commands.execute('/opsx-status') }, t('status')),
+        skillsBadge === null ? null : h('span', { className: 'dshspec-dockSkills' }, skillsBadge),
+        h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockStatusBtn', title: '/opsx-status', onClick: () => commands.execute('/opsx-status') }, t('status')),
         h(IconButton, { icon: 'layout', label: t('openPanel'), size: 28, onClick: openPanel }),
       ),
       toast === null ? null : h('div', { className: 'dshspec-toast', role: 'status' }, h(Icon, { name: 'alert', size: 14 }), h('span', null, toast)),
@@ -3634,7 +3694,7 @@ function createOpenSpecPlugin(require) {
   }
 
   /** Build marker for served-bundle verification. */
-  const BUILD = '20261020-dual-rings-tasks-r2'
+  const BUILD = '20261020-responsive-dock'
 
   /**
    * Register the locale dictionaries, the monitoring page, the sidebar glyph,
@@ -3774,6 +3834,74 @@ function createOpenSpecPlugin(require) {
       const rows = rowsSource.getSnapshot()
       await Promise.all(rows.map((row) => sourceFor(row).refresh()))
     }
+
+    /**
+     * Web-client change picker: decorate the five change-taking host commands so
+     * a change is selected from a list (same shell as `/model`) instead of being
+     * typed. Client-only and self-contained behind its own inject — a composition
+     * without `commandUi` / `conversation` keeps the panel, quick bar and host
+     * commands working exactly as before.
+     */
+    ctx.inject(['commandUi', 'conversation'], (scope) => {
+      const commandUi = scope.get('commandUi')
+      const conversation = scope.get('conversation')
+      if (commandUi === undefined || typeof commandUi.decorate !== 'function') return
+      if (conversation === undefined || conversation.input === undefined) return
+
+      /** Synchronous last-known workspace state for one session (picker availability). */
+      const stateFor = (sessionId) => {
+        const row = rowForSession(ctx, sessionId)
+        if (row === undefined) return null
+        return sourceFor(row).hooks.state.getSnapshot()
+      }
+
+      /** Fresh workspace state for the picker rows; the popup owns the loading/error face. */
+      const refreshFor = async (sessionId) => {
+        const row = rowForSession(ctx, sessionId)
+        if (row === undefined) throw new Error(t('pickerLoadFailed'))
+        const source = sourceFor(row)
+        await source.refresh()
+        return source.hooks.state.getSnapshot()
+      }
+
+      /** Fill the draft with the picked command line — never execute and never send it. */
+      const fillComposer = (sessionId, line) => {
+        try {
+          const shell = conversation.input.shell(sessionId)
+          if (shell === undefined || shell === null || typeof shell.setDraft !== 'function') throw new Error('input shell unavailable')
+          shell.setDraft(line)
+          if (typeof shell.focus === 'function') shell.focus()
+          return true
+        } catch {
+          return replaceComposerText(line)
+        }
+      }
+
+      for (const command of CHANGE_PICKER_COMMANDS) {
+        const decoration = {
+          name: command,
+          available: (session) => changePickerAvailable(stateFor(session?.sessionId)),
+          ui: {
+            kind: 'popupSelect',
+            searchMode: 'substring',
+            searchLabels: () => ({
+              placeholder: t('pickerSearch'),
+              empty: t('pickerEmpty'),
+              noResults: t('pickerNoResults'),
+            }),
+            options: async (session) => changePickerOptions(await refreshFor(session?.sessionId), t),
+            onSelect: (option, session) => {
+              fillComposer(session?.sessionId, changePickerLine(command, option?.name))
+            },
+          },
+        }
+        try {
+          scope.effect(() => commandUi.decorate(decoration), `dsh-spec: change picker /${command}`)
+        } catch (error) {
+          console.warn(`[dsh-spec] change picker unavailable for /${command}:`, error)
+        }
+      }
+    })
 
     ctx.slots.inject('main', () => ctx.slots.register({
       name: 'main',

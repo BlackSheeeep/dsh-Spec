@@ -22,6 +22,10 @@ import {
   artifactStatusText,
   artifactStatusTone,
   blockedArtifacts,
+  CHANGE_PICKER_COMMANDS,
+  changePickerAvailable,
+  changePickerLine,
+  changePickerOptions,
   countTaskCheckboxes,
   deltaOperationCounts,
   deltaSummaryText,
@@ -68,9 +72,29 @@ const T = {
   nextActionUpdate: '继续规划',
   nextActionApply: '实施',
   nextActionArchive: '归档',
+  pickerPlanning: '规划中',
+  pickerApply: '可实施',
+  pickerComplete: '已完成',
+  pickerTasks: '任务 {done}/{total}',
+  pickerErrors: '{count} ERROR',
+  pickerWarnings: '{count} WARNING',
+  skipSpecs: 'skip_specs',
 }
 /** @param {string} key */
 const t = (key) => T[key] ?? key
+
+/** English counterpart used to prove the picker summary is translated, not hardcoded. */
+const T_EN = {
+  pickerPlanning: 'Planning',
+  pickerApply: 'Ready to apply',
+  pickerComplete: 'Complete',
+  pickerTasks: 'Tasks {done}/{total}',
+  pickerErrors: '{count} ERROR',
+  pickerWarnings: '{count} WARNING',
+  skipSpecs: 'skip_specs',
+}
+/** @param {string} key */
+const tEn = (key) => T_EN[key] ?? key
 
 test('artifactLabel: canonical and custom ids', () => {
   assert.equal(artifactLabel('proposal'), 'Proposal')
@@ -468,4 +492,98 @@ test('groupSpecsByPath: nested capability grouping instead of slash names', () =
 test('helpers: missing translate function falls back to the locale key', () => {
   assert.equal(artifactStatusText(undefined, 'done'), 'artifactDone')
   assert.equal(deltaSummaryText(undefined, { ADDED: 1, files: ['x'] }), 'deltaAdded · deltaModified · deltaRemoved · deltaRenamed')
+})
+
+test('CHANGE_PICKER_COMMANDS: the five change-taking commands', () => {
+  assert.deepEqual([...CHANGE_PICKER_COMMANDS], ['opsx-update', 'opsx-apply', 'opsx-sync', 'opsx-archive', 'opsx-validate'])
+})
+
+test('changePickerAvailable: only ready with two or more changes in motion', () => {
+  assert.equal(changePickerAvailable(undefined), false)
+  assert.equal(changePickerAvailable(null), false)
+  assert.equal(changePickerAvailable({ status: 'loading', changes: [{ name: 'a' }, { name: 'b' }] }), false)
+  assert.equal(changePickerAvailable({ status: 'missing' }), false)
+  assert.equal(changePickerAvailable({ status: 'error' }), false)
+  assert.equal(changePickerAvailable({ status: 'ready' }), false)
+  assert.equal(changePickerAvailable({ status: 'ready', changes: [{ name: 'only' }] }), false)
+  assert.equal(changePickerAvailable({ status: 'ready', changes: [{ name: 'a' }, { name: 'b' }] }), true)
+  assert.equal(changePickerAvailable({ status: 'ready', changes: [{ name: 'a' }, { name: 'b' }, { name: 'c' }] }), true)
+})
+
+test('changePickerLine: full command line with a trailing space', () => {
+  assert.equal(changePickerLine('opsx-update', 'align-native-openspec'), '/opsx-update align-native-openspec ')
+  // A leading slash is tolerated so callers may pass either spelling.
+  assert.equal(changePickerLine('/opsx-archive', 'add-dark-mode'), '/opsx-archive add-dark-mode ')
+  // Change names are preserved verbatim (no slugify, no re-casing).
+  assert.equal(changePickerLine('opsx-apply', 'my-change_v2.1'), '/opsx-apply my-change_v2.1 ')
+  for (const command of CHANGE_PICKER_COMMANDS) {
+    assert.equal(changePickerLine(command, 'x'), `/${command} x `)
+  }
+})
+
+test('changePickerOptions: label + native status summary per change', () => {
+  const state = {
+    status: 'ready',
+    changes: [
+      {
+        name: 'align-native-openspec',
+        isPlanningComplete: false,
+        listStatus: 'no-tasks',
+        tasks: { done: 0, total: 3 },
+        validation: { errors: 2, warnings: 0 },
+        metadata: { skip_specs: true },
+      },
+      {
+        name: 'add-dark-mode',
+        isPlanningComplete: true,
+        listStatus: 'in-progress',
+        tasks: { done: 1, total: 2 },
+        validation: { errors: 0, warnings: 1 },
+      },
+      {
+        name: 'panel-dual-rings-task-list',
+        isPlanningComplete: true,
+        listStatus: 'complete',
+        tasks: { done: 3, total: 3 },
+        validation: { errors: 0, warnings: 0 },
+      },
+    ],
+  }
+  assert.deepEqual(changePickerOptions(state, t), [
+    {
+      name: 'align-native-openspec',
+      label: 'align-native-openspec',
+      detail: '规划中 · 任务 0/3 · 2 ERROR · skip_specs',
+    },
+    { name: 'add-dark-mode', label: 'add-dark-mode', detail: '可实施 · 任务 1/2 · 1 WARNING' },
+    { name: 'panel-dual-rings-task-list', label: 'panel-dual-rings-task-list', detail: '已完成 · 任务 3/3' },
+  ])
+  // A change with no tasks / issues / skip_specs still gets a state-only detail.
+  assert.deepEqual(changePickerOptions({ status: 'ready', changes: [{ name: 'bare' }] }, t), [
+    { name: 'bare', label: 'bare', detail: '规划中' },
+  ])
+  // Non-ready and empty states expose no rows.
+  assert.deepEqual(changePickerOptions(undefined, t), [])
+  assert.deepEqual(changePickerOptions({ status: 'missing' }, t), [])
+  assert.deepEqual(changePickerOptions({ status: 'ready' }, t), [])
+  // Malformed rows are filtered instead of rendering empty options.
+  assert.deepEqual(
+    changePickerOptions({ status: 'ready', changes: [null, { name: '' }, { name: 'ok' }] }, t).map((row) => row.name),
+    ['ok'],
+  )
+})
+
+test('changePickerOptions: zh/en summaries differ and fill every placeholder', () => {
+  const state = {
+    status: 'ready',
+    changes: [
+      { name: 'a-change', isPlanningComplete: false, tasks: { done: 1, total: 4 }, validation: { errors: 2, warnings: 1 } },
+    ],
+  }
+  const zh = changePickerOptions(state, t)[0].detail
+  const en = changePickerOptions(state, tEn)[0].detail
+  assert.equal(zh, '规划中 · 任务 1/4 · 2 ERROR · 1 WARNING')
+  assert.equal(en, 'Planning · Tasks 1/4 · 2 ERROR · 1 WARNING')
+  assert.notEqual(zh, en)
+  for (const detail of [zh, en]) assert.equal(/\{\w+\}/.test(detail), false)
 })

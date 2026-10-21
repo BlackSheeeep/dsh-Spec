@@ -2,7 +2,7 @@
 
 把 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 的规格驱动开发（SDD）工作流完整桥接进 DeepSeek Harness（DSH）：**工作区原生面板 + 会话快捷命令条 + 九条 `/opsx-*` 命令**，直接读取仓库里的 `openspec/` 原生文件，**不依赖 openspec CLI**。
 
-当前版本 **0.4.0**：面板概览为「工件进度 / 任务进度」两个独立进度圈，change 详情与归档详情带默认收起、可展开的任务清单；「探索 / 提案」入口点击后直接把命令填入输入框（不弹窗、不自动发送）。
+当前版本 **0.5.0**：面板概览为「工件进度 / 任务进度」两个独立进度圈，change 详情与归档详情带默认收起、可展开的任务清单；「探索 / 提案」入口点击后直接把命令填入输入框（不弹窗、不自动发送）；DSH Web 客户端里多进行中 change 时，change 名可以从列表选择并自动回填输入框。
 
 目标原生契约：**OpenSpec 1.14.3**（schema 驱动 OPSX）。插件内置一份带版本与 MIT 归属的 `spec-driven` schema + 四份模板快照，以及全部 12 个 OPSX 工作流 skills 的改编快照（上游 commit `c794978`，见 `src/native-snapshot/ATTRIBUTION.md`）；schema 仅当项目没有同名 `openspec/schemas/<name>/` 时作为回退，skills 仅当工作区没有原生 `openspec-*` 技能时作为 fallback。
 
@@ -11,7 +11,7 @@
 /opsx-explore    /opsx-propose                     /opsx-apply      /opsx-sync   /opsx-archive
 ```
 
-## 截图（本机 DSH Web 验证实例，0.4.0）
+## 截图（本机 DSH Web 验证实例，0.5.0）
 
 | 面板（工件/任务双进度圈 · artifact chips · 原生下一步） | 项目配置与可用 schema |
 |---|---|
@@ -44,6 +44,8 @@ DSH 的命令名只能是 `[a-z0-9_-]`，原生 `/opsx:*` 冒号语法无法注�
 | — | `/opsx-validate [name]` | 直接输出原生分级校验结果（ERROR / WARNING / INFO），不占模型 token |
 | — | `/opsx-status` | 直接输出进行中变更、artifact 状态、任务进度与已归档数量 |
 | — | `/openspec-init` | 幂等创建原生骨架（`config.yaml` + `specs/` + `changes/archive/`） |
+
+**变更名选择器（DSH Web 客户端）**：需要 change 名的五条命令（`/opsx-update`、`/opsx-apply`、`/opsx-sync`、`/opsx-archive`、`/opsx-validate`）在**存在两个及以上进行中 change** 时，裸提交该命令（或在 `/` 菜单里不带参数选中它）会先弹出「选择变更」列表，而不是直接执行。列表可打字筛选、方向键与回车选择，每行显示 change 名与原生状态摘要（规划中 / 可实施 / 已完成、任务进度、校验问题数、`skip_specs`）；选中后只把 `/opsx-<command> <change-name> ` 填入会话输入框（光标在末尾、不自动发送），补充修订要求或 `--yes` 等参数后回车才执行。只有一个进行中 change 时仍是自动选中、不弹列表；没有进行中 change 时仍是既有提示；手打参数的命令行不受影响；Esc 取消不改写草稿、不发送消息。该交互依赖 DSH 0.2.x Web 客户端的命令选择弹层（`commandUi.decorate` + `popupSelect`，与 `/model` 同款），非 Web 客户端或未提供该能力的组合下命令行为保持不变；DSH 不支持空格后的内联参数补全，所以是「回车 / 菜单选中 → 二级列表」而不是边打边补全。
 
 `sync` / `archive` 有**两条路径**：
 
@@ -190,6 +192,7 @@ node tools/sync-native-snapshot.mjs --source <path-to-OpenSpec-repo>
 - **会话作用域**：快捷条在新会话（还没发第一条消息）时并入「工作区 / 模式」行右端（`conversation.hero.options`），对话开始后由输入框下方的 `conversation.composer.dock` 接棒（二者由 hero 状态天然互斥，不会同时出现）；完全无会话时请用面板（面板走 Host 只读接口，无需会话）。`/` 菜单仍只在有会话时出现。
 - **写操作只走命令**：面板不直接写盘；sync / archive 由用户执行命令触发（默认 AI 工作流不写盘，`--yes` 才确定性写盘）。
 - **expanded 命令族**：new / continue / ff / verify / bulk-archive / onboard 只通过内置 OPSX skills（文件语义）提供，不提供对应 `/opsx-*` 命令。
+- **变更选择器边界**：仅在 DSH Web 客户端、且工作区存在 ≥2 个进行中 change 时接管五条 change 命令；不做空格后的内联补全、不提供 sync / archive 标志（`--yes` / `--dry-run` / `--skip-specs`）的第二级选择、不选择已归档 change；`/` 菜单点选这五条命令从不带参数状态变为先弹选择器（Esc 或手打命令 + 空格仍走旧路径）；选择器打开时若 Host 状态读取失败，只在弹层内报错，不执行命令、不发送消息。
 - 提案/实施由 AI 执行，需要会话已配置模型；插件本身不调用模型（AI 工作流提示词由命令提交给会话模型）。
 
 ## License

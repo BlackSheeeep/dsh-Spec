@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.5.0
+
+多进行中 change 时，五条 change 命令改为从列表选择 change 名并自动回填输入框。
+
+### Added
+
+- **变更名选择器（DSH Web 客户端）**：`/opsx-update`、`/opsx-apply`、`/opsx-sync`、`/opsx-archive`、`/opsx-validate` 在工作区存在两个及以上进行中 change 时，裸提交或从 `/` 菜单选中会先弹出可筛选的「选择变更」列表（DSH `commandUi.decorate` + `popupSelect`，与 `/model` 同款弹层）；每行显示 change 名与原生状态摘要（规划中 / 可实施 / 已完成、任务 x/y、N ERROR / N WARNING、`skip_specs`）。
+- 选中后只把 `/opsx-<command> <change-name> ` 回填到会话输入框并把光标放到末尾，不自动发送、不产生模型消息；用户补充修订要求或参数后回车才执行。
+
+### Changed
+
+- 多 change 场景下，这五条命令的「裸提交」与「`/` 菜单点选」从直接执行 / 插入命令改为先弹选择器；单个进行中 change 仍自动选中，没有进行中 change 仍走既有提示，手打参数的命令行不变。
+- `src/client-helpers.js` 新增 `CHANGE_PICKER_COMMANDS` / `changePickerAvailable` / `changePickerOptions` / `changePickerLine` 纯函数与单测；`src/client.js` 新增 zh/en 选择器文案与 `commandUi.decorate` 接线（嵌套 inject，缺少客户端服务时自动跳过，面板与快捷条不受影响）。
+- 插件版本 `0.4.1` → `0.5.0`。
+
+### Notes
+
+- 选择器只在 DSH Web 客户端生效；TUI 等非 Web 客户端与未提供 `commandUi` 的组合保持既有命令语义。
+- 已知限制：DSH 不支持空格后的内联参数补全，因此是「回车 / 菜单选中 → 二级列表」；不提供 sync / archive 标志（`--yes` / `--dry-run` / `--skip-specs`）的第二级选择，也不选择已归档 change。
+
+## 0.4.1
+
+窄窗口下快捷条排版不再换行错位。
+
+### Fixed
+
+- **窄窗口快捷条换行**：快捷条与宿主自带的 context meter 共用输入框下方同一行，窗口变窄时原来会折成两行（状态单独一行、动作按钮被顶到右边，和宿主的统计行挤在一起）。现在快捷条始终单行：变更名自动省略号截断；按窗口宽度分级隐藏次要控件——≤1300px 收起 skills 徽标、≤1200px 收起状态区徽标、≤1100px 收起「状态」按钮、≤1000px 收起「探索 / 提案」次级按钮，只保留「当前变更 + 下一步主按钮 + 面板入口」。
+- **hero 行的变更切换菜单**：新会话态位于窗口顶部、工作区行右端，变更切换下拉改为向下展开并右对齐，避免超出视口被裁掉。
+
+### Changed
+
+- `src/client.js`：`QuickBar` 的 dock 改为 `flex-wrap:nowrap` + 可收缩状态区（`min-width:0` + 省略号），新增 `dshspec-dockSkills` / `dshspec-dockStatusBtn` / `dshspec-dockGhost` 分级隐藏钩子。
+- 插件版本 `0.4.0` → `0.4.1`。
+
 ## 0.4.0
 
 工作区概览拆成「工件 / 任务」两个独立进度圈；变更详情与归档详情恢复默认收起、可展开的任务清单。
