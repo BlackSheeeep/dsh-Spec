@@ -80,6 +80,14 @@ Host 半改动需重启 DSH；client 半重新构建后刷新页面。
 |---|---|
 | ![快捷条](docs/quickbar.png) | ![归档](docs/archive.png) |
 
+## 演示视频
+
+点击缩略图播放或下载 MP4。
+
+| 多任务并行不抢会话窗口 | 一键使用与实时状态更新 | 变更自动提取摘要信息 |
+|---|---|---|
+| [![多任务并行不抢会话窗口](docs/videos/multi-session-parallel.jpg)](docs/videos/multi-session-parallel.mp4) | [![一键使用与实时状态更新](docs/videos/one-click-live-status.jpg)](docs/videos/one-click-live-status.mp4) | [![变更自动提取摘要信息](docs/videos/auto-summary.jpg)](docs/videos/auto-summary.mp4) |
+| 每个 change 绑定独立会话，切换不打断。<br>[▶ 播放](docs/videos/multi-session-parallel.mp4) | 面板按钮直接执行，状态实时刷新。<br>[▶ 播放](docs/videos/one-click-live-status.mp4) | AI 概括描述，生成一句话摘要。<br>[▶ 播放](docs/videos/auto-summary.mp4) |
 
 ## 使用
 
