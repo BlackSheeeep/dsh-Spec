@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.10.0
+
+面板 change 详情改为渐进式披露：折叠卡新增一行摘要，展开先给概览，文档按 artifact 分组且默认收起，Delta 文档只列一次并带逐文件操作计数；0 校验问题与空区块不再占位，展开状态只存在于内存。0.9.2 的变更卡片 headline 由本版本的摘要行与 L1 概览取代（`summary.headline` 仍保留在 Host 载荷中供旧客户端降级读取）。
+
+### Added
+
+- **折叠卡摘要行**：change 名下方显示一行摘要，来源优先级 `.openspec.yaml` 的 `goal` → proposal `## Why` 首段 → 「尚未生成提案」提示。摘要与 `## What Changes` 要点由 Host 从已读的 `proposal.md` 提取（行内 Markdown 会被剥离），并设上限：Why 280 字符、What Changes 4×140 字符；截断时卡片与概览都提供「查看全文 / 展开全部」入口。
+- **变更详情概览（L1）**：展开先展示 Why 摘要、What Changes 首条与总条数、影响范围与状态（工件 / 任务 / capability / 校验问题 / 下一步），以及「校验 / 同步预览」次要操作；不再先铺开文档列表。
+- **文档分组（L2）**：文档按生效 schema 的 artifact 顺序分组（提案 / 规格变更 / 设计 / 任务 / `.openspec.yaml` 元数据），每组默认收起、点开才显示文档行；规格变更按 capability 各列一次，并显示该文件 ADDED / MODIFIED / REMOVED / RENAMED 计数。
+- **Host 载荷（additive）**：`ChangeState.summary`、`delta.files[]` 逐文件操作计数、artifact `description` / `generates`；不新增文件读取（proposal / tasks / delta 文本本就在状态计算中读取，摘要不需要额外 IO）。
+- **测试**：`extractProposalDigest` / `withArtifactMetadata`、摘要选择、文档分组、逐文件计数与旧载荷降级的单测；README 截图、`docs/native-module-contract.md` 载荷说明同步更新。
+
+### Changed
+
+- change 详情不再一次性渲染 `.openspec.yaml` 元数据、任务清单、全部文档、重复的 Delta 文档列表、校验问题与下一步建议：元数据降为末位默认收起分组，0 条校验问题不渲染问题区，「下一步建议」并入概览状态行，Delta 文档从「文档」区去重（只在规格变更分组出现一次）。
+- 卡片/分组的展开状态仅存在于内存：文件变化刷新后保持，重新挂载后恢复默认收起，不写入 `openspec/` 或插件持久化存储。
+- 0.9.0–0.9.2 的会话绑定 / 实时状态 / 等待验收 / 人工验收勾选保留：卡片头显示运行状态、绑定会话与「实施 / 归档」直接执行按钮，任务分组里的复选框支持人工验收勾选。
+- 插件版本 `0.9.3` → `0.10.0`。
+
+### Notes
+
+- Host 半改动需重启 DSH 进程；client 半改动构建后刷新页面生效。
+- 归档详情、工作区概览页与文档阅读器不在本次范围内，保持原样。
+
+## 0.9.3
+
+修复提案生成被中止（用户 Stop / 模型失败）后无法继续的问题：`/opsx-propose` 改为按原生规划状态分支——同名 change 可原地续做，规划已完成时直出下一步；面板/快捷条的「继续规划」也改为真正可执行的 propose 续做。
+
+### Fixed
+
+- **中断的提案无法续做**：`/opsx-propose <name>` 对已存在的 change 不再直接拒绝。规划未完成时读取原生 artifact 状态、保留 `.openspec.yaml`（不重写 `schema` / `created` / `skip_specs` / `goal`）并提交续做提示词，只创建缺失/可规划工件；规划已完成时直出下一步指引（`/opsx-update` 修订、`/opsx-apply` 实施、`/opsx-archive` 归档），不产生模型消息。此前 propose 拒绝、update 无法创建、apply 无工件可做，三者互相指回，中断后的 change 只能改名重来。
+- **目录缺 metadata 的残留 change**：change 目录存在但 `.openspec.yaml` 缺失时补写一次（schema 取项目生效值、`created` 取本地日期）后按续做处理；metadata 无法解析时拒绝且不覆盖。
+- **面板/快捷条「继续规划」指向不可执行命令**：规划未完成的下一步动作从 `/opsx-update` 改为 `/opsx-propose <name>` 续做（`nextActionResume`），点击把带 change 名的命令填入输入框（不自动发送），新会话 hero 页回车后产生可见模型回合。
+
+### Changed
+
+- **续做提示词**：`buildProposePrompt` 新增 `resume` 模式——续做声明（已有工件只读、只补缺失工件）、glob 工件核对（`specs/**` 按 proposal capability 核对缺失 delta 文件并只补缺失文件）、已有工件校验问题注入（上限 20 行，要求先修复再创建依赖工件）；停止边界不变。
+- 文档：README 命令表 / 快捷条 / 已知边界记录 propose 三态行为与 hero 直出边界；`docs/native-module-contract.md` 更新 propose 提示词与命令契约。
+- 测试：`tests/commands.test.mjs` 新增续做 / 已完成直出 / metadata 场景并改写旧「拒绝已存在目录」用例；`tests/prompts.test.mjs` 新增续做、glob 核对、校验问题用例；`tests/client-helpers.test.mjs` 的下一步断言改为 propose 续做。
+- 插件版本 `0.9.2` → `0.9.3`。
+
+### Notes
+
+- Host 半改动需要 `node tools/build.mjs` 重建 `lib/` 并重启 DSH 进程后生效；client 半改动构建后刷新页面即可。
+- 已知边界：规划已完成时 propose 的直出结果在 hero 页不可见（属既有直出命令限制）；`specs/**` 完整性由提示词核对而非引擎强校验；中断产生的孤立 change 不会被自动清理。
+
 ## 0.9.2
 
 总面板新增「等待验收」聚合任务清单，并压缩变更卡片上的摘要文案。

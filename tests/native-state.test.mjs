@@ -18,9 +18,11 @@ import { fileURLToPath } from 'node:url'
 import {
   computeChangeState,
   computeWorkspaceState,
+  extractProposalDigest,
   limitTaskItems,
   listMainSpecs,
   validateChangeByName,
+  withArtifactMetadata,
 } from '../src/native/state.js'
 import { parseTasks } from '../src/native/tasks.js'
 
@@ -61,6 +63,94 @@ test('listMainSpecs returns [] when there are no capability specs', async () => 
   assert.deepEqual(await listMainSpecs(repoRoot), [])
 })
 
+test('extractProposalDigest: Why first paragraph + top-level What Changes bullets', () => {
+  const proposal = [
+    '# Proposal',
+    '',
+    '## Why',
+    '',
+    '第一段原因。',
+    '',
+    '第二段不该进入摘要。',
+    '',
+    '## What Changes',
+    '',
+    '- 第一条改动',
+    '* 第二条改动',
+    '  - 缩进 bullet 不算顶层',
+    '+ 第三条改动',
+    '- 第四条改动',
+    '- 第五条改动',
+    '',
+    '## Impact',
+    '',
+    '- 影响项',
+  ].join('\n')
+  const digest = extractProposalDigest(proposal)
+  assert.equal(digest.why, '第一段原因。')
+  assert.equal(digest.whyTruncated, false)
+  assert.deepEqual(digest.changes, ['第一条改动', '第二条改动', '第三条改动', '第四条改动'])
+  assert.equal(digest.changesHidden, 1)
+  assert.equal(digest.changesTruncated, false)
+})
+
+test('extractProposalDigest: missing sections and long text degrade safely', () => {
+  const empty = {
+    why: null,
+    whyTruncated: false,
+    changes: [],
+    changesHidden: 0,
+    changesTruncated: false,
+  }
+  assert.deepEqual(extractProposalDigest(null), empty)
+  assert.deepEqual(extractProposalDigest(''), empty)
+  assert.deepEqual(extractProposalDigest('## Requirements\n\n- 不是 Why\n'), empty)
+
+  const longWhy = '原'.repeat(400)
+  const longBullet = '改'.repeat(200)
+  const digest = extractProposalDigest(`## Why\n\n${longWhy}\n\n## What Changes\n\n- ${longBullet}\n`)
+  assert.equal(digest.why.length, 280)
+  assert.equal(digest.whyTruncated, true)
+  assert.equal(digest.changes[0].length, 140)
+  assert.equal(digest.changesTruncated, true)
+})
+
+test('extractProposalDigest: inline markdown is stripped from the digest', () => {
+  const proposal = [
+    '# Proposal',
+    '',
+    '## Why',
+    '',
+    '这是 **重点**，参考 `config.yaml` 与 [文档](https://example.com)。',
+    '',
+    '## What Changes',
+    '',
+    '- **第一条**：修改 `src/state.js`',
+    '- 第二条 _强调_',
+  ].join('\n')
+  const digest = extractProposalDigest(proposal)
+  assert.equal(digest.why, '这是 重点，参考 config.yaml 与 文档。')
+  assert.deepEqual(digest.changes, ['第一条：修改 src/state.js', '第二条 强调'])
+})
+
+test('withArtifactMetadata: attaches schema description and generates (custom schema)', () => {
+  const rows = [
+    { id: 'research', status: 'done' },
+    { id: 'tasks', status: 'ready' },
+  ]
+  const schema = {
+    artifacts: [
+      { id: 'research', description: 'Research notes for the change', generates: 'research.md' },
+      { id: 'tasks', generates: ['tasks.md'] },
+    ],
+  }
+  assert.deepEqual(withArtifactMetadata(rows, schema), [
+    { id: 'research', status: 'done', description: 'Research notes for the change', generates: ['research.md'] },
+    { id: 'tasks', status: 'ready', description: '', generates: ['tasks.md'] },
+  ])
+  assert.deepEqual(withArtifactMetadata(null, null), [])
+})
+
 test('real workspace: workspace state derives native change state', { skip: !hasWorkspace }, async () => {
   const state = await computeWorkspaceState(workspaceRoot)
   assert.equal(state.status, 'ready')
@@ -90,6 +180,34 @@ test('real workspace: workspace state derives native change state', { skip: !has
   assert.deepEqual(change.nextSteps, change.listStatus === 'complete' ? ['archive'] : ['run apply on tasks.md'])
   assert.ok(change.delta.ADDED >= 30)
   assert.equal(change.delta.files.length, 6)
+  const firstDeltaFile = change.delta.files[0]
+  assert.equal(typeof firstDeltaFile, 'object')
+  assert.match(firstDeltaFile.path, /^specs\/[a-z0-9-]+\/spec\.md$/)
+  assert.equal(firstDeltaFile.label, 'native-opsx-model')
+  const perFile = change.delta.files.reduce(
+    (acc, file) => {
+      for (const operation of ['ADDED', 'MODIFIED', 'REMOVED', 'RENAMED']) acc[operation] += file[operation]
+      return acc
+    },
+    { ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0 },
+  )
+  assert.deepEqual(perFile, {
+    ADDED: change.delta.ADDED,
+    MODIFIED: change.delta.MODIFIED,
+    REMOVED: change.delta.REMOVED,
+    RENAMED: change.delta.RENAMED,
+  })
+  assert.equal(typeof change.summary.goal, 'string')
+  assert.ok(change.summary.goal.length > 0)
+  assert.ok(change.summary.why.length > 0)
+  assert.ok(change.summary.why.length <= 280)
+  assert.equal(typeof change.summary.whyTruncated, 'boolean')
+  assert.ok(change.summary.changes.length > 0)
+  const proposalArtifact = change.artifacts.find((artifact) => artifact.id === 'proposal')
+  assert.equal(proposalArtifact.description, 'Initial proposal document outlining the change')
+  assert.deepEqual(proposalArtifact.generates, ['proposal.md'])
+  const specsArtifact = change.artifacts.find((artifact) => artifact.id === 'specs')
+  assert.deepEqual(specsArtifact.generates, ['specs/**/*.md'])
   assert.equal(change.metadata.found, true)
   assert.match(change.metadata.created, /^\d{4}-\d{2}-\d{2}$/)
   assert.equal(change.metadata.schema, 'spec-driven')

@@ -267,6 +267,100 @@ test('propose reports when the plan is already complete', async () => {
   assert.ok(!prompt.includes('Create the proposal document'))
 })
 
+test('a fresh propose does not include resume blocks', async () => {
+  const prompt = await buildProposePrompt({
+    cwd: CWD,
+    changeName: 'add-dark-mode',
+    schema: bundledSpecDriven(),
+    config: config(),
+    change: changeState(),
+  })
+  assert.ok(!prompt.includes('### Resume contract'))
+  assert.ok(!prompt.includes('### Partly written artifacts to verify'))
+  assert.ok(!prompt.includes('### Existing artifact issues'))
+  assert.ok(!prompt.includes('Mode: resume'))
+})
+
+test('propose resume offers only the missing artifacts and keeps satisfied ones read-only', async () => {
+  const prompt = await buildProposePrompt({
+    cwd: CWD,
+    changeName: 'add-dark-mode',
+    schema: bundledSpecDriven(),
+    config: config(),
+    resume: true,
+    change: changeState([
+      artifactRow('proposal', 'done'),
+      artifactRow('specs', 'ready'),
+      artifactRow('design', 'ready'),
+      artifactRow('tasks', 'blocked', { missingDeps: ['specs', 'design'] }),
+    ]),
+  })
+
+  assert.match(prompt, /### Resume contract/)
+  assert.match(prompt, /interrupted/)
+  assert.match(prompt, /do NOT rewrite or delete/)
+  assert.match(prompt, /Mode: resume/)
+  assert.match(prompt, /### Already satisfied/)
+  assert.match(prompt, /### 1\. specs — ready now/)
+  assert.match(prompt, /### 2\. design — ready now/)
+  assert.match(prompt, /### 3\. tasks — write after: specs, design/)
+  assert.ok(!prompt.includes('Create the proposal document'), 'a satisfied artifact gets no creation instruction')
+  assert.match(prompt, /Create specification files/, 'the missing artifact gets its native instruction')
+
+  // Schema order holds for the resume plan as well.
+  const specsIndex = prompt.indexOf('### 1. specs')
+  const designIndex = prompt.indexOf('### 2. design')
+  const tasksIndex = prompt.indexOf('### 3. tasks')
+  assert.ok(specsIndex >= 0 && designIndex > specsIndex && tasksIndex > designIndex)
+})
+
+test('propose resume verifies a partly written glob artifact', async () => {
+  const prompt = await buildProposePrompt({
+    cwd: CWD,
+    changeName: 'add-dark-mode',
+    schema: bundledSpecDriven(),
+    config: config(),
+    resume: true,
+    change: changeState([
+      artifactRow('proposal', 'done'),
+      artifactRow('specs', 'done', { outputPath: 'specs/**/*.md' }),
+      artifactRow('design', 'ready'),
+      artifactRow('tasks', 'blocked', { missingDeps: ['design'] }),
+    ]),
+  })
+
+  assert.match(prompt, /### Partly written artifacts to verify/)
+  assert.match(prompt, /specs\/\*\*\/\*\.md/)
+  assert.match(prompt, /create only the missing files/)
+  assert.match(prompt, /Do not treat the first existing file as completion/)
+  assert.match(prompt, /enumerates deliverables/)
+})
+
+test('propose resume surfaces existing artifact issues and caps the list', async () => {
+  const issues = []
+  for (let index = 1; index <= 22; index += 1) {
+    issues.push({ level: 'ERROR', path: 'proposal.md', line: index, message: `issue ${index}` })
+  }
+  const prompt = await buildProposePrompt({
+    cwd: CWD,
+    changeName: 'add-dark-mode',
+    schema: bundledSpecDriven(),
+    config: config(),
+    resume: true,
+    change: changeState(
+      [artifactRow('proposal', 'done'), artifactRow('specs', 'ready')],
+      { validation: { errors: 22, warnings: 0, infos: 0, issues } },
+    ),
+  })
+
+  assert.match(prompt, /### Existing artifact issues/)
+  assert.match(prompt, /\[ERROR\] proposal\.md:1 — issue 1/)
+  assert.match(prompt, /…还有 2 条问题/)
+  assert.ok(!prompt.includes('issue 22'), 'rows beyond the cap are not rendered')
+  assert.match(prompt, /Missing-artifact findings are covered by the creation plan/)
+})
+
+
 test('propose filters rules to the artifacts being written', async () => {
   const prompt = await buildProposePrompt({
     cwd: CWD,

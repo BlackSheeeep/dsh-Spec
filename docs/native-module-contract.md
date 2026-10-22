@@ -202,6 +202,10 @@ export async function validateChangeByName(cwd, changeName)
 // -> { name, validation, metadata, schemaName, deltas, tasks }
 export async function listMainSpecs(cwd)  // -> [SpecState]
 export function limitTaskItems(items)     // -> <= 200 normalized { id, text, done, depth, line, manual } rows
+export function extractProposalDigest(proposalText)
+// -> { why, whyTruncated, changes, changesHidden, changesTruncated } bounded panel digest
+export function withArtifactMetadata(artifacts, schema)
+// -> derived artifact rows + schema `description` / `generates`
 ```
 `src/native/summary.js` (pure, no I/O):
 ```js
@@ -210,7 +214,7 @@ export function summarizeProposal(text, { goal?, maxDescriptionChars?, maxHighli
 ```
 `headline` is the short panel phrase (metadata `goal` → first `## What Changes` bullet → first Why
 sentence, capped at 32 chars; e.g. `新增幼狮卡牌`). `description` is the compact `## Why` paragraph
-shown only in the expanded detail; `highlights` are up to four `## What Changes` bullets. Inline
+kept in the payload for compatibility; the 0.10.0 panel renders the digest fields instead. `highlights` are up to four `## What Changes` bullets. Inline
 markdown is stripped. Missing sections fall back to metadata, then to an empty summary — never an
 error.
 `computeWorkspaceState`: read config, project schemas, bundled schemas, list `openspec/changes/*`
@@ -244,7 +248,7 @@ export function slugify(raw)                 // kebab-case or ''
 export function firstToken(raw)
 export function restAfterFirstToken(raw)
 export async function buildExplorePrompt({ cwd, config, topic })       // -> string
-export async function buildProposePrompt({ cwd, changeName, intent, schema, config, change })
+export async function buildProposePrompt({ cwd, changeName, intent, schema, config, change, resume })
 export async function buildAutoProposePrompt({ cwd, description, schema, config, created, existingNames })
 export async function buildApplyPrompt({ cwd, changeName, schema, config, change, artifactPrompt })
 export async function buildUpdatePrompt({ cwd, changeName, schema, config, change })
@@ -259,9 +263,16 @@ description, choose a kebab-case name (avoiding `existingNames`), write
 `goal` (the panel headline), then follow the normal native propose plan with every path using that
 chosen name.
 `buildProposePrompt` must name precisely the artifacts in the effective schema that are `ready`
-(in schema order) and stop when the planning artifacts are done. `buildApplyPrompt` includes
-`operations.apply.guidance` when configured; `buildUpdatePrompt` includes the update boundary and
-lists existing planning artifacts.
+(in schema order) and stop when the planning artifacts are done. With `resume: true` (an existing
+change whose plan is incomplete) it additionally renders, before the artifact sections:
+(1) a resume contract — already satisfied artifacts are authoritative, read-only and never
+re-created; only missing/plannable artifacts are offered; (2) a glob-output verification step —
+for satisfied artifacts whose `generates` is a glob (e.g. `specs/**/*.md`), verify the expected
+files from the proposal and create only the missing ones; (3) an existing-artifact issues block
+built from `change.validation.issues` (ERROR/WARNING, capped at 20 rows) that asks for a repair
+before dependent artifacts are created. The stop boundary is unchanged: it still ends at the plan.
+`buildApplyPrompt` includes `operations.apply.guidance` when configured; `buildUpdatePrompt`
+includes the update boundary and lists existing planning artifacts.
 
 Snapshot (B): copy from the extracted upstream repo
 `C:\Users\yaoyefeng\AppData\Local\Temp\dsh-ZdfUZx\openspec-src\schemas\spec-driven`
@@ -290,13 +301,17 @@ without network.
 ChangeState = {
   name, schemaName, schemaSource: 'project'|'builtin',
   metadata: { found, schema, created, goal, skip_specs, retire_capabilities },
-  summary: { headline, description, highlights: [string], source: 'proposal'|'metadata'|'none' },
-  artifacts: [{ id, outputPath, status: 'done'|'skipped'|'ready'|'blocked', missingDeps?: [] }],
+  summary: { goal: string|null, why: string|null, whyTruncated: boolean,
+             changes: [string], changesHidden: number, changesTruncated: boolean,
+             headline: string, description: string, highlights: [string], source: 'proposal'|'metadata'|'none' },
+  artifacts: [{ id, outputPath, status: 'done'|'skipped'|'ready'|'blocked', missingDeps?: [],
+                description: string, generates: [string] }],
   applyRequires: [], tracks: string|null, isPlanningComplete: boolean, nextSteps: [],
   listStatus: 'no-tasks'|'in-progress'|'complete',
   tasks: { total, done, items: [{ id: string|null, text, done: boolean, depth: 0..3, line: number|null, manual: boolean }] } | null,
   docs: [{ path, label, artifactId, kind: 'artifact'|'delta' }],
-  delta: { ADDED: n, MODIFIED: n, REMOVED: n, RENAMED: n, files: [paths] },
+  delta: { ADDED: n, MODIFIED: n, REMOVED: n, RENAMED: n,
+           files: [{ path, label, ADDED, MODIFIED, REMOVED, RENAMED }] },
   validation: { errors, warnings, infos, issues: [{ level, path, line?, message }] },
   files: [names]
 }
@@ -304,7 +319,13 @@ SpecState = { name, path, purpose, requirementCount, scenarioCount, validation: 
 ```
 `listStatus`: `no-tasks` when the change has no tasks artifact/file, `complete` when every task is
 checked, else `in-progress`. `docs`: one row per artifact that exists (path from `generates`; glob
-artifacts expand to matched files) plus delta spec paths.
+artifacts expand to matched files) plus delta spec paths. `summary` is a bounded render-only digest
+computed from the already-read `proposal.md` (no extra IO): `why` is the first `## Why` paragraph
+trimmed to 280 chars, `changes` the first 4 top-level `## What Changes` bullets trimmed to 140 chars
+each; truncation flags let the panel offer a full-text entry instead of silently cutting text. The same payload keeps the `headline` / `description` / `highlights` / `source` fields from `src/native/summary.js` for compatibility; the 0.10.0 panel renders the digest fields and the progressive detail.
+`artifacts[].description` / `generates` come from the effective schema (empty / `[]` when absent).
+`delta.files` carries one row per delta spec with its own operation counts (the four totals stay
+cross-file aggregates).
 
 `tasks.items` carries at most 200 tracked-task rows per change (`state.js` `TASK_ITEM_LIMIT`,
 normalized by the exported `limitTaskItems`); `total` / `done` always count the whole `tasks.md`, so
@@ -355,7 +376,10 @@ Nine commands: `openspec-init`, `opsx-explore`, `opsx-propose`, `opsx-apply`, `o
 `agent.followup(userMessage(text))` (same shape as today). Direct commands return
 `{kind:'success'|'error', text}` without a model message. `opsx-sync` / `opsx-archive` accept
 `--yes`; without it return the preview and write nothing. All handlers catch errors into
-`{kind:'error', text}`.
+`{kind:'error', text}`. `opsx-propose` is state-derived: a new name writes `.openspec.yaml` and
+submits the full plan prompt; an existing change with an incomplete plan keeps its metadata and
+submits the resume prompt; an existing change with a complete plan returns next-step guidance
+directly with no model message.
 
 ## 6. Client contract (D)
 
@@ -372,25 +396,28 @@ Nine commands: `openspec-init`, `opsx-explore`, `opsx-propose`, `opsx-apply`, `o
   `src/client-helpers.js` is ESM (exported pure functions, no imports) and is inlined by
   `tools/build.mjs` into the `/* @@CLIENT_HELPERS@@ */` marker inside the client factory
   (build strips `export ` keywords). Tests import `client-helpers.js` directly.
-- UI requirements: change cards with schema name, a one-line `summary.headline` hint when
-  collapsed (full description/highlights in the expanded detail), live status
+- UI requirements: change cards with schema name, live status
   (planning/implementing/ready/complete/running/waiting), per-artifact chips
-  (done/skipped/ready/blocked), expandable `missingDeps`, `skip_specs`, task progress, bound-session
-  chip and native next step; aggregate “waiting for acceptance” section that groups unchecked tasks
-  into manual (`[人工验收]`) and other, with direct ticks and tasks.md links; change detail from schema
-  `generates` docs + `.openspec.yaml` metadata + delta operation counts + validation issues
-  (path/line) + task checkboxes; project config + schema view (project vs builtin source); capability
-  specs view (Purpose, requirement/scenario counts, nested grouping); archive view grouped by local
-  date with on-demand artifacts/tasks/metadata; pagination/“+N more” instead of silent truncation,
-  document reader truncation notice; quick bar with native next-step actions, skip_specs/blocked
-  signal and native-skills indicator. Actions execute immediately in the bound session;
-  propose/explore collect their description/topic in a small modal; propose sends
-  `/opsx-propose --auto` so the model summarizes and names the change, then the client binds the new
-  change. Keep DSH design language, `--dsw-*` tokens, slots `main`, `sidebar.panellist`,
-  `conversation.composer.dock`, `conversation.hero.options`.
+  (done/skipped/ready/blocked), expandable `missingDeps`, `skip_specs`, task progress,
+  bound-session chip, native next step and one-line summary (`goal` → `## Why` digest →
+  “no proposal yet”); change detail is progressive — L1 overview (`Why` / `What changes` digest +
+  impact/status line), L2 collapsible document groups in schema artifact order (delta rows appear
+  once with per-file operation counts, metadata group last), only non-empty validation blocks
+  rendered, expansion state kept in memory only; aggregate “waiting for acceptance” section that
+  groups unchecked tasks into manual (`[人工验收]`) and other, with direct ticks and tasks.md links;
+  project config + schema view (project vs builtin source); capability specs view (Purpose,
+  requirement/scenario counts, nested grouping); archive view grouped by local date with on-demand
+  artifacts/tasks/metadata; pagination/“+N more” instead of silent truncation, document reader
+  truncation notice, bound-session live status and manual task toggles; quick bar with native
+  next-step actions, skip_specs/blocked signal and native-skills indicator. Actions execute
+  immediately in the bound session; propose/explore collect their description/topic in a small
+  modal; propose sends `/opsx-propose --auto` so the model summarizes and names the change, then
+  the client binds the new change. Keep DSH design language, `--dsw-*` tokens, slots `main`,
+  `sidebar.panellist`, `conversation.composer.dock`, `conversation.hero.options`.
 - `client-helpers.js` owns pure formatting helpers (artifact labels/order, status tone, delta
-  summary text, local-date grouping, pagination slice, validation summary, pending-task aggregation)
-  with unit tests.
+  summary text, per-file delta operation text, change summary selection / digest totals, document
+  grouping, overview status facts, pending-task aggregation, local-date grouping, pagination
+  slice, validation summary) with unit tests.
 
 ## 7. Merge/archive (C)
 

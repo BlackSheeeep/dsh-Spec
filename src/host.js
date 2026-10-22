@@ -253,7 +253,7 @@ async function methodInstructions(ctx, payload) {
   }
   const schema = focus.resolved.schema
   if (kind === 'propose') {
-    const text = await buildProposePrompt({ cwd, changeName, intent: topic, schema, config: projectConfig, change })
+    const text = await buildProposePrompt({ cwd, changeName, intent: topic, schema, config: projectConfig, change, resume: change !== null })
     return { text, kind, schemaName: focus.schemaName }
   }
   if (kind === 'apply') {

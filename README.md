@@ -2,7 +2,7 @@
 
 在 DeepSeek Harness 中管理 OpenSpec 项目：以 `openspec/` 文件为唯一状态源，提供变更面板、会话绑定与 `/opsx-*` 命令，不依赖 openspec CLI。
 
-当前版本 **0.9.2**。
+当前版本 **0.10.0**：面板 change 卡片折叠态显示一行摘要，详情改为渐进式披露——展开先给概览（Why / What Changes / 影响状态），文档按 artifact 分组且默认收起，Delta 文档只列一次并带逐文件操作计数，0 校验问题与空区块不占位，展开状态只存在于内存；同时保留 0.9.x 的会话绑定、实时状态、等待验收、AI 自动命名与人工验收勾选。
 
 ## 为什么是 SDD
 
@@ -60,6 +60,27 @@ node --test --test-isolation=none "tests/*.test.mjs"
 
 Host 半改动需重启 DSH；client 半重新构建后刷新页面。
 
+## 截图（0.10.0）
+
+本机 DSH Web 验证实例，展示渐进式变更详情、文档分组与双进度圈：
+
+| 面板（工件/任务双进度圈 · 摘要行 · 原生下一步） | 变更详情：概览优先（Why / 会改什么 / 影响状态） |
+|---|---|
+| ![面板](docs/panel.png) | ![变更详情概览](docs/panel-detail.png) |
+
+| 变更详情：文档分组（Delta 只列一次） | 变更详情：任务清单按需展开 |
+|---|---|
+| ![文档分组](docs/panel-detail-groups.png) | ![任务清单](docs/panel-detail-tasks.png) |
+
+| 深色模式 | 900px 窄屏 |
+|---|---|
+| ![深色模式](docs/panel-dark.png) | ![900px](docs/panel-900.png) |
+
+| 会话快捷条（原生下一步 / 任务进度） | 归档视图（本地日期分组） |
+|---|---|
+| ![快捷条](docs/quickbar.png) | ![归档](docs/archive.png) |
+
+
 ## 使用
 
 ### 总览与等待验收
@@ -72,9 +93,9 @@ Host 半改动需重启 DSH；client 半重新构建后刷新页面。
 
 ### 变更卡片
 
-卡片显示 change 名、实时状态、绑定会话、工件 chips、任务进度与下一步操作。折叠时仅显示**一行摘要**（如「新增幼狮卡牌」）；展开后显示完整 `## Why`、`## What Changes` 要点、文档、任务清单、delta 统计与校验问题。
+卡片显示 change 名、实时状态、绑定会话、工件 chips、任务进度与下一步操作。折叠时显示**一行摘要**（`.openspec.yaml` 的 `goal` → proposal `## Why` 首段 → 「尚未生成提案」提示），截断时提供「查看全文」入口。
 
-摘要优先取 `.openspec.yaml` 的 `goal`，其次取 `## What Changes` 首条要点，再次取 `## Why` 首句；均为短句，不做整段截取。
+展开后为渐进式详情：先给概览（Why 摘要、What Changes 首条与总条数、影响范围与状态、校验 / 同步预览入口）；文档按生效 schema 的 artifact 分组且默认收起，规格变更按 capability 各列一次并显示该文件 ADDED / MODIFIED / REMOVED / RENAMED 计数，Delta 文档只出现一次；0 条校验问题不渲染问题区，元数据降为末位折叠分组，任务清单在「任务」分组内可展开，并支持 `[人工验收]` 任务的手动勾选。展开状态只是内存视图态，不写入 `openspec/` 或插件存储。
 
 ### 提案与探索
 
@@ -160,6 +181,7 @@ src/native-snapshot/   固定版本 schema、模板与 12 个 OPSX SKILL.md 快�
 src/client.js          浏览器半：面板、快捷条、绑定、直接执行、状态订阅、通知、文档阅读器
 src/client-helpers.js  纯展示辅助：排序、摘要、分页、任务清单、等待验收聚合
 tools/build.mjs        构建（Host 拷贝 + client 内联，无打包器）
+tools/sync-native-snapshot.mjs  开发期刷新内置 schema/模板/skills 快照与版本标记
 tests/                 node:test 单元与集成测试
 ```
 
@@ -176,6 +198,10 @@ tests/                 node:test 单元与集成测试
 - **任务勾选**：`task-toggle` 只改写 `tasks.md` 的目标行；行号失效或非任务行会被拒绝。
 - **模型依赖**：提案/实施由 AI 执行，需要会话已配置模型；插件本身不调用模型。
 - **选择器边界**：仅在 Web 客户端、≥2 个进行中 change 时接管 change 命令；不做内联补全与标志二级选择。
+- **新会话里的命令结果可见性**：hero 页没有会话轨迹，只有会产生模型回合的命令（探索 / 提案 / 实施 / 更新 / 同步 / 归档的默认 AI 路径）能在提交后切到对话并显示结果；返回直接命令结果的命令（`/opsx-status`、`/opsx-validate`、`--yes` 确定性归档、规划已完成的 `/opsx-propose` 直出等）需要已有会话轨迹才能看到输出。归档按钮因此固定走 AI 路径。
+- **propose 续做边界**：同名 `/opsx-propose` 对已存在 change 按原生状态分支——规划未完成时原地续做（不重写 `.openspec.yaml`，只创建缺失工件；已有工件只读），规划已完成时直出下一步指引、不产生模型回合。`specs/**` 完整性由提示词按 capability 核对，不是引擎级强校验；中断造成的孤立 change 不会被自动删除或回滚。
+- **写操作只走命令**：面板不直接写盘；sync / archive 由用户执行命令触发（默认 AI 工作流不写盘，`--yes` 才确定性写盘）。
+- **expanded 命令族**：new / continue / ff / verify / bulk-archive / onboard 只通过内置 OPSX skills（文件语义）提供，不提供对应 `/opsx-*` 命令。
 
 ## License
 

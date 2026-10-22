@@ -166,6 +166,18 @@ function createHarness(overrides = {}, options = {}) {
     },
     metadata: {
       formatLocalDate: () => '2026-10-20',
+      readChangeMetadata: async () => ({
+        found: true,
+        metadata: {
+          schema: 'spec-driven',
+          created: '2026-10-20',
+          goal: '',
+          skip_specs: false,
+          retire_capabilities: false,
+        },
+        warnings: [],
+        error: null,
+      }),
       readProjectConfig: async () => ({
         found: true,
         file: 'config.yaml',
@@ -496,15 +508,132 @@ test('opsx-propose reports the idempotent initialization it performed', async ()
   assert.equal(h.calls.writes.length, 1)
 })
 
-test('opsx-propose refuses an existing change directory without overwriting anything', async () => {
+test('opsx-propose resumes an incomplete existing change without rewriting metadata', async () => {
   const h = createHarness({
     fs: { pathExists: async (cwd, rel) => rel === 'openspec/changes/add-x' },
   })
+  const result = await h.run('opsx-propose', 'add-x 补充设计')
+
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /已存在，规划未完成/)
+  assert.match(result.text, /续做/)
+  assert.match(result.text, /已有工件：proposal、specs、tasks/)
+  assert.match(result.text, /待补齐：design/)
+  assert.equal(h.calls.writes.length, 0, 'an existing .openspec.yaml is never rewritten')
+  assert.equal(h.calls.prompt.propose.resume, true)
+  assert.equal(h.calls.prompt.propose.intent, '补充设计')
+
+  // The resume prompt is submitted as an ordinary user message and titles the phase.
+  assert.equal(h.agent.messages.length, 1)
+  assert.deepEqual(h.agent.messages[0].content, [{ type: 'text', text: 'PROPOSE_PROMPT' }])
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[提案] add-x' }])
+})
+
+test('opsx-propose resumes a change that only has native metadata', async () => {
+  const h = createHarness({
+    fs: { pathExists: async () => true },
+    state: {
+      computeChangeState: async () =>
+        change({
+          isPlanningComplete: false,
+          artifacts: [
+            { id: 'proposal', outputPath: 'proposal.md', status: 'ready' },
+            { id: 'specs', outputPath: 'specs', status: 'blocked', missingDeps: ['proposal'] },
+            { id: 'design', outputPath: 'design.md', status: 'blocked', missingDeps: ['proposal'] },
+            { id: 'tasks', outputPath: 'tasks.md', status: 'blocked', missingDeps: ['specs', 'design'] },
+          ],
+          nextSteps: ['create proposal (proposal.md)'],
+        }),
+    },
+  })
+  const result = await h.run('opsx-propose', 'add-x 测试')
+
+  assert.equal(result.kind, 'success')
+  assert.equal(h.calls.prompt.propose.resume, true)
+  assert.match(result.text, /已有工件：无/)
+  assert.match(result.text, /待补齐：proposal（可创建）/)
+  assert.equal(h.agent.messages.length, 1)
+})
+
+test('opsx-propose returns direct next-step guidance for a complete plan', async () => {
+  const h = createHarness({
+    fs: { pathExists: async () => true },
+    state: {
+      computeChangeState: async () =>
+        change({ isPlanningComplete: true, listStatus: 'in-progress', tasks: { total: 3, done: 1 } }),
+    },
+  })
   const result = await h.run('opsx-propose', 'add-x 主题')
-  assert.equal(result.kind, 'error')
-  assert.match(result.text, /已存在/)
+
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /规划工件已全部完成/)
   assert.match(result.text, /\/opsx-apply add-x/)
   assert.match(result.text, /\/opsx-update add-x/)
+  assert.equal(h.agent.messages.length, 0, 'a complete plan submits no model message')
+  assert.deepEqual(h.calls.titles, [])
+  assert.equal(h.calls.writes.length, 0)
+})
+
+test('opsx-propose reports validation errors for a complete plan', async () => {
+  const h = createHarness({
+    fs: { pathExists: async () => true },
+    state: {
+      computeChangeState: async () =>
+        change({
+          isPlanningComplete: true,
+          listStatus: 'no-tasks',
+          validation: {
+            errors: 1,
+            warnings: 0,
+            infos: 0,
+            issues: [{ level: 'ERROR', path: 'specs/cap/spec.md', message: 'missing scenario' }],
+          },
+        }),
+    },
+  })
+  const result = await h.run('opsx-propose', 'add-x')
+
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /1 个 ERROR/)
+  assert.match(result.text, /\/opsx-update add-x/)
+  assert.equal(h.agent.messages.length, 0)
+})
+
+test('opsx-propose completes a missing .openspec.yaml once and resumes', async () => {
+  const h = createHarness({
+    fs: { pathExists: async () => true },
+    metadata: {
+      readChangeMetadata: async () => ({ found: false, metadata: {}, warnings: [], error: null }),
+    },
+  })
+  const result = await h.run('opsx-propose', 'add-x')
+
+  assert.equal(result.kind, 'success')
+  assert.equal(h.calls.writes.length, 1)
+  assert.equal(h.calls.writes[0][0], 'openspec/changes/add-x/.openspec.yaml')
+  assert.match(h.calls.writes[0][1], /schema: spec-driven/)
+  assert.match(result.text, /续做/)
+  assert.equal(h.agent.messages.length, 1)
+})
+
+test('opsx-propose refuses invalid change metadata without overwriting it', async () => {
+  const h = createHarness({
+    fs: { pathExists: async () => true },
+    metadata: {
+      readChangeMetadata: async () => ({
+        found: true,
+        metadata: {},
+        warnings: [],
+        error: { message: 'invalid YAML: bad indentation', line: 3 },
+      }),
+    },
+  })
+  const result = await h.run('opsx-propose', 'add-x')
+
+  assert.equal(result.kind, 'error')
+  assert.match(result.text, /元数据/)
+  assert.match(result.text, /无法解析/)
+  assert.match(result.text, /第 3 行/)
   assert.equal(h.calls.writes.length, 0)
   assert.equal(h.agent.messages.length, 0)
 })
@@ -1240,10 +1369,16 @@ test('failed commands never change the session title', async () => {
   assert.equal(applyRefused.kind, 'error')
   assert.deepEqual(noChange.calls.titles, [])
 
-  const existing = createHarness({ fs: { pathExists: async () => true } })
-  const proposeRefused = await existing.run('opsx-propose', 'add-y 说明')
+  // propose now resumes; use a schema failure so the command still returns an error.
+  const noSchema = createHarness({
+    schema: {
+      resolveSchema: () => ({ schema: null, source: null, issues: [] }),
+      loadBundledSchemas: () => new Map(),
+    },
+  })
+  const proposeRefused = await noSchema.run('opsx-propose', 'add-y 说明')
   assert.equal(proposeRefused.kind, 'error')
-  assert.deepEqual(existing.calls.titles, [])
+  assert.deepEqual(noSchema.calls.titles, [])
 
   const invalid = createHarness({
     state: {

@@ -204,6 +204,217 @@ export function deltaSummaryText(t, delta) {
 }
 
 /**
+ * Operation counts of one delta file row (`ChangeState.delta.files[]`).
+ *
+ * @param {{ADDED?: number, MODIFIED?: number, REMOVED?: number, RENAMED?: number}} [file] - per-file delta row.
+ * @returns {{ADDED: number, MODIFIED: number, REMOVED: number, RENAMED: number, total: number}} counts.
+ */
+export function deltaFileOperationCounts(file) {
+  const counts = { ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0, total: 0 }
+  for (const operation of HELPER_DELTA_OPERATIONS) {
+    counts[operation] = helperNumber(file?.[operation])
+    counts.total += counts[operation]
+  }
+  return counts
+}
+
+/**
+ * Localized per-file delta mix, e.g. `+2 新增 · 1 修改`. Zero-count operations
+ * are omitted so a file row stays compact.
+ *
+ * @param {((key: string) => string) | undefined} t - translate function.
+ * @param {{ADDED?: number, MODIFIED?: number, REMOVED?: number, RENAMED?: number}} [file] - per-file delta row.
+ * @returns {string} summary text or `''` when the file has no operation counts.
+ */
+export function deltaFileOpsText(t, file) {
+  const counts = deltaFileOperationCounts(file)
+  if (counts.total === 0) return ''
+  return HELPER_DELTA_OPERATIONS.filter((operation) => counts[operation] > 0)
+    .map((operation) => fillText(t, HELPER_DELTA_KEYS[operation], { count: counts[operation] }))
+    .join(' · ')
+}
+
+/**
+ * Pick the one-line summary rendered on a collapsed change card.
+ *
+ * Priority: `.openspec.yaml` `goal` → proposal `## Why` digest → none (the panel
+ * shows a "no proposal yet" placeholder). The host already bounds the digest,
+ * so this only trims and reports whether a full-text entry is needed.
+ *
+ * @param {{goal?: string|null, why?: string|null, whyTruncated?: boolean, changesHidden?: number, changesTruncated?: boolean}|null} [summary] - `ChangeState.summary`.
+ * @returns {{text: string, source: 'goal'|'why'|'none', truncated: boolean}} summary candidate.
+ */
+export function changeSummaryInfo(summary) {
+  const goal = typeof summary?.goal === 'string' ? summary.goal.trim() : ''
+  if (goal !== '') return { text: goal, source: 'goal', truncated: false }
+  const why = typeof summary?.why === 'string' ? summary.why.trim() : ''
+  if (why === '') return { text: '', source: 'none', truncated: false }
+  const truncated =
+    summary?.whyTruncated === true || summary?.changesTruncated === true || helperNumber(summary?.changesHidden) > 0
+  return { text: why, source: 'why', truncated }
+}
+
+/**
+ * Normalize the bounded proposal digest from the Host. An older Host has no
+ * `summary` field, so every field degrades to an empty value instead of
+ * crashing the card.
+ *
+ * @param {object|null|undefined} value - raw `ChangeState.summary`.
+ * @returns {{goal: string|null, why: string|null, whyTruncated: boolean, changes: string[], changesHidden: number, changesTruncated: boolean}} normalized digest.
+ */
+export function normalizeChangeSummary(value) {
+  const summary = value !== null && typeof value === 'object' ? value : {}
+  return {
+    goal: typeof summary.goal === 'string' && summary.goal.trim() !== '' ? summary.goal : null,
+    why: typeof summary.why === 'string' && summary.why.trim() !== '' ? summary.why : null,
+    whyTruncated: summary.whyTruncated === true,
+    changes: Array.isArray(summary.changes) ? summary.changes.filter((item) => typeof item === 'string' && item.trim() !== '') : [],
+    changesHidden: helperNumber(summary.changesHidden),
+    changesTruncated: summary.changesTruncated === true,
+  }
+}
+
+/**
+ * Normalize per-file delta rows. Accepts the native `{path,label,...counts}`
+ * rows and the legacy string path list so a mixed Host/client version still
+ * renders both.
+ *
+ * @param {Array<object|string>|null|undefined} files - raw `ChangeState.delta.files`.
+ * @returns {Array<{path: string, label: string, ADDED: number, MODIFIED: number, REMOVED: number, RENAMED: number}>} normalized rows.
+ */
+export function normalizeDeltaFiles(files) {
+  const list = Array.isArray(files) ? files : []
+  /** @type {Array<{path: string, label: string, ADDED: number, MODIFIED: number, REMOVED: number, RENAMED: number}>} */
+  const rows = []
+  for (const file of list) {
+    if (typeof file === 'string') {
+      if (file === '') continue
+      rows.push({ path: file, label: '', ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0 })
+      continue
+    }
+    if (file === null || typeof file !== 'object') continue
+    const path = typeof file.path === 'string' ? file.path : ''
+    if (path === '') continue
+    rows.push({
+      path,
+      label: typeof file.label === 'string' ? file.label : '',
+      ADDED: helperNumber(file.ADDED),
+      MODIFIED: helperNumber(file.MODIFIED),
+      REMOVED: helperNumber(file.REMOVED),
+      RENAMED: helperNumber(file.RENAMED),
+    })
+  }
+  return rows
+}
+
+/**
+ * Totals of the bounded `## What Changes` digest: how many items are shown and
+ * how many the host left out (so the panel can render `共 N 条` explicitly).
+ *
+ * @param {{changes?: string[], changesHidden?: number, changesTruncated?: boolean}|null} [summary] - `ChangeState.summary`.
+ * @returns {{shown: number, total: number, truncated: boolean}} digest totals.
+ */
+export function changeDigestTotals(summary) {
+  const shown = Array.isArray(summary?.changes) ? summary.changes.filter((item) => typeof item === 'string' && item.trim() !== '').length : 0
+  const hidden = helperNumber(summary?.changesHidden)
+  return { shown, total: shown + hidden, truncated: summary?.changesTruncated === true || hidden > 0 }
+}
+
+/**
+ * Group a change's documents by schema artifact for the progressive detail view.
+ *
+ * Only groups with something to show are returned (plus the `tasks` group, which
+ * also hosts the missing-task-list note, and a final `metadata` group). Delta
+ * documents are matched against `delta.files` so each row carries its own
+ * operation counts, and every document appears in exactly one group.
+ *
+ * @param {object} change - normalized `ChangeState`.
+ * @returns {Array<{id: string, kind: 'artifact'|'delta'|'metadata', title: string, status: string, description: string, docs: Array<object>, deltas: Array<object>}>} groups in schema artifact order, metadata last.
+ */
+export function groupChangeDocuments(change) {
+  const docs = Array.isArray(change?.docs)
+    ? change.docs.filter((doc) => doc !== null && typeof doc === 'object' && typeof doc.path === 'string' && doc.path !== '')
+    : []
+  const artifacts = Array.isArray(change?.artifacts) ? change.artifacts : []
+  const deltaFiles = Array.isArray(change?.delta?.files)
+    ? change.delta.files
+        .map((file) => {
+          if (typeof file === 'string') return { path: file, label: '', ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0 }
+          if (file !== null && typeof file === 'object' && typeof file.path === 'string') return file
+          return null
+        })
+        .filter((file) => file !== null && file.path !== '')
+    : []
+  const usedDocs = new Set()
+  const deltaFileFor = (doc) => {
+    const path = String(doc.path).replace(/\\/g, '/')
+    const match = deltaFiles.find((file) => path === file.path || path.endsWith(`/${file.path}`))
+    const label = match !== undefined && typeof match.label === 'string' && match.label !== '' ? match.label : typeof doc.label === 'string' ? doc.label : ''
+    if (match !== undefined) return { ...match, label }
+    return { path, label, ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0 }
+  }
+  /** @type {Array<object>} */
+  const groups = []
+  const pushGroup = (id, artifact) => {
+    const ownDocs = docs.filter((doc) => String(doc.artifactId ?? '') === id && !usedDocs.has(doc))
+    for (const doc of ownDocs) usedDocs.add(doc)
+    const plainDocs = ownDocs.filter((doc) => doc.kind !== 'delta')
+    const deltas = ownDocs.filter((doc) => doc.kind === 'delta').map(deltaFileFor)
+    if (plainDocs.length === 0 && deltas.length === 0 && id !== 'tasks') return
+    groups.push({
+      id,
+      kind: deltas.length > 0 ? 'delta' : 'artifact',
+      title: id,
+      status: typeof artifact?.status === 'string' ? artifact.status : '',
+      description: typeof artifact?.description === 'string' ? artifact.description : '',
+      docs: plainDocs,
+      deltas,
+    })
+  }
+  const seenIds = new Set()
+  for (const artifact of artifacts) {
+    const id = artifact !== null && typeof artifact === 'object' && typeof artifact.id === 'string' ? artifact.id : ''
+    if (id === '' || seenIds.has(id)) continue
+    seenIds.add(id)
+    pushGroup(id, artifact)
+  }
+  // Defensive: documents whose artifact is not part of the derived artifact list.
+  /** @type {string[]} */
+  const leftoverIds = []
+  for (const doc of docs) {
+    if (usedDocs.has(doc)) continue
+    const id = typeof doc.artifactId === 'string' && doc.artifactId !== '' ? doc.artifactId : 'docs'
+    if (!leftoverIds.includes(id)) leftoverIds.push(id)
+  }
+  for (const id of leftoverIds) pushGroup(id, undefined)
+  groups.push({ id: 'metadata', kind: 'metadata', title: 'metadata', status: '', description: '', docs: [], deltas: [] })
+  return groups
+}
+
+/**
+ * One-line overview status: artifact / task progress, capability count, open
+ * validation issues (only when non-zero) and the native next step.
+ *
+ * @param {((key: string) => string) | undefined} t - translate function.
+ * @param {object} change - normalized `ChangeState`.
+ * @returns {string} ` · `-joined status text.
+ */
+export function changeOverviewFacts(t, change) {
+  /** @type {string[]} */
+  const parts = []
+  const artifacts = artifactProgress(change?.artifacts)
+  if (artifacts.total > 0) parts.push(`${fillText(t, 'artifactsLabel')} ${artifacts.done}/${artifacts.total}`)
+  const progress = taskProgressInfo(change?.tasks)
+  if (progress.total > 0) parts.push(`${fillText(t, 'taskList')} ${progress.done}/${progress.total}`)
+  const deltaFiles = Array.isArray(change?.delta?.files) ? change.delta.files.length : 0
+  if (deltaFiles > 0) parts.push(fillText(t, 'overviewCapabilities', { count: deltaFiles }))
+  const issues = helperNumber(change?.validation?.errors) + helperNumber(change?.validation?.warnings)
+  if (issues > 0) parts.push(validationSummaryText(t, change.validation))
+  parts.push(`${fillText(t, 'quickNext')}：${nextActionText(t, deriveNextAction(change))}`)
+  return parts.join(' · ')
+}
+
+/**
  * Change name of one archive row: `2026-10-20-add-dark-mode` -> `add-dark-mode`.
  *
  * @param {{name?: string, changeName?: string}} [entry] - archive row.
@@ -586,7 +797,11 @@ export function deriveNextAction(change) {
   }
   const name = String(change.name ?? '')
   if (change.isPlanningComplete !== true) {
-    return { kind: 'update', labelKey: 'nextActionUpdate', line: `/opsx-update ${name}` }
+    // A half-generated plan is completed by re-running propose: it resumes the
+    // existing change (keeping `.openspec.yaml` and satisfied artifacts) and
+    // creates only the missing artifacts. update only revises existing files,
+    // so it can never finish an interrupted plan.
+    return { kind: 'propose', labelKey: 'nextActionResume', line: `/opsx-propose ${name}` }
   }
   if (change.listStatus === 'complete') {
     // The panel/quick-bar "Archive" button fills the composer with the default

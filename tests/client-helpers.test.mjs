@@ -23,20 +23,28 @@ import {
   artifactStatusTone,
   blockedArtifacts,
   CHANGE_PICKER_COMMANDS,
+  changeDigestTotals,
+  changeOverviewFacts,
   changePickerAvailable,
   changePickerLine,
   changePickerOptions,
+  changeSummaryInfo,
   countTaskCheckboxes,
+  deltaFileOperationCounts,
+  deltaFileOpsText,
   deltaOperationCounts,
   deltaSummaryText,
   deriveNextAction,
   documentShownLines,
   documentTruncationText,
   groupArchivedByLocalDate,
+  groupChangeDocuments,
   groupSpecsByPath,
   issueLevelTone,
   moreItemsText,
   nextActionText,
+  normalizeChangeSummary,
+  normalizeDeltaFiles,
   paginate,
   pendingAcceptanceTasks,
   schemaSourceText,
@@ -70,6 +78,7 @@ const T = {
   schemaBuiltin: '内置',
   schemaUnknown: '未知',
   nextActionPropose: '提案',
+  nextActionResume: '继续规划',
   nextActionUpdate: '继续规划',
   nextActionApply: '实施',
   nextActionArchive: '归档',
@@ -80,6 +89,10 @@ const T = {
   pickerErrors: '{count} ERROR',
   pickerWarnings: '{count} WARNING',
   skipSpecs: 'skip_specs',
+  artifactsLabel: '工件',
+  taskList: '任务清单',
+  overviewCapabilities: '{count} 个 capability',
+  quickNext: '下一步',
 }
 /** @param {string} key */
 const t = (key) => T[key] ?? key
@@ -465,10 +478,18 @@ test('schemaSourceText: project vs builtin snapshot', () => {
 
 test('deriveNextAction: native artifact state, not the legacy phase order', () => {
   assert.deepEqual(deriveNextAction(undefined), { kind: 'propose', labelKey: 'nextActionPropose', line: '/opsx-propose ' })
+  // Incomplete planning resumes through propose: update can only revise files
+  // that already exist, so it can never finish an interrupted plan.
   assert.deepEqual(deriveNextAction({ name: 'add-dark-mode', artifacts: [{ id: 'proposal', status: 'done' }], isPlanningComplete: false, listStatus: 'no-tasks' }), {
-    kind: 'update',
-    labelKey: 'nextActionUpdate',
-    line: '/opsx-update add-dark-mode',
+    kind: 'propose',
+    labelKey: 'nextActionResume',
+    line: '/opsx-propose add-dark-mode',
+  })
+  // A change with nothing generated yet resumes from the first missing artifact.
+  assert.deepEqual(deriveNextAction({ name: 'add-dark-mode', artifacts: [{ id: 'proposal', status: 'ready' }], isPlanningComplete: false, listStatus: 'no-tasks' }), {
+    kind: 'propose',
+    labelKey: 'nextActionResume',
+    line: '/opsx-propose add-dark-mode',
   })
   // Planning complete but tasks open: apply, even before every artifact is done? isPlanningComplete implies all done/skipped.
   assert.deepEqual(deriveNextAction({ name: 'add-dark-mode', isPlanningComplete: true, listStatus: 'in-progress' }), {
@@ -631,4 +652,162 @@ test('changePickerOptions: zh/en summaries differ and fill every placeholder', (
   assert.equal(en, 'Planning · Tasks 1/4 · 2 ERROR · 1 WARNING')
   assert.notEqual(zh, en)
   for (const detail of [zh, en]) assert.equal(/\{\w+\}/.test(detail), false)
+})
+
+test('changeSummaryInfo: goal wins, then proposal Why, then placeholder', () => {
+  assert.deepEqual(changeSummaryInfo({ goal: '目标文本', why: '为什么文本' }), {
+    text: '目标文本',
+    source: 'goal',
+    truncated: false,
+  })
+  assert.deepEqual(changeSummaryInfo({ why: '为什么文本', whyTruncated: true }), {
+    text: '为什么文本',
+    source: 'why',
+    truncated: true,
+  })
+  // changesHidden alone also means a full-text entry is worthwhile.
+  assert.equal(changeSummaryInfo({ why: 'why', changesHidden: 2 }).truncated, true)
+  assert.deepEqual(changeSummaryInfo({ goal: '   ', why: '   ' }), { text: '', source: 'none', truncated: false })
+  assert.deepEqual(changeSummaryInfo(null), { text: '', source: 'none', truncated: false })
+})
+
+test('changeDigestTotals: shown + hidden counts without silent loss', () => {
+  assert.deepEqual(changeDigestTotals({ changes: ['a', 'b'], changesHidden: 3 }), { shown: 2, total: 5, truncated: true })
+  assert.deepEqual(changeDigestTotals({ changes: ['a'], changesHidden: 0, changesTruncated: true }), {
+    shown: 1,
+    total: 1,
+    truncated: true,
+  })
+  assert.deepEqual(changeDigestTotals(undefined), { shown: 0, total: 0, truncated: false })
+})
+
+test('deltaFileOperationCounts / deltaFileOpsText: per-file mix, zeros omitted', () => {
+  const file = { path: 'specs/a/spec.md', label: 'a', ADDED: 2, MODIFIED: 0, REMOVED: 1, RENAMED: 0 }
+  assert.deepEqual(deltaFileOperationCounts(file), { ADDED: 2, MODIFIED: 0, REMOVED: 1, RENAMED: 0, total: 3 })
+  assert.equal(deltaFileOpsText(t, file), '+2 新增 · 1 删除')
+  assert.equal(deltaFileOpsText(t, { ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0 }), '')
+})
+
+test('groupChangeDocuments: schema artifact order, delta once, metadata last', () => {
+  const change = {
+    artifacts: [
+      { id: 'proposal', status: 'done', description: 'Initial proposal document' },
+      { id: 'specs', status: 'done', description: 'Detailed specifications' },
+      { id: 'design', status: 'done', description: 'Technical design' },
+      { id: 'tasks', status: 'done', description: 'Implementation checklist' },
+    ],
+    docs: [
+      { path: 'openspec/changes/c/proposal.md', label: 'proposal', artifactId: 'proposal', kind: 'artifact' },
+      { path: 'openspec/changes/c/specs/a/spec.md', label: 'a', artifactId: 'specs', kind: 'delta' },
+      { path: 'openspec/changes/c/specs/b/spec.md', label: 'b', artifactId: 'specs', kind: 'delta' },
+      { path: 'openspec/changes/c/design.md', label: 'design', artifactId: 'design', kind: 'artifact' },
+      { path: 'openspec/changes/c/tasks.md', label: 'tasks', artifactId: 'tasks', kind: 'artifact' },
+    ],
+    delta: {
+      files: [
+        { path: 'specs/a/spec.md', label: 'a', ADDED: 2, MODIFIED: 0, REMOVED: 0, RENAMED: 0 },
+        { path: 'specs/b/spec.md', label: 'b', ADDED: 0, MODIFIED: 1, REMOVED: 0, RENAMED: 0 },
+      ],
+    },
+  }
+  const groups = groupChangeDocuments(change)
+  assert.deepEqual(
+    groups.map((group) => group.id),
+    ['proposal', 'specs', 'design', 'tasks', 'metadata'],
+  )
+  const specs = groups.find((group) => group.id === 'specs')
+  assert.equal(specs.kind, 'delta')
+  assert.equal(specs.deltas.length, 2)
+  assert.deepEqual(specs.deltas[0], { path: 'specs/a/spec.md', label: 'a', ADDED: 2, MODIFIED: 0, REMOVED: 0, RENAMED: 0 })
+  // Every document appears exactly once across groups.
+  const docPaths = groups.flatMap((group) => group.docs.map((doc) => doc.path))
+  assert.equal(new Set(docPaths).size, docPaths.length)
+  assert.equal(docPaths.length, 3)
+  const tasks = groups.find((group) => group.id === 'tasks')
+  assert.equal(tasks.kind, 'artifact')
+  assert.equal(groups.at(-1).kind, 'metadata')
+  // A tasks artifact without a tasks.md still gets a group for the missing note.
+  const early = groupChangeDocuments({ artifacts: [{ id: 'tasks', status: 'ready' }], docs: [], delta: { files: [] } })
+  assert.deepEqual(early.map((group) => group.id), ['tasks', 'metadata'])
+  // Legacy string delta files still render a row (no counts, never dropped).
+  const legacy = groupChangeDocuments({
+    artifacts: [{ id: 'specs', status: 'done' }],
+    docs: [{ path: 'openspec/changes/c/specs/x/spec.md', label: 'x', artifactId: 'specs', kind: 'delta' }],
+    delta: { files: ['specs/x/spec.md'] },
+  })
+  assert.deepEqual(legacy[0].deltas, [{ path: 'specs/x/spec.md', label: 'x', ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0 }])
+})
+
+test('groupChangeDocuments: custom schema order is preserved', () => {
+  const groups = groupChangeDocuments({
+    artifacts: [
+      { id: 'research', status: 'done' },
+      { id: 'proposal', status: 'done' },
+    ],
+    docs: [
+      { path: 'openspec/changes/c/research.md', label: 'research', artifactId: 'research', kind: 'artifact' },
+      { path: 'openspec/changes/c/proposal.md', label: 'proposal', artifactId: 'proposal', kind: 'artifact' },
+    ],
+    delta: { files: [] },
+  })
+  assert.deepEqual(groups.map((group) => group.id), ['research', 'proposal', 'metadata'])
+})
+
+test('changeOverviewFacts: progress, capability count, issues only when non-zero, next step', () => {
+  const change = {
+    artifacts: [
+      { id: 'proposal', status: 'done' },
+      { id: 'tasks', status: 'ready' },
+    ],
+    tasks: { done: 1, total: 3 },
+    delta: { files: [{ path: 'specs/a/spec.md' }, { path: 'specs/b/spec.md' }] },
+    validation: { errors: 0, warnings: 0 },
+    isPlanningComplete: false,
+    nextSteps: [],
+  }
+  assert.equal(changeOverviewFacts(t, change), '工件 1/2 · 任务清单 1/3 · 2 个 capability · 下一步：继续规划')
+  assert.equal(
+    changeOverviewFacts(t, { ...change, validation: { errors: 1, warnings: 1 } }),
+    '工件 1/2 · 任务清单 1/3 · 2 个 capability · 1 错误 · 1 警告 · 下一步：继续规划',
+  )
+  assert.equal(changeOverviewFacts(t, {}), '下一步：继续规划')
+})
+
+test('normalizeChangeSummary / normalizeDeltaFiles: legacy payloads degrade safely', () => {
+  assert.deepEqual(normalizeChangeSummary(undefined), {
+    goal: null,
+    why: null,
+    whyTruncated: false,
+    changes: [],
+    changesHidden: 0,
+    changesTruncated: false,
+  })
+  assert.deepEqual(normalizeChangeSummary({ goal: ' 目标 ', why: ' why ', changes: ['a', '', 3], changesHidden: 2.5 }), {
+    goal: ' 目标 ',
+    why: ' why ',
+    whyTruncated: false,
+    changes: ['a'],
+    changesHidden: 2,
+    changesTruncated: false,
+  })
+  assert.deepEqual(normalizeDeltaFiles(['specs/a/spec.md', null, { path: '' }, { path: 'specs/b/spec.md', ADDED: 2 }]), [
+    { path: 'specs/a/spec.md', label: '', ADDED: 0, MODIFIED: 0, REMOVED: 0, RENAMED: 0 },
+    { path: 'specs/b/spec.md', label: '', ADDED: 2, MODIFIED: 0, REMOVED: 0, RENAMED: 0 },
+  ])
+  assert.deepEqual(normalizeDeltaFiles(undefined), [])
+})
+
+test('normalizeChangeSummary / normalizeDeltaFiles: native payload passes through', () => {
+  const nativeSummary = {
+    goal: 'goal',
+    why: 'why',
+    whyTruncated: true,
+    changes: ['a', 'b'],
+    changesHidden: 3,
+    changesTruncated: true,
+  }
+  assert.deepEqual(normalizeChangeSummary(nativeSummary), nativeSummary)
+  assert.deepEqual(normalizeDeltaFiles([{ path: 'specs/a/spec.md', label: 'a', ADDED: 1, MODIFIED: 2, REMOVED: 3, RENAMED: 4 }]), [
+    { path: 'specs/a/spec.md', label: 'a', ADDED: 1, MODIFIED: 2, REMOVED: 3, RENAMED: 4 },
+  ])
 })
