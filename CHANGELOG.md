@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.9.2
+
+总面板新增「等待验收」聚合任务清单，并压缩变更卡片上的摘要文案。
+
+### Added
+
+- **等待验收任务清单**：面板总览新增可折叠 Section，汇总所有进行中变更的未勾选任务，并按「人工验收 / 其他待办」两组展示；每组显示数量、支持分页；行内显示 change 名、任务文本与人工验收标签，可直接勾选（变更会话运行中时禁用），点击行打开对应 `tasks.md` 并定位行号。任务超过单次 200 条载入上限时显示明确提示。
+- `client-helpers.js` 新增纯函数 `pendingAcceptanceTasks(changes)`，负责跨 change 聚合、人工/非人工分类与稳定排序，并有单测。
+
+### Changed
+
+- **压缩变更卡片摘要**：新增 `ConfirmChangeState.summary.headline`，按「`.openspec.yaml` goal → `## What Changes` 首条要点 → `## Why` 首句」提取一句短标题（如「新增幼狮卡牌」，上限 32 字），折叠卡片只显示这一行；完整描述与 `## What Changes` 要点移至展开详情，不再把整段 Why 截到面板上。
+- `buildAutoProposePrompt` 要求 AI 在 `.openspec.yaml` 写入 4–20 字的 `goal`（面板 headline）；显式 propose 提示词也要求 AI 在 goal 为空时补一句短摘要。
+- README 重写为「SDD 收益 → OpenSpec 的价值（状态持久化与可恢复性）→ 插件便利 → 快速开始 → 使用与技术细节」的简洁结构。
+- 插件版本 `0.9.1` → `0.9.2`。
+
+## 0.9.1
+
+提案改为 **AI 总结后自动命名**，不再使用本地关键词启发式。
+
+### Changed
+
+- 「新建提案」只填写描述；面板发送 `/opsx-propose --auto <描述>`。Host 先准备 `openspec/` 骨架，然后提交一个自动命名提案提示词：AI 先总结描述、按 kebab-case 规则选择 change 名（避开已有 change），再创建 `openspec/changes/<name>/.openspec.yaml` 和全部规划工件。
+- 客户端在命令发出前记录当前 change 名单；命令成功后轮询工作区，发现第一个新 change 即把它绑定到发起提案的会话（最多等 10 分钟，超时会发通知）。这样「提案开始即绑定」仍然成立，即使名称直到 AI 回合结束才出现。
+- 显式 `/opsx-propose <change-name> [说明]` 保持不变；`--auto` 是可选的自动命名路径。
+- 移除客户端 `deriveChangeName` 关键词/哈希命名启发式，避免生成不准确的名称。
+- **Markdown 阅读器恢复大尺寸**：`DocModal` 默认宽度从 800px 调整为响应式 `min(1200px, calc(100vw - 48px))`，正文视口默认 `min(78vh, 1040px)`，并新增「放大阅读 / 退出放大」切换；避免在高分辨率屏幕上变成小弹窗。
+- `buildAutoProposePrompt` 新增于 `src/prompts.js`，`commands.test.mjs` / `prompts.test.mjs` 覆盖自动命名分支与提示词结构；README 与契约文档同步。
+- 插件版本 `0.9.0` → `0.9.1`。
+
+### Notes
+
+- 自动命名仍需模型可用；AI 未在 10 分钟内创建新 change 时，面板会收到超时通知，可改用显式 `/opsx-propose <name> <描述>`。
+- Host 半改动需要重新构建并重启 DSH；client 半重新构建后刷新页面。
+
+## 0.9.0
+
+面板与会话打通：变更实时状态、一变更一会话绑定、按钮直接发送、系统通知、自动变更名、变更摘要与人工验收任务勾选。
+
+### Added
+
+- **变更 ↔ 会话绑定（一变更一会话）**：面板/快捷条发起的探索、提案、实施、更新、同步、归档会解析或创建目标会话，并把 `change` 与会话 id 绑定后直接在该会话执行；绑定按工作区 + change 名保存在浏览器 `localStorage`，同一会话再绑定到新 change 时会自动解除旧绑定。直接手打 `/opsx-propose <name>` 等阶段命令时，客户端监听 Host 写入的 `[阶段] 主题` 会话标题并自动补绑定；面板会显示绑定会话的短 id，点击可切回该窗口。
+- **按钮直接发送，不再二次回车**：面板与快捷条的「继续规划 / 实施 / 归档 / 状态」等动作改为调用 Host `command.execute`，在绑定会话中立即执行 `/opsx-*`；「探索 / 提案」先弹轻量输入框，确认后同样直接发送。
+- **实时状态 + 进行中禁用**：订阅 `uiSession.sessionStatus` 的 running / pendingInteraction，并在面板每 2 秒轮询 Host 状态；变更卡片与快捷条显示「规划中 / 实施中 / 待实施 / 已完成 / 进行中 / 等待确认」。绑定会话运行中或等待权限/回答时，主操作按钮禁用并显示原因，避免对同一变更重复发起规划/实施。
+- **系统通知**：绑定会话结束本轮或出现权限/问题等待时，通过浏览器 `Notification` 弹系统提示（点击可打开对应会话）；未授权或浏览器不支持时回退为面板/快捷条内提示。
+- **按描述自动生成 change 名**：新建提案对话框输入中文或英文描述即可自动生成 kebab-case 变更名（ASCII 词 + 常用中文工作流词表 + 冲突哈希），名称可编辑，确认后直接执行 `/opsx-propose <name> <description>`。
+- **面板变更摘要**：Host 从 `proposal.md` 的 `## Why` 提取一段变更说明、从 `## What Changes` 提取要点（纯函数 `src/native/summary.js`，有长度上限），变更卡片不再只有名字。
+- **任务手动勾选 + 人工验收标记**：任务清单的复选框可直接勾选/取消，Host 新增 `task-toggle` 路由只改写目标 `tasks.md` 行（保留 CRLF/BOM、行号失效或非任务行直接拒绝）；任务正文带 `[人工验收]`（兼容 `【人工验收】`）会被解析为人工验收任务并显示标签，AI 不会自动勾选；提案/实施提示词同步要求人工验收任务加该前缀。
+
+### Changed
+
+- `ChangeState.tasks.items[]` 增加 `line`（1-based 源行号）与 `manual`（人工验收标记）；`ChangeState` 增加 `summary`。
+- 面板/快捷条轮询从 4s 调整为 2s（会话状态变化还会即时触发一次 Host 状态重读）。
+- 「填入输入框」不再是面板/快捷条动作按钮的行为；变更选择器（多 change 时的二级列表）仍只回填，避免误执行。
+- `tools/build.mjs` 的 client-helper 内联改用函数替换，避免 helper 源码里的 `$&` / `$`` 被 `String.replace` 当成替换模式。
+- 修复 `tools/sync-native-snapshot.mjs` 在 CRLF 检出下 `refreshAttribution` 误报 drift 的问题（保留原换行风格）。
+- 插件版本 `0.8.0` → `0.9.0`。
+
+### Notes
+
+- Host 半改动（`src/host.js`、`src/native/**`、`src/prompts.js`）需要 `node tools/build.mjs` 后重启 DSH 进程；client 半重新构建后刷新页面即可。
+- 系统通知受浏览器权限控制；首次从面板/快捷条发起动作时会请求权限。
+- 绑定是本地 UI 状态（按浏览器 origin 保存），不写入仓库或 `.openspec.yaml`；换浏览器后会按会话标题自动重建，或在下一次操作时新建会话。
+
 ## 0.8.0
 
 修复新会话（hero 页）里「归档」在 change 有校验 ERROR 或归档目标已存在时仍然「发送后没反应」的问题：命令层不再在提交 AI 工作流之前直接拒绝，阻塞事实交给提示词 STOP gate 由模型先停止并报告。

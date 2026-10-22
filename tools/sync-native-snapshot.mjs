@@ -285,7 +285,12 @@ export function readAttributionMarkers(text) {
  * @returns {{ text: string, warnings: string[] }}
  */
 export function refreshAttribution(text, revision = {}) {
-  let output = String(text ?? '')
+  const original = String(text ?? '')
+  // Windows checkouts are commonly CRLF. Normalize before the line-anchored
+  // replacements and restore the original newline style afterwards, so a
+  // no-op refresh does not rewrite the whole file (and never reports drift).
+  const newline = original.includes('\r\n') ? '\r\n' : '\n'
+  let output = original.replace(/\r\n?/g, '\n')
   const warnings = []
   const version = typeof revision.version === 'string' && revision.version.trim().length > 0 ? revision.version.trim() : null
   const commit = typeof revision.commit === 'string' && revision.commit.trim().length > 0 ? revision.commit.trim() : null
@@ -307,6 +312,7 @@ export function refreshAttribution(text, revision = {}) {
       warnings.push('ATTRIBUTION.md has no "Upstream commit:" marker to refresh')
     }
   }
+  if (newline !== '\n') output = output.replace(/\n/g, newline)
   return { text: output, warnings }
 }
 

@@ -265,6 +265,10 @@ function createHarness(overrides = {}, options = {}) {
         calls.prompt.propose = input
         return 'PROPOSE_PROMPT'
       },
+      buildAutoProposePrompt: async (input) => {
+        calls.prompt.autoPropose = input
+        return 'AUTO_PROPOSE_PROMPT'
+      },
       buildApplyPrompt: async (input) => {
         calls.prompt.apply = input
         return 'APPLY_PROMPT'
@@ -546,6 +550,30 @@ test('opsx-propose resolves the bundled snapshot when the project schema is unkn
   assert.equal(result.kind, 'success')
   assert.equal(h.calls.prompt.propose.schema.source, 'builtin')
   assert.equal(h.calls.writes.length, 1)
+})
+
+test('opsx-propose --auto submits a model naming prompt without scaffolding a guessed name', async () => {
+  const h = createHarness()
+  const result = await h.run('opsx-propose', '--auto 支持实时状态和人工验收')
+  assert.equal(result.kind, 'success')
+  assert.equal(h.calls.writes.length, 0)
+  assert.equal(h.agent.messages.length, 1)
+  assert.match(result.text, /自动命名提案任务/)
+  assert.match(result.text, /kebab-case change 名/)
+  const input = h.calls.prompt.autoPropose
+  assert.equal(input.description, '支持实时状态和人工验收')
+  assert.equal(input.created, '2026-10-20')
+  assert.deepEqual(input.existingNames, ['add-x'])
+  assert.equal(input.schema.schema.name, 'spec-driven')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[提案] 自动命名：支持实时状态和人工验收' }])
+})
+
+test('opsx-propose --auto requires a description', async () => {
+  const h = createHarness()
+  const result = await h.run('opsx-propose', '--auto')
+  assert.equal(result.kind, 'error')
+  assert.match(result.text, /--auto <描述>/)
+  assert.equal(h.agent.messages.length, 0)
 })
 
 test('opsx-propose refuses before writing when no schema definition resolves', async () => {

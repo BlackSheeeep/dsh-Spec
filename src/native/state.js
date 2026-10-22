@@ -21,6 +21,7 @@ import { readChangeMetadata, resolveSchemaName } from './metadata.js'
 import { loadBundledSchemas, loadProjectSchemas, matchGlob, resolveSchema } from './schema.js'
 import { computeArtifactStates, validateSchemaGraph } from './graph.js'
 import { parseDeltaSpec, parseMainSpec } from './spec.js'
+import { summarizeProposal } from './summary.js'
 import { parseTasks } from './tasks.js'
 import { validateChange, validateMainSpec } from './validate.js'
 
@@ -38,8 +39,8 @@ const TASK_ITEM_LIMIT = 200
  * only the detail rows handed to the panel are capped. Callers compare
  * `total` with `items.length` to surface the remaining count explicitly.
  *
- * @param {Array<{id?: unknown, text?: unknown, done?: unknown, depth?: unknown}>|null} items
- * @returns {Array<{id: string|null, text: string, done: boolean, depth: number}>} plain rows
+ * @param {Array<{id?: unknown, text?: unknown, done?: unknown, depth?: unknown, line?: unknown, manual?: unknown}>|null} items
+ * @returns {Array<{id: string|null, text: string, done: boolean, depth: number, line: number|null, manual: boolean}>} plain rows
  */
 export function limitTaskItems(items) {
   const list = Array.isArray(items) ? items : []
@@ -48,6 +49,8 @@ export function limitTaskItems(items) {
     text: String(item?.text ?? ''),
     done: item?.done === true,
     depth: Number.isInteger(item?.depth) && item.depth >= 0 ? Math.min(item.depth, 3) : 0,
+    line: Number.isInteger(item?.line) && item.line > 0 ? item.line : null,
+    manual: item?.manual === true,
   }))
 }
 
@@ -88,6 +91,7 @@ function emptyChangeState(name) {
     schemaName: 'spec-driven',
     schemaSource: 'builtin',
     metadata: emptyMetadata(),
+    summary: { headline: '', description: '', highlights: [], source: 'none' },
     artifacts: [],
     applyRequires: [],
     tracks: null,
@@ -292,6 +296,7 @@ async function computeChangeStateInternal(cwd, changeName, { projectConfig = nul
   state.schemaName = context.schemaName
   state.schemaSource = context.resolved.source ?? 'builtin'
   state.metadata = context.metadata
+  state.summary = summarizeProposal(context.proposalText, { goal: context.metadata.goal })
   state.tracks = context.resolved.schema?.apply?.tracks ?? null
   state.applyRequires = Array.isArray(context.resolved.schema?.apply?.requires)
     ? [...context.resolved.schema.apply.requires]

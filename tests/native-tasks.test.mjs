@@ -7,7 +7,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { parseTasks } from '../src/native/tasks.js'
+import { isManualTask, parseTasks, toggleTaskLine } from '../src/native/tasks.js'
 
 test('counts mixed bullet and marker forms with native rules', () => {
   const text = [
@@ -92,4 +92,37 @@ test('tolerates CRLF, BOM and empty text', () => {
 test('ignores prose and headings that look like checkboxes', () => {
   const parsed = parseTasks(['# [ ] heading', 'text [ ] inline', '1. [ ] ordered list', '> - [ ] quote'].join('\n'))
   assert.equal(parsed.total, 0)
+})
+
+test('records 1-based source lines and flags [人工验收] tasks', () => {
+  const text = ['# Tasks', '', '- [ ] 1.1 [人工验收] verify in the browser', '  - [x] 1.2 【人工验收】check logs', '- [ ] 1.3 automated step'].join('\n')
+  const parsed = parseTasks(text)
+  assert.deepEqual(
+    parsed.items.map((item) => ({ id: item.id, line: item.line, manual: item.manual, done: item.done })),
+    [
+      { id: '1.1', line: 3, manual: true, done: false },
+      { id: '1.2', line: 4, manual: true, done: true },
+      { id: '1.3', line: 5, manual: false, done: false },
+    ],
+  )
+  assert.equal(isManualTask('manual [人工验收] step'), true)
+  assert.equal(isManualTask('ordinary step'), false)
+})
+
+test('toggleTaskLine writes only the requested checkbox and preserves everything else', () => {
+  const text = ['# Tasks', '', '- [ ] 1.1 [人工验收] verify', '  * [x] 1.2 done', '- [docs](https://example.com)'].join('\n')
+  const checked = toggleTaskLine(text, 3, true)
+  assert.equal(checked.text, ['# Tasks', '', '- [x] 1.1 [人工验收] verify', '  * [x] 1.2 done', '- [docs](https://example.com)'].join('\n'))
+  assert.equal(checked.line, 3)
+  assert.equal(checked.done, true)
+  assert.equal(checked.manual, true)
+
+  const unchecked = toggleTaskLine(checked.text, 4, false)
+  assert.equal(unchecked.text, ['# Tasks', '', '- [x] 1.1 [人工验收] verify', '  * [ ] 1.2 done', '- [docs](https://example.com)'].join('\n'))
+
+  // Stale line numbers and link bullets are refused instead of guessed.
+  assert.throws(() => toggleTaskLine(text, 5, true), /链接/)
+  assert.throws(() => toggleTaskLine(text, 2, true), /不是任务复选框/)
+  assert.throws(() => toggleTaskLine(text, 99, true), /超出/)
+  assert.throws(() => toggleTaskLine(text, 0, true), /行号无效/)
 })

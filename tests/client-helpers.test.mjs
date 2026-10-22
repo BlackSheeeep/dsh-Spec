@@ -38,6 +38,7 @@ import {
   moreItemsText,
   nextActionText,
   paginate,
+  pendingAcceptanceTasks,
   schemaSourceText,
   sortArtifacts,
   taskChecklistView,
@@ -364,9 +365,9 @@ test('taskChecklistView: bounded detail rows and explicit remainder', () => {
     total: 3,
     done: 1,
     items: [
-      { id: '1.1', text: 'a', done: true, depth: 0 },
-      { id: '1.2', text: 'b', done: false, depth: 1 },
-      { id: '1.3', text: 'c', done: false, depth: 2 },
+      { id: '1.1', text: 'a', done: true, depth: 0, line: 3, manual: false },
+      { id: '1.2', text: 'b', done: false, depth: 1, line: 4, manual: true },
+      { id: '1.3', text: 'c', done: false, depth: 2, line: 5, manual: false },
     ],
   })
   assert.equal(full.total, 3)
@@ -375,7 +376,7 @@ test('taskChecklistView: bounded detail rows and explicit remainder', () => {
   assert.equal(full.hidden, 0)
   assert.equal(full.missing, false)
   assert.equal(full.limited, false)
-  assert.deepEqual(full.items[1], { id: '1.2', text: 'b', done: false, depth: 1 })
+  assert.deepEqual(full.items[1], { id: '1.2', text: 'b', done: false, depth: 1, line: 4, manual: true })
 
   const capped = taskChecklistView({
     total: 250,
@@ -396,7 +397,49 @@ test('taskChecklistView: bounded detail rows and explicit remainder', () => {
 
   assert.equal(taskChecklistView(null).total, 0)
   const malformed = taskChecklistView({ total: 1, done: 0, items: [null, { text: 1, done: 1, depth: '2' }] })
-  assert.deepEqual(malformed.items, [{ id: null, text: '1', done: false, depth: 0 }])
+  assert.deepEqual(malformed.items, [{ id: null, text: '1', done: false, depth: 0, line: null, manual: false }])
+})
+
+test('pendingAcceptanceTasks: aggregates unchecked tasks and splits manual from automatic', () => {
+  const pending = pendingAcceptanceTasks([
+    {
+      name: 'add-dark-mode',
+      tasks: {
+        items: [
+          { id: '1.1', text: '1.1 [人工验收] check contrast', done: false, line: 3, manual: true },
+          { id: '1.2', text: '1.2 implement toggle', done: false, line: 4, manual: false },
+          { id: '1.3', text: '1.3 already done', done: true, line: 5, manual: true },
+        ],
+      },
+    },
+    {
+      name: 'fix-login',
+      tasks: {
+        items: [
+          { id: '2.1', text: '2.1 【人工验收】 verify error copy', done: false, line: 8 },
+          { id: '2.2', text: '2.2 add null guard', done: false, line: 9, manual: false },
+        ],
+      },
+    },
+    { name: 'no-tasks', tasks: null },
+  ])
+  assert.equal(pending.total, 4)
+  assert.deepEqual(
+    pending.manual.map((item) => ({ change: item.change, id: item.id, text: item.text, line: item.line })),
+    [
+      { change: 'add-dark-mode', id: '1.1', text: '1.1 check contrast', line: 3 },
+      { change: 'fix-login', id: '2.1', text: '2.1 verify error copy', line: 8 },
+    ],
+  )
+  assert.deepEqual(
+    pending.automatic.map((item) => ({ change: item.change, id: item.id, line: item.line })),
+    [
+      { change: 'add-dark-mode', id: '1.2', line: 4 },
+      { change: 'fix-login', id: '2.2', line: 9 },
+    ],
+  )
+  assert.deepEqual(pendingAcceptanceTasks([]), { total: 0, manual: [], automatic: [] })
+  assert.deepEqual(pendingAcceptanceTasks(null), { total: 0, manual: [], automatic: [] })
 })
 
 test('countTaskCheckboxes: native task parity for the archive fallback', () => {

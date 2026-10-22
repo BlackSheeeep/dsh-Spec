@@ -49,9 +49,9 @@ function createOpenSpecPlugin(require) {
   /** Debounce for watch-driven refreshes. */
   const REFRESH_DEBOUNCE_MS = 400
   /** Session-less workspaces poll the Host route while the panel is open. */
-  const POLL_MS = 4000
+  const POLL_MS = 2000
   /** Poll fallback for a session workspace whose directory watch failed. */
-  const FALLBACK_POLL_MS = 8000
+  const FALLBACK_POLL_MS = 5000
   /** Upper bound for one Host route call so a lost RPC cannot hang the UI. */
   const RPC_TIMEOUT_MS = 15000
   /** How long an inline result banner stays visible. */
@@ -61,6 +61,8 @@ function createOpenSpecPlugin(require) {
   const SPEC_PAGE_SIZE = 8
   const ARCHIVE_PAGE_SIZE = 10
   const ISSUE_PAGE_SIZE = 5
+  /** Rows per group in the aggregate "waiting for acceptance" list. */
+  const PENDING_PAGE_SIZE = 8
   /** Lines fetched per document page (the Host route reports truncation). */
   const DOC_PAGE_LINES = 2000
 
@@ -87,7 +89,7 @@ function createOpenSpecPlugin(require) {
       changeCount: '{count} 个变更',
       archived: '已归档 {count} 个变更',
       watchDown: '目录监听不可用，已改用轮询刷新。',
-      pollingHint: '此工作区暂无会话，面板每 4 秒向 Host 轮询一次最新状态。',
+      pollingHint: '面板每 2 秒向 Host 轮询一次最新状态；变更进行中时会话状态也会即时刷新。',
       workspaceLabel: '工作区',
       specOverview: 'Spec 概览',
       activeChanges: '进行中的变更',
@@ -229,6 +231,8 @@ function createOpenSpecPlugin(require) {
       docShowMore: '继续读取（{count} 行）',
       docReadMoreFailed: '读取后续内容失败',
       docAtLine: '已定位到第 {line} 行',
+      docFullscreen: '放大阅读',
+      docExitFullscreen: '退出放大',
       validateAction: '校验',
       validating: '校验中…',
       validateTitle: '校验结果',
@@ -260,6 +264,62 @@ function createOpenSpecPlugin(require) {
       pickerTasks: '任务 {done}/{total}',
       pickerErrors: '{count} ERROR',
       pickerWarnings: '{count} WARNING',
+      changeSummary: '变更说明',
+      changeSummaryEmpty: '暂无变更说明（proposal.md 缺少 Why / What Changes）。',
+      changeHighlights: '变更内容',
+      highlightMore: '还有 {count} 项',
+      pendingAcceptance: '等待验收',
+      pendingManual: '人工验收',
+      pendingAutomatic: '其他待办',
+      pendingBreakdown: '人工 {manual} · 其他 {automatic}',
+      pendingEmpty: '没有等待验收的任务。',
+      pendingOpenTask: '打开任务清单',
+      pendingLimited: '部分变更的任务超过单次载入上限（200 条）；未列出的任务请打开各自 tasks.md 查看。',
+      statusPlanning: '规划中',
+      statusImplementing: '实施中',
+      statusReady: '待实施',
+      statusComplete: '已完成',
+      statusRunning: '进行中',
+      statusWaiting: '等待确认',
+      statusArchived: '已归档',
+      statusDesc: '由 Host 原生引擎直接计算，不占模型 token。',
+      statusRunHint: '该变更绑定的会话正在执行，完成前不能重复发起规划/实施操作。',
+      statusWaitHint: '该变更绑定的会话正在等待你确认（权限或问题），请先处理会话里的弹窗。',
+      boundSession: '绑定会话',
+      openSession: '打开会话',
+      boundSessionMissing: '绑定的会话已不存在，下次操作会新建一个。',
+      sessionShort: '会话 {id}',
+      exploreDialogTitle: '探索',
+      exploreDialogDesc: '先想清楚要做什么。探索是只读的，不会改动文件；点「开始探索」会直接发送到会话，不需要再按回车。',
+      exploreTopicLabel: '想讨论什么（可留空）',
+      exploreTopicPlaceholder: '例如：实时状态轮询应该怎么做？',
+      exploreStart: '开始探索',
+      proposeDialogTitle: '新建提案',
+      proposeDialogDesc: '描述这个变更要做什么。提交后 AI 会先总结描述、自动选择 change 名，再创建变更与规划工件；点「开始提案」直接发送到会话，不需要再按回车。',
+      proposeDescriptionLabel: '变更描述',
+      proposeDescriptionPlaceholder: '例如：支持 OpenSpec 面板实时显示变更状态，并禁止对进行中的变更重复操作。',
+      proposeAutoNameHint: '变更名由 AI 根据描述总结生成，创建完成后会显示在面板里；如需指定名称，可直接输入 /opsx-propose <name> <描述>。',
+      proposeStart: '开始提案',
+      proposeRequired: '请先填写变更描述。',
+      dialogCancel: '取消',
+      commandSentTo: '已发送到会话',
+      commandSending: '正在发送…',
+      commandSendFailed: '发送失败',
+      manualTask: '人工验收',
+      manualTaskHint: '该任务需要人工验收，完成后可在这里手动勾选。',
+      taskToggleFailed: '更新任务失败',
+      taskToggling: '正在更新…',
+      notifyDoneTitle: 'OpenSpec · {change} 已完成',
+      notifyDoneBody: 'AI 会话已结束本轮工作，变更任务已全部完成，可以验收或归档。',
+      notifyTurnTitle: 'OpenSpec · {change} 本轮结束',
+      notifyTurnBody: 'AI 已结束本轮工作，可以继续下一步操作。',
+      notifyPendingTitle: 'OpenSpec · {change} 需要确认',
+      notifyPendingBody: '会话正在等待你的权限确认或问题回答，请打开会话处理。',
+      notifyPendingGeneric: '有 OpenSpec 会话在等待你的确认。',
+      notifyHint: '点击打开对应会话',
+      notificationsBlocked: '浏览器未授权系统通知，已改为面板内提示。',
+      autoProposeTimeoutTitle: 'OpenSpec · 自动命名未完成',
+      autoProposeTimeoutBody: 'AI 没有在 10 分钟内创建新的变更目录；请检查会话，或手动执行 /opsx-propose <name>。',
     },
     en: {
       panel: 'OpenSpec',
@@ -282,7 +342,7 @@ function createOpenSpecPlugin(require) {
       changeCount: '{count} changes',
       archived: '{count} archived changes',
       watchDown: 'Directory watch unavailable; falling back to polling.',
-      pollingHint: 'No session in this workspace — the panel polls the Host for fresh state every 4s.',
+      pollingHint: 'The panel polls the Host for fresh state every 2s; session status refreshes immediately while a change is running.',
       workspaceLabel: 'Workspace',
       specOverview: 'Spec overview',
       activeChanges: 'Changes in motion',
@@ -424,6 +484,8 @@ function createOpenSpecPlugin(require) {
       docShowMore: 'Load {count} more lines',
       docReadMoreFailed: 'Failed to read more of the document',
       docAtLine: 'Located at line {line}',
+      docFullscreen: 'Expand reader',
+      docExitFullscreen: 'Exit expanded reader',
       validateAction: 'Validate',
       validating: 'Validating…',
       validateTitle: 'Validation result',
@@ -455,6 +517,62 @@ function createOpenSpecPlugin(require) {
       pickerTasks: 'Tasks {done}/{total}',
       pickerErrors: '{count} ERROR',
       pickerWarnings: '{count} WARNING',
+      changeSummary: 'Change summary',
+      changeSummaryEmpty: 'No summary yet (proposal.md has no Why / What Changes).',
+      changeHighlights: 'What changes',
+      highlightMore: '{count} more',
+      pendingAcceptance: 'Waiting for acceptance',
+      pendingManual: 'Manual acceptance',
+      pendingAutomatic: 'Other pending',
+      pendingBreakdown: 'Manual {manual} · Other {automatic}',
+      pendingEmpty: 'No tasks waiting for acceptance.',
+      pendingOpenTask: 'Open tasks.md',
+      pendingLimited: 'Some changes have more tasks than the 200-row payload cap; open their tasks.md for the rest.',
+      statusPlanning: 'Planning',
+      statusImplementing: 'Applying',
+      statusReady: 'Ready to apply',
+      statusComplete: 'Complete',
+      statusRunning: 'Running',
+      statusWaiting: 'Waiting',
+      statusArchived: 'Archived',
+      statusDesc: 'Computed directly by the Host native engine without spending model tokens.',
+      statusRunHint: 'The bound session is running; wait for it to finish before starting another planning/applying action.',
+      statusWaitHint: 'The bound session is waiting for your confirmation (permission or question). Answer it first.',
+      boundSession: 'Bound session',
+      openSession: 'Open session',
+      boundSessionMissing: 'The bound session no longer exists; the next action will create one.',
+      sessionShort: 'Session {id}',
+      exploreDialogTitle: 'Explore',
+      exploreDialogDesc: 'Think before changing anything. Explore is read-only and starts in the session immediately — no second Enter.',
+      exploreTopicLabel: 'What to explore (optional)',
+      exploreTopicPlaceholder: 'For example: how should live status polling work?',
+      exploreStart: 'Start exploring',
+      proposeDialogTitle: 'New proposal',
+      proposeDialogDesc: 'Describe what this change should do. After submitting, the AI summarizes it, chooses the change name, then creates the change and planning artifacts; Start proposal sends it immediately.',
+      proposeDescriptionLabel: 'Description',
+      proposeDescriptionPlaceholder: 'For example: show live change status in the OpenSpec panel and block duplicate actions while a change is running.',
+      proposeAutoNameHint: 'The AI derives the change name from your description; it appears in the panel once created. To choose a name yourself, run /opsx-propose <name> <description>.',
+      proposeStart: 'Start proposal',
+      proposeRequired: 'Describe the change first.',
+      dialogCancel: 'Cancel',
+      commandSentTo: 'Sent to session',
+      commandSending: 'Sending…',
+      commandSendFailed: 'Send failed',
+      manualTask: 'Manual check',
+      manualTaskHint: 'This task needs manual acceptance; tick it here once verified.',
+      taskToggleFailed: 'Failed to update the task',
+      taskToggling: 'Updating…',
+      notifyDoneTitle: 'OpenSpec · {change} finished',
+      notifyDoneBody: 'The AI session finished and every task is complete — ready for acceptance or archive.',
+      notifyTurnTitle: 'OpenSpec · {change} turn finished',
+      notifyTurnBody: 'The AI finished its turn; continue with the next step.',
+      notifyPendingTitle: 'OpenSpec · {change} needs confirmation',
+      notifyPendingBody: 'The session is waiting for a permission decision or an answer. Open it to continue.',
+      notifyPendingGeneric: 'An OpenSpec session is waiting for your confirmation.',
+      notifyHint: 'Click to open the session',
+      notificationsBlocked: 'System notifications are not permitted; showing an in-panel notice instead.',
+      autoProposeTimeoutTitle: 'OpenSpec · auto-naming did not finish',
+      autoProposeTimeoutBody: 'The AI did not create a new change directory within 10 minutes. Check the session or run /opsx-propose <name> manually.',
     },
   }
 
@@ -553,6 +671,22 @@ function createOpenSpecPlugin(require) {
 .dshspec-changeName{font-size:13.5px;line-height:19px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dshspec-changeButtons{flex:none;display:flex;align-items:center;gap:6px}
 .dshspec-changeProgress{flex:0 1 150px;min-width:96px}
+.dshspec-changeHint{padding:0 14px 8px 38px;min-width:0;font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dshspec-changeSummary{display:flex;flex-direction:column;gap:5px;min-width:0}
+.dshspec-changeDesc{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.dshspec-changeDescFull{font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.dshspec-changeSummaryHead{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
+.dshspec-summaryLabel{flex:none;font-size:10.5px;line-height:16px;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-interactive-bg-hover);border-radius:5px;padding:0 5px}
+.dshspec-highlights{display:flex;flex-wrap:wrap;gap:5px;min-width:0}
+.dshspec-highlight{display:inline-flex;align-items:center;min-width:0;max-width:100%;height:20px;padding:0 7px;border-radius:6px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dshspec-sessionChip{display:inline-flex;align-items:center;gap:5px;height:20px;max-width:160px;padding:0 7px;border:.5px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:10.5px;line-height:1;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dshspec-sessionChip:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshspec-statusBadge{display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 8px;border-radius:999px;font-size:11px;line-height:1;white-space:nowrap;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
+.dshspec-statusBadge[data-status='running'],.dshspec-statusBadge[data-status='waiting']{color:var(--dsw-alias-state-business-primary);background:var(--dsw-alias-interactive-bg-hover-accent)}
+.dshspec-statusBadge[data-status='complete']{color:var(--dsw-alias-state-success-primary)}
+.dshspec-statusBadge[data-status='running'] .dshspec-icon{animation:dshspec-rotate .9s linear infinite}
+.dshspec-btn[data-dshspec-run-status='running'] .dshspec-icon{animation:dshspec-rotate .9s linear infinite}
+.dshspec-inlineSpinner{animation:dshspec-rotate .9s linear infinite}
 .dshspec-dateChip{flex:none;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-interactive-bg-hover);border-radius:6px;padding:1px 6px;font-variant-numeric:tabular-nums}
 .dshspec-decoIcon{opacity:.5}
 
@@ -571,6 +705,27 @@ function createOpenSpecPlugin(require) {
 .dshspec-task .dshspec-icon{margin-top:2px;color:var(--dsw-alias-label-tertiary)}
 .dshspec-taskDone{color:var(--dsw-alias-label-tertiary)}
 .dshspec-taskDone .dshspec-icon{color:var(--dsw-alias-state-success-primary)}
+.dshspec-taskCheck{display:inline-flex;flex:none;align-items:center;justify-content:center;width:22px;height:22px;margin:-2px 0 -2px -4px;padding:0;border:none;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+.dshspec-taskCheck:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshspec-taskCheck:disabled{opacity:.45;cursor:default}
+.dshspec-taskCheck[data-done='true']{color:var(--dsw-alias-state-success-primary)}
+.dshspec-taskText{min-width:0;flex:1;overflow-wrap:anywhere}
+.dshspec-taskTags{display:inline-flex;align-items:center;gap:4px;flex:none;margin-left:4px}
+.dshspec-manualTag{display:inline-flex;align-items:center;height:17px;padding:0 6px;border-radius:5px;background:var(--dsw-alias-state-warn-tertiary,var(--dsw-alias-interactive-bg-hover));color:var(--dsw-alias-state-warn-label,var(--dsw-alias-label-secondary));font-size:10px;line-height:1;white-space:nowrap}
+/* Aggregate waiting-for-acceptance list */
+.dshspec-pendingList{display:flex;flex-direction:column}
+.dshspec-pendingGroup{display:flex;flex-direction:column}
+.dshspec-pendingGroup+.dshspec-pendingGroup{border-top:1px solid var(--dsw-alias-border-l2)}
+.dshspec-pendingGroupHead{display:flex;align-items:center;gap:8px;padding:8px 14px 5px;font-size:11.5px;line-height:16px;font-weight:500;color:var(--dsw-alias-label-secondary)}
+.dshspec-pendingRow{display:flex;align-items:flex-start;gap:8px;padding:6px 14px;font-size:12.5px;line-height:18px;min-width:0}
+.dshspec-pendingRow+.dshspec-pendingRow{border-top:1px solid var(--dsw-alias-border-l1)}
+.dshspec-pendingRow:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshspec-pendingRow .dshspec-taskCheck{margin-top:0}
+.dshspec-pendingChange{flex:none;max-width:190px;height:20px;padding:0 7px;border:none;border-radius:6px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font:inherit;font-size:10.5px;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.dshspec-pendingChange:hover{color:var(--dsw-alias-label-primary)}
+.dshspec-pendingText{flex:1;min-width:0;padding:0;border:none;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12.5px;line-height:18px;text-align:left;overflow-wrap:anywhere;cursor:pointer}
+.dshspec-pendingText:hover{color:var(--dsw-alias-label-primary);text-decoration:underline}
+.dshspec-pendingRow .dshspec-manualTag{margin-left:auto;flex:none}
 .dshspec-taskToggle{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;max-width:100%;padding:3px 8px 3px 5px;margin-left:-3px;border:none;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12.5px;line-height:18px;cursor:pointer;text-align:left;transition:background .12s ease,color .12s ease}
 .dshspec-taskToggle:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshspec-taskToggle:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
@@ -671,11 +826,17 @@ function createOpenSpecPlugin(require) {
 .dshspec-input{height:40px;width:100%;box-sizing:border-box;border-radius:12px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;padding:0 13px;transition:border-color .12s ease,box-shadow .12s ease}
 .dshspec-input::placeholder{color:var(--dsw-alias-label-caption)}
 .dshspec-input:focus{outline:none;border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}
+.dshspec-textarea{width:100%;min-height:96px;box-sizing:border-box;resize:vertical;border-radius:12px;border:1px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:13.5px;line-height:1.6;padding:10px 12px;transition:border-color .12s ease,box-shadow .12s ease}
+.dshspec-textarea::placeholder{color:var(--dsw-alias-label-caption)}
+.dshspec-textarea:focus{outline:none;border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 1px var(--dsw-alias-state-business-primary)}
+.dshspec-nameRow{display:flex;align-items:center;gap:8px;min-width:0}
+.dshspec-nameRow .dshspec-input{flex:1;min-width:0;font-size:13px;height:36px;font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace)}
 .dshspec-hint{font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
 .dshspec-errorText{font-size:12px;line-height:17px;color:var(--dsw-alias-state-error-primary)}
 
 /* Document viewer ------------------------------------------------------ */
-.dshspec-docViewport{max-height:min(62vh,620px);overflow:auto;padding:2px 2px 8px;border-top:.5px solid var(--dsw-alias-border-l1);margin-top:2px}
+.dshspec-docViewport{max-height:min(78vh,1040px);overflow:auto;padding:2px 2px 8px;border-top:.5px solid var(--dsw-alias-border-l1);margin-top:2px}
+.dshspec-docViewport .dshspec-markdown{max-width:1040px;margin:0 auto}
 .dshspec-docPath{font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);overflow-wrap:anywhere}
 .dshspec-markdown{font-size:14px;line-height:1.7;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere}
 .dshspec-markdown>*:first-child{margin-top:0}
@@ -869,6 +1030,10 @@ function createOpenSpecPlugin(require) {
       ['circle', { cx: 8, cy: 8, r: 5.6 }],
       ['path', { d: 'M8 4.9V8l2.1 1.3' }],
     ],
+    message: [
+      ['path', { d: 'M13.2 9.2a1.6 1.6 0 0 1-1.6 1.6H5.4L2.8 13.2V4a1.6 1.6 0 0 1 1.6-1.6h7.2A1.6 1.6 0 0 1 13.2 4z' }],
+      ['path', { d: 'M5.2 6.2h5.6M5.2 8.6h3.6' }],
+    ],
     arrowUpRight: [
       ['path', { d: 'M4.4 11.6 11.6 4.4' }],
       ['path', { d: 'M5.6 4.4h6v6' }],
@@ -1038,56 +1203,115 @@ function createOpenSpecPlugin(require) {
   }
 
   /* ------------------------------------------------------------------ *
-   * Command fills — one hook owns the panel / dock command buttons. Every
-   * action fills the composer draft and never sends; the extra explore /
-   * propose input dialogs are gone, the buttons insert the command head.
+   * Propose / explore dialogs.
+   *
+   * They replace the old "fill the composer and press Enter" flow: the propose
+   * dialog collects the description and sends `/opsx-propose --auto …`; the AI
+   * summarizes it, chooses the change name, scaffolds the native change and
+   * writes the plan. The client never guesses the name locally.
    * ------------------------------------------------------------------ */
 
-  /**
-   * Command helpers behind the panel / quick-bar buttons.
-   *
-   * Filling the command into the composer is the only action — nothing is sent
-   * automatically. Explore / propose are ordinary fills now; the old extra input
-   * dialog sat in front of the very same insert call and is gone.
-   */
-  function useCommands({ t, insert, onResult }) {
-    const execute = useCallback(
-      (line) => {
-        if (typeof insert !== 'function') {
-          onResult?.({ ok: false, text: t('insertFailed') }, line)
-          return
-        }
-        let result
-        try {
-          result = insert(line)
-        } catch (failure) {
-          onResult?.({ ok: false, text: failure instanceof Error ? failure.message : String(failure) }, line)
-          return
-        }
-        if (result === false) {
-          onResult?.({ ok: false, text: t('insertFailed') }, line)
-          return
-        }
-        if (result !== null && typeof result === 'object' && typeof result.then === 'function') {
-          void result.then(
-            (outcome) => {
-              if (outcome !== undefined && outcome !== null && outcome.ok === false) onResult?.(outcome, line)
-              else onResult?.(outcome ?? { ok: true, text: line }, line)
-            },
-            (failure) => onResult?.({ ok: false, text: failure instanceof Error ? failure.message : String(failure) }, line),
-          )
-          return
-        }
-        onResult?.({ ok: true, text: line }, line)
-      },
-      [insert, onResult, t],
-    )
+  function ProposeDialog({ t, busy, error: externalError, onClose, onSubmit }) {
+    const [description, setDescription] = useState('')
+    const [error, setError] = useState('')
 
-    // Explore / propose insert the command head and leave the caret after the
-    // trailing space: the user types the topic / change name in the composer.
-    const fillExplore = useCallback(() => execute('/opsx-explore '), [execute])
-    const fillPropose = useCallback(() => execute('/opsx-propose '), [execute])
-    return { execute, fillExplore, fillPropose }
+    const submit = () => {
+      if (busy === true) return
+      const text = description.trim()
+      if (text === '') {
+        setError(t('proposeRequired'))
+        return
+      }
+      setError('')
+      onSubmit({ description: text })
+    }
+
+    return h(
+      Modal,
+      {
+        t,
+        title: t('proposeDialogTitle'),
+        description: t('proposeDialogDesc'),
+        onClose,
+        width: 620,
+        footer: [
+          h(Button, { key: 'cancel', variant: 'ghost', size: 'md', onClick: onClose, disabled: busy }, t('dialogCancel')),
+          h(
+            Button,
+            { key: 'start', variant: 'primary', size: 'md', icon: 'send', onClick: submit, disabled: busy === true },
+            busy === true ? t('commandSending') : t('proposeStart'),
+          ),
+        ],
+      },
+      h(
+        'div',
+        { className: 'dshspec-field' },
+        h('label', { className: 'dshspec-fieldLabel' }, t('proposeDescriptionLabel')),
+        h('textarea', {
+          className: 'dshspec-textarea',
+          rows: 4,
+          maxLength: 4000,
+          'data-autofocus': true,
+          value: description,
+          placeholder: t('proposeDescriptionPlaceholder'),
+          onChange: (event) => setDescription(event.target.value),
+          onKeyDown: (event) => {
+            if (event.isComposing === true) return
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault()
+              submit()
+            }
+          },
+        }),
+      ),
+      h('div', { className: 'dshspec-hint' }, t('proposeAutoNameHint')),
+      error === '' ? null : h(Banner, { tone: 'error', wrap: true }, error),
+      externalError === undefined || externalError === '' ? null : h(Banner, { tone: 'error', wrap: true }, externalError),
+    )
+  }
+
+  function ExploreDialog({ t, busy, error: externalError, onClose, onSubmit }) {
+    const [topic, setTopic] = useState('')
+    return h(
+      Modal,
+      {
+        t,
+        title: t('exploreDialogTitle'),
+        description: t('exploreDialogDesc'),
+        onClose,
+        width: 580,
+        footer: [
+          h(Button, { key: 'cancel', variant: 'ghost', size: 'md', onClick: onClose, disabled: busy }, t('dialogCancel')),
+          h(
+            Button,
+            { key: 'start', variant: 'primary', size: 'md', icon: 'compass', onClick: () => onSubmit(topic.trim()), disabled: busy === true },
+            busy === true ? t('commandSending') : t('exploreStart'),
+          ),
+        ],
+      },
+      h(
+        'div',
+        { className: 'dshspec-field' },
+        h('label', { className: 'dshspec-fieldLabel' }, t('exploreTopicLabel')),
+        h('textarea', {
+          className: 'dshspec-textarea',
+          rows: 3,
+          maxLength: 4000,
+          'data-autofocus': true,
+          value: topic,
+          placeholder: t('exploreTopicPlaceholder'),
+          onChange: (event) => setTopic(event.target.value),
+          onKeyDown: (event) => {
+            if (event.isComposing === true || busy === true) return
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+              event.preventDefault()
+              onSubmit(topic.trim())
+            }
+          },
+        }),
+      ),
+      externalError === undefined || externalError === '' ? null : h(Banner, { tone: 'error', wrap: true }, externalError),
+    )
   }
 
   /* ------------------------------------------------------------------ *
@@ -1095,9 +1319,9 @@ function createOpenSpecPlugin(require) {
    *
    * The browser never parses openspec/ files: every shape below comes from
    * `ctx.connection.rpc.call('/dsh-spec', method, payload)` (see
-   * docs/native-module-contract.md §4/§5). A session file watch (or a 4s poll
-   * for session-less workspaces) only decides when to re-read; nothing is
-   * stored outside the React external store.
+   * docs/native-module-contract.md §4/§5). A session file watch (or a 2s poll
+   * for session-less workspaces) only decides when to re-read; workflow state
+   * is never stored outside the React external store.
    * ------------------------------------------------------------------ */
 
   /** Join an absolute workspace root and a workspace-relative POSIX path. */
@@ -1167,6 +1391,17 @@ function createOpenSpecPlugin(require) {
       schemaName: typeof value.schemaName === 'string' ? value.schemaName : '',
       schemaSource: value.schemaSource === 'project' || value.schemaSource === 'builtin' ? value.schemaSource : undefined,
       metadata: value.metadata !== null && typeof value.metadata === 'object' ? value.metadata : { found: false },
+      summary:
+        value.summary !== null && typeof value.summary === 'object'
+          ? {
+              headline: typeof value.summary.headline === 'string' ? value.summary.headline : '',
+              description: typeof value.summary.description === 'string' ? value.summary.description : '',
+              highlights: Array.isArray(value.summary.highlights)
+                ? value.summary.highlights.filter((item) => typeof item === 'string' && item !== '')
+                : [],
+              source: typeof value.summary.source === 'string' ? value.summary.source : 'none',
+            }
+          : { headline: '', description: '', highlights: [], source: 'none' },
       artifacts: Array.isArray(value.artifacts) ? value.artifacts : [],
       docs: Array.isArray(value.docs) ? value.docs : [],
       delta:
@@ -1267,7 +1502,7 @@ function createOpenSpecPlugin(require) {
       })()
     }
 
-    /** Pick the freshness strategy: session watch, else 4s polling. */
+    /** Pick the freshness strategy: session watch, else 2s polling. */
     const ensureFreshness = () => {
       if (listeners.size === 0) return
       const sessionId = row.sessionId
@@ -1404,6 +1639,22 @@ function createOpenSpecPlugin(require) {
       }
     }
 
+    /** Tick or untick one task checkbox (`task-toggle` route method), then re-read state. */
+    const toggleTask = async (changeName, line, done) => {
+      try {
+        const value = await callRoute(
+          ctx,
+          'task-toggle',
+          { cwd, change: changeName, line, done: done === true },
+          '更新任务',
+        )
+        await refresh()
+        return { ok: true, value }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
     const start = () => {
       watchFailed = false
       disposers.push(
@@ -1454,6 +1705,7 @@ function createOpenSpecPlugin(require) {
       loadArchive,
       validateChange,
       syncPreview,
+      toggleTask,
     }
   }
 
@@ -1469,6 +1721,251 @@ function createOpenSpecPlugin(require) {
       }
     } catch (error) {
       return { ok: false, text: error instanceof Error ? error.message : String(error), created: [] }
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Change ↔ session bindings.
+   *
+   * A change gets one conversation. The binding is UI state, not OpenSpec
+   * workflow state, so it lives in the browser's localStorage (per origin) and
+   * keyed by the canonical workspace path + change name. The Host title watcher
+   * and every panel/dock action also refresh it, so a session started by typing
+   * a phase command is bound the same way as one started from the panel.
+   * ------------------------------------------------------------------ */
+
+  /** localStorage key; bump the suffix when the shape changes. */
+  const BINDINGS_KEY = 'dsh-spec.bindings.v1'
+
+  /** Stable, separator-normalized workspace key. */
+  function bindingCwdKey(cwd) {
+    return String(cwd ?? '').replace(/\\/g, '/').replace(/\/+$/, '')
+  }
+
+  /** Empty immutable binding snapshot. */
+  const EMPTY_BINDINGS = Object.freeze({ version: 1, workspaces: Object.freeze({}) })
+
+  /** Coerce an arbitrary localStorage value into the binding shape. */
+  function normalizeBindings(value) {
+    if (value === null || typeof value !== 'object' || value.workspaces === null || typeof value.workspaces !== 'object') {
+      return EMPTY_BINDINGS
+    }
+    const workspaces = {}
+    for (const [rawCwd, workspace] of Object.entries(value.workspaces)) {
+      if (rawCwd === '' || workspace === null || typeof workspace !== 'object') continue
+      const changes = {}
+      const rawChanges = workspace.changes !== null && typeof workspace.changes === 'object' ? workspace.changes : {}
+      for (const [name, binding] of Object.entries(rawChanges)) {
+        if (name === '' || binding === null || typeof binding !== 'object') continue
+        if (typeof binding.sessionId !== 'string' || binding.sessionId === '') continue
+        changes[name] = {
+          sessionId: binding.sessionId,
+          phase: typeof binding.phase === 'string' ? binding.phase : 'unknown',
+          updatedAt: Number.isFinite(binding.updatedAt) ? binding.updatedAt : 0,
+        }
+      }
+      const explore =
+        workspace.explore !== null && typeof workspace.explore === 'object' && typeof workspace.explore.sessionId === 'string' && workspace.explore.sessionId !== ''
+          ? { sessionId: workspace.explore.sessionId, updatedAt: Number.isFinite(workspace.explore.updatedAt) ? workspace.explore.updatedAt : 0 }
+          : null
+      workspaces[bindingCwdKey(rawCwd)] = { changes, explore }
+    }
+    return { version: 1, workspaces }
+  }
+
+  /** Read the stored bindings, tolerating unavailable/blocked storage. */
+  function loadBindings() {
+    try {
+      if (typeof localStorage === 'undefined') return EMPTY_BINDINGS
+      const raw = localStorage.getItem(BINDINGS_KEY)
+      if (raw === null || raw === '') return EMPTY_BINDINGS
+      return normalizeBindings(JSON.parse(raw))
+    } catch {
+      return EMPTY_BINDINGS
+    }
+  }
+
+  /** Persist one binding snapshot; storage failures are ignored (UI state only). */
+  function saveBindings(snapshot) {
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(BINDINGS_KEY, JSON.stringify(snapshot))
+    } catch {
+      /* quota/private mode: bindings stay in memory for this page */
+    }
+  }
+
+  /** Observable binding store shared by the panel, dock and notification watcher. */
+  function createBindingStore() {
+    let snapshot = loadBindings()
+    const listeners = new Set()
+    const notify = () => {
+      for (const listener of listeners) listener()
+    }
+    const commit = (next) => {
+      snapshot = next
+      saveBindings(next)
+      notify()
+    }
+    const updateWorkspace = (cwd, updater) => {
+      const key = bindingCwdKey(cwd)
+      const current = snapshot.workspaces[key] ?? { changes: {}, explore: null }
+      const nextWorkspace = updater(current)
+      commit({
+        ...snapshot,
+        workspaces: { ...snapshot.workspaces, [key]: nextWorkspace },
+      })
+    }
+    return {
+      subscribe(listener) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      getSnapshot: () => snapshot,
+      get(cwd, change) {
+        if (typeof change !== 'string' || change === '') return null
+        return snapshot.workspaces[bindingCwdKey(cwd)]?.changes?.[change] ?? null
+      },
+      getExplore(cwd) {
+        return snapshot.workspaces[bindingCwdKey(cwd)]?.explore ?? null
+      },
+      changeForSession(cwd, sessionId) {
+        if (typeof sessionId !== 'string' || sessionId === '') return null
+        const changes = snapshot.workspaces[bindingCwdKey(cwd)]?.changes ?? {}
+        for (const [name, binding] of Object.entries(changes)) {
+          if (binding.sessionId === sessionId) return name
+        }
+        return null
+      },
+      findSession(sessionId) {
+        if (typeof sessionId !== 'string' || sessionId === '') return null
+        for (const [cwd, workspace] of Object.entries(snapshot.workspaces)) {
+          for (const [change, binding] of Object.entries(workspace.changes ?? {})) {
+            if (binding.sessionId === sessionId) return { cwd, change, phase: binding.phase }
+          }
+          if (workspace.explore?.sessionId === sessionId) return { cwd, change: null, phase: 'explore' }
+        }
+        return null
+      },
+      set(cwd, change, sessionId, phase) {
+        if (typeof change !== 'string' || change === '' || typeof sessionId !== 'string' || sessionId === '') return
+        const existing = snapshot.workspaces[bindingCwdKey(cwd)]?.changes?.[change]
+        if (existing !== undefined && existing.sessionId === sessionId && existing.phase === phase) return
+        updateWorkspace(cwd, (workspace) => {
+          // One conversation belongs to one change: binding a session to a new
+          // change drops any previous change that still pointed at it, so the
+          // panel never shows two changes sharing one window.
+          const nextChanges = {}
+          for (const [name, binding] of Object.entries(workspace.changes)) {
+            if (name !== change && binding.sessionId === sessionId) continue
+            nextChanges[name] = binding
+          }
+          nextChanges[change] = { sessionId, phase: typeof phase === 'string' ? phase : 'unknown', updatedAt: Date.now() }
+          return { ...workspace, changes: nextChanges }
+        })
+      },
+      setExplore(cwd, sessionId) {
+        if (typeof sessionId !== 'string' || sessionId === '') return
+        const existing = snapshot.workspaces[bindingCwdKey(cwd)]?.explore
+        if (existing !== null && existing !== undefined && existing.sessionId === sessionId) return
+        updateWorkspace(cwd, (workspace) => ({ ...workspace, explore: { sessionId, updatedAt: Date.now() } }))
+      },
+      remove(cwd, change) {
+        const workspace = snapshot.workspaces[bindingCwdKey(cwd)]
+        if (workspace === undefined || workspace.changes?.[change] === undefined) return
+        const nextChanges = { ...workspace.changes }
+        delete nextChanges[change]
+        updateWorkspace(cwd, (current) => ({ ...current, changes: nextChanges }))
+      },
+      sessionIds() {
+        const out = []
+        for (const workspace of Object.values(snapshot.workspaces)) {
+          for (const binding of Object.values(workspace.changes ?? {})) out.push(binding.sessionId)
+          if (workspace.explore?.sessionId !== undefined) out.push(workspace.explore.sessionId)
+        }
+        return [...new Set(out)]
+      },
+    }
+  }
+
+  /** Stable empty snapshot for compositions without `uiSession.sessionStatus`. */
+  const EMPTY_SESSION_STATUSES = new Map()
+
+  /** Read the published `uiSession.sessionStatus` source, when this composition has it. */
+  function emptySessionStatuses() {
+    return EMPTY_SESSION_STATUSES
+  }
+
+  /** Subscribe to `uiSession.sessionStatus` (running / pending interaction / unread). */
+  function useSessionStatuses(source) {
+    return useSyncExternalStore(
+      source !== undefined && typeof source?.subscribe === 'function' ? source.subscribe : () => () => {},
+      source !== undefined && typeof source?.getSnapshot === 'function' ? source.getSnapshot : emptySessionStatuses,
+    )
+  }
+
+  /** Subscribe to the binding store snapshot. */
+  function useBindings(store) {
+    return useSyncExternalStore(
+      store !== undefined && typeof store?.subscribe === 'function' ? store.subscribe : () => () => {},
+      store !== undefined && typeof store?.getSnapshot === 'function' ? store.getSnapshot : () => EMPTY_BINDINGS,
+    )
+  }
+
+  /** Listen for the in-app fallback emitted when OS notifications are blocked. */
+  function useSystemNotice(handler) {
+    const ref = useRef(handler)
+    ref.current = handler
+    useEffect(() => {
+      if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return () => {}
+      const onNotice = (event) => {
+        const detail = event?.detail
+        if (detail === null || detail === undefined) return
+        const title = typeof detail.title === 'string' && detail.title !== '' ? detail.title : ''
+        const text = typeof detail.text === 'string' && detail.text !== '' ? detail.text : title
+        const notice = title !== '' && text !== title ? `${title} · ${text}` : text
+        if (typeof notice === 'string' && notice !== '') ref.current(notice, detail)
+      }
+      window.addEventListener('dsh-spec:notice', onNotice)
+      return () => window.removeEventListener('dsh-spec:notice', onNotice)
+    }, [])
+  }
+
+  /** Map one change + its bound-session status to the panel's live state badge. */
+  function changeStatusInfo(change, binding, statuses, t) {
+    const status = binding !== null && binding !== undefined && statuses instanceof Map ? statuses.get(binding.sessionId) : undefined
+    const waiting = status?.pendingInteraction !== undefined && status?.pendingInteraction !== null
+    const running = status?.running === true
+    const complete = change?.isPlanningComplete === true && change?.listStatus === 'complete'
+    let kind
+    if (waiting) kind = 'waiting'
+    else if (running) kind = 'running'
+    else if (complete) kind = 'complete'
+    else if (change?.isPlanningComplete !== true) kind = 'planning'
+    else if (change?.listStatus === 'in-progress') kind = 'implementing'
+    else kind = 'ready'
+    const labelKey = {
+      waiting: 'statusWaiting',
+      running: 'statusRunning',
+      complete: 'statusComplete',
+      planning: 'statusPlanning',
+      implementing: 'statusImplementing',
+      ready: 'statusReady',
+    }[kind]
+    const tone = {
+      waiting: 'warn',
+      running: 'business',
+      complete: 'success',
+      planning: 'business',
+      implementing: 'business',
+      ready: 'muted',
+    }[kind]
+    return {
+      kind,
+      label: typeof t === 'function' ? t(labelKey) : labelKey,
+      tone,
+      busy: running || waiting,
+      status,
+      sessionId: binding?.sessionId ?? null,
     }
   }
 
@@ -1967,6 +2464,7 @@ function createOpenSpecPlugin(require) {
     const [error, setError] = useState(null)
     const [moreBusy, setMoreBusy] = useState(false)
     const [moreError, setMoreError] = useState(null)
+    const [fullscreen, setFullscreen] = useState(false)
     const align = async () => {
       if (typeof onAlign !== 'function' || busy) return
       setBusy(true)
@@ -2001,21 +2499,38 @@ function createOpenSpecPlugin(require) {
         title: doc.title,
         description: doc.relPath ?? doc.path,
         onClose,
-        width: 800,
+        width: fullscreen ? 'calc(100vw - 24px)' : 'min(1200px, calc(100vw - 48px))',
         focusCard: true,
-        headActions:
-          typeof onAlign === 'function'
-            ? h(
-                Button,
-                { variant: 'outline', size: 'sm', icon: 'arrowUpRight', disabled: busy, onClick: () => void align() },
-                busy ? t('alignBusy') : t('alignDoc'),
-              )
-            : undefined,
+        headActions: h(
+          'div',
+          { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+          [
+            typeof onAlign === 'function'
+              ? h(
+                  Button,
+                  { key: 'align', variant: 'outline', size: 'sm', icon: 'arrowUpRight', disabled: busy, onClick: () => void align() },
+                  busy ? t('alignBusy') : t('alignDoc'),
+                )
+              : null,
+            h(
+              Button,
+              {
+                key: 'fullscreen',
+                variant: 'ghost',
+                size: 'sm',
+                icon: fullscreen ? 'close' : 'layout',
+                'aria-pressed': fullscreen ? 'true' : 'false',
+                onClick: () => setFullscreen((value) => !value),
+              },
+              fullscreen ? t('docExitFullscreen') : t('docFullscreen'),
+            ),
+          ],
+        ),
       },
       error === null ? null : h(Banner, { tone: 'error', wrap: true }, error),
       h(
         'div',
-        { className: 'dshspec-docViewport' },
+        { className: 'dshspec-docViewport', style: { maxHeight: fullscreen ? 'calc(100vh - 150px)' : 'min(78vh, 1040px)' } },
         doc.status === 'loading'
           ? h(LoadingBody)
           : doc.status === 'error'
@@ -2284,17 +2799,21 @@ function createOpenSpecPlugin(require) {
    * trimmed them, the block says so and offers the raw tracked document instead
    * of silently dropping rows.
    */
-  function TaskChecklist({ t, tasks, docPath, openDoc }) {
+  function TaskChecklist({ t, tasks, docPath, openDoc, changeName, onToggleTask, busyLine, disabled }) {
     const [open, setOpen] = useState(false)
     const view = taskChecklistView(tasks)
     if (view.total === 0) return h('div', { className: 'dshspec-note' }, t('noTasks'))
     const toggle = () => setOpen((value) => !value)
     const hint = view.missing ? t('taskItemsMissing') : view.limited ? tx(t, 'taskItemsHidden', { count: view.hidden }) : ''
     const canOpenDoc = typeof openDoc === 'function' && typeof docPath === 'string' && docPath !== ''
+    const canToggle = typeof onToggleTask === 'function' && typeof changeName === 'string' && changeName !== ''
+    const manualCount = view.items.filter((item) => item.manual && !item.done).length
     const openTasksDoc = () => {
       if (!canOpenDoc) return
       openDoc({ path: docPath, label: basenameOf(docPath) || t('taskList') })
     }
+    /** `[人工验收]` is metadata, not part of the sentence the user reads. */
+    const taskLabel = (text) => String(text ?? '').replace(/(?:\[|【)\s*人工验收\s*(?:\]|】)/g, '').trim()
     return h(
       'div',
       { className: 'dshspec-taskBlock', 'data-dshspec-tasks': view.missing ? 'missing' : view.limited ? 'limited' : 'ready' },
@@ -2311,24 +2830,52 @@ function createOpenSpecPlugin(require) {
         h(Icon, { name: 'chevronRight', size: 12, className: 'dshspec-chev' + (open ? ' dshspec-chevOpen' : '') }),
         h('b', null, t('taskList')),
         h('span', { className: 'dshspec-taskToggleMeta' }, tx(t, 'tasksDone', { done: view.done, total: view.total })),
+        manualCount > 0 ? h('span', { className: 'dshspec-manualTag', title: t('manualTaskHint') }, `${t('manualTask')} ${manualCount}`) : null,
         hint === '' ? null : h('span', { className: 'dshspec-taskToggleHint' }, hint),
       ),
       open
         ? h(
             'ul',
             { className: 'dshspec-taskList', 'data-dshspec-task-list': 'open' },
-            view.items.map((item, index) =>
-              h(
+            view.items.map((item, index) => {
+              const line = item.line
+              const togglable = canToggle && line !== null
+              const busy = busyLine !== undefined && busyLine !== null && line === busyLine
+              return h(
                 'li',
                 {
-                  key: `${item.id ?? 'task'}-${index}`,
+                  key: `${item.id ?? 'task'}-${line ?? index}-${index}`,
                   className: 'dshspec-task' + (item.done ? ' dshspec-taskDone' : ''),
                   style: item.depth > 0 ? { paddingLeft: item.depth * 14 } : undefined,
                 },
-                h(Icon, { name: item.done ? 'checkSquare' : 'square', size: 14 }),
-                h('span', null, item.text),
-              ),
-            ),
+                togglable
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'dshspec-taskCheck',
+                        'data-done': item.done ? 'true' : 'false',
+                        title: item.manual ? t('manualTaskHint') : t('taskList'),
+                        disabled: busy || disabled === true,
+                        onClick: () => onToggleTask(changeName, line, !item.done),
+                      },
+                      h(Icon, {
+                        name: busy ? 'refresh' : item.done ? 'checkSquare' : 'square',
+                        size: 14,
+                        className: busy ? 'dshspec-inlineSpinner' : undefined,
+                      }),
+                    )
+                  : h(Icon, { name: item.done ? 'checkSquare' : 'square', size: 14 }),
+                h('span', { className: 'dshspec-taskText' }, taskLabel(item.text) || item.text),
+                item.manual
+                  ? h(
+                      'span',
+                      { className: 'dshspec-taskTags' },
+                      h('span', { className: 'dshspec-manualTag', title: t('manualTaskHint') }, t('manualTask')),
+                    )
+                  : null,
+              )
+            }),
           )
         : null,
       open && canOpenDoc
@@ -2348,6 +2895,102 @@ function createOpenSpecPlugin(require) {
     const tracks = typeof change?.tracks === 'string' && change.tracks !== '' ? change.tracks : 'tasks.md'
     const match = docs.find((doc) => typeof doc?.path === 'string' && (doc.path === tracks || doc.path.endsWith(`/${tracks}`)))
     return match === undefined ? undefined : match.path
+  }
+
+  /** One classified group (manual / other) of the aggregate pending-task list. */
+  function PendingGroup({ t, title, items, onOpenTask, onToggleTask, taskBusy, isBusy }) {
+    const [limit, reveal] = useVisibleLimit(PENDING_PAGE_SIZE)
+    if (!Array.isArray(items) || items.length === 0) return null
+    const page = paginate(items, { pageSize: limit })
+    return h(
+      'div',
+      { className: 'dshspec-pendingGroup' },
+      h(
+        'div',
+        { className: 'dshspec-pendingGroupHead' },
+        h('span', null, title),
+        h('span', { className: 'dshspec-sectionCount' }, String(items.length)),
+      ),
+      page.items.map((item, index) => {
+        const line = item.line
+        const busyLine = taskBusy !== null && taskBusy !== undefined && taskBusy.change === item.change && taskBusy.line === line
+        const busy = busyLine || (typeof isBusy === 'function' && isBusy(item.change) === true)
+        const canToggle = line !== null && typeof onToggleTask === 'function'
+        return h(
+          'div',
+          { className: 'dshspec-pendingRow', key: `${item.change}:${line ?? 'x'}:${item.id ?? index}` },
+          canToggle
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dshspec-taskCheck',
+                  'data-done': 'false',
+                  title: item.manual ? t('manualTaskHint') : t('taskList'),
+                  disabled: busy,
+                  onClick: () => onToggleTask(item.change, line, true),
+                },
+                h(Icon, { name: busy ? 'refresh' : 'square', size: 14, className: busy ? 'dshspec-inlineSpinner' : undefined }),
+              )
+            : h(Icon, { name: 'clock', size: 14 }),
+          h(
+            'button',
+            { type: 'button', className: 'dshspec-pendingChange', title: `${item.change} · ${t('pendingOpenTask')}`, onClick: () => onOpenTask(item) },
+            item.change,
+          ),
+          h(
+            'button',
+            { type: 'button', className: 'dshspec-pendingText', title: `${item.text} · ${t('pendingOpenTask')}`, onClick: () => onOpenTask(item) },
+            item.text,
+          ),
+          item.manual ? h('span', { className: 'dshspec-manualTag', title: t('manualTaskHint') }, t('manualTask')) : null,
+        )
+      }),
+      h(ListMore, { t, hidden: page.hidden, reveal: Math.min(page.pageSize, page.hidden), onMore: reveal }),
+    )
+  }
+
+  /** Aggregate "waiting for acceptance" list across every active change. */
+  function PendingAcceptanceSection({ t, pending, limited, onOpenTask, onToggleTask, taskBusy, isBusy }) {
+    return h(
+      Section,
+      {
+        title: t('pendingAcceptance'),
+        count: pending.total,
+        // Open automatically only when there is human acceptance waiting;
+        // otherwise keep the panel compact and let the user expand the count.
+        defaultOpen: pending.manual.length > 0,
+        headMeta:
+          pending.total === 0
+            ? null
+            : h('span', { className: 'dshspec-note' }, tx(t, 'pendingBreakdown', { manual: pending.manual.length, automatic: pending.automatic.length })),
+      },
+      pending.total === 0
+        ? h('div', { className: 'dshspec-note', style: { padding: '10px 14px' } }, t('pendingEmpty'))
+        : h(
+            'div',
+            { className: 'dshspec-pendingList' },
+            h(PendingGroup, {
+              t,
+              title: t('pendingManual'),
+              items: pending.manual,
+              onOpenTask,
+              onToggleTask,
+              taskBusy,
+              isBusy,
+            }),
+            h(PendingGroup, {
+              t,
+              title: t('pendingAutomatic'),
+              items: pending.automatic,
+              onOpenTask,
+              onToggleTask,
+              taskBusy,
+              isBusy,
+            }),
+            limited === true ? h('div', { className: 'dshspec-note', style: { padding: '8px 14px 10px' } }, t('pendingLimited')) : null,
+          ),
+    )
   }
 
   /** Validation issues with level, path and line; clicking opens the document. */
@@ -2480,13 +3123,36 @@ function createOpenSpecPlugin(require) {
    * body adds schema-derived docs, `.openspec.yaml` metadata, delta counts,
    * validation issues and the native next step.
    */
-  function ChangeCard({ t, change, open, onToggle, commands, openDoc, onIssue, onValidate, onSyncPreview }) {
+  function ChangeCard({
+    t,
+    change,
+    open,
+    onToggle,
+    openDoc,
+    onIssue,
+    onValidate,
+    onSyncPreview,
+    runStatus,
+    boundSession,
+    onOpenSession,
+    onRun,
+    onPropose,
+    onToggleTask,
+    taskBusyLine,
+  }) {
     const action = deriveNextAction(change)
     const progress = taskProgressInfo(change.tasks)
     const blocked = blockedArtifacts(change.artifacts)
     const validation = change.validation ?? {}
     const deltaText = deltaSummaryText(t, change.delta)
+    const summary = change.summary ?? { headline: '', description: '', highlights: [] }
+    const headline = summary.headline || summary.description
+    const status = runStatus ?? { kind: 'planning', label: t('statusPlanning'), tone: 'business', busy: false }
+    const busy = status.busy === true
     const toggle = () => onToggle()
+    const openBound = () => {
+      if (typeof onOpenSession === 'function') onOpenSession(boundSession)
+    }
     return h(
       'div',
       { className: 'dshspec-item', 'data-dshspec-change': change.name },
@@ -2507,14 +3173,35 @@ function createOpenSpecPlugin(require) {
         },
         h(Icon, { name: 'chevronRight', size: 14, className: 'dshspec-chev' + (open ? ' dshspec-chevOpen' : '') }),
         h('span', { className: 'dshspec-changeName', title: change.name }, change.name),
+        h(
+          'span',
+          { className: 'dshspec-statusBadge', 'data-status': status.kind, title: busy ? (status.kind === 'waiting' ? t('statusWaitHint') : t('statusRunHint')) : status.label },
+          h(Icon, { name: status.kind === 'running' ? 'refresh' : status.kind === 'waiting' ? 'alert' : status.kind === 'complete' ? 'check' : 'activity', size: 11 }),
+          status.label,
+        ),
         change.schemaName === ''
           ? null
           : h(ToneBadge, { tone: 'muted', title: tx(t, 'changeSchema', { name: change.schemaName }) }, change.schemaName),
-        h(ToneBadge, { tone: change.isPlanningComplete ? 'success' : 'business' }, t(change.isPlanningComplete ? 'plannerComplete' : 'planning')),
         change.metadata.skip_specs === true ? h(ToneBadge, { tone: 'muted', title: t('skipSpecs') }, t('skipSpecs')) : null,
         blocked.length > 0
           ? h(ToneBadge, { tone: 'warn', title: t('changesBlockedHint') }, tx(t, 'blockedCount', { count: blocked.length }))
           : null,
+        boundSession === null || boundSession === undefined
+          ? null
+          : h(
+              'button',
+              {
+                type: 'button',
+                className: 'dshspec-sessionChip',
+                title: `${t('boundSession')} · ${boundSession.sessionId}`,
+                onClick: (event) => {
+                  event.stopPropagation()
+                  openBound()
+                },
+              },
+              h(Icon, { name: 'message', size: 11 }),
+              tx(t, 'sessionShort', { id: boundSession.sessionId.slice(0, 8) }),
+            ),
         progress.total > 0
           ? h(
               'div',
@@ -2531,26 +3218,56 @@ function createOpenSpecPlugin(require) {
             {
               variant: 'primary',
               size: 'md',
-              icon: nextActionIcon(action.kind),
-              title: change.nextSteps.length > 0 ? `${t('quickNext')} · ${change.nextSteps.join(' · ')}` : nextActionText(t, action),
+              icon: busy ? 'refresh' : nextActionIcon(action.kind),
+              title: busy ? (status.kind === 'waiting' ? t('statusWaitHint') : t('statusRunHint')) : change.nextSteps.length > 0 ? `${t('quickNext')} · ${change.nextSteps.join(' · ')}` : nextActionText(t, action),
+              disabled: busy,
+              'data-dshspec-run-status': status.kind,
               onClick: (event) => {
                 event.stopPropagation()
-                if (action.kind === 'propose') commands.fillPropose()
-                else commands.execute(action.line)
+                if (busy) return
+                if (action.kind === 'propose') {
+                  if (typeof onPropose === 'function') onPropose()
+                  return
+                }
+                if (typeof onRun === 'function') onRun(action.line, change.name)
               },
             },
-            nextActionText(t, action),
+            busy ? status.label : nextActionText(t, action),
           ),
         ),
       ),
+      headline === ''
+        ? null
+        : h('div', { className: 'dshspec-changeHint', title: headline }, headline),
       h('div', { className: 'dshspec-itemChips' }, h(ArtifactChips, { t, change })),
       open
         ? h(
             'div',
             { className: 'dshspec-itemBody' },
+            h('div', { className: 'dshspec-subHead' }, h('b', null, t('changeSummary'))),
+            h('div', { className: 'dshspec-changeDescFull' }, summary.description === '' ? t('changeSummaryEmpty') : summary.description),
+            summary.highlights.length === 0
+              ? null
+              : h(
+                  'div',
+                  { className: 'dshspec-highlights' },
+                  h('span', { key: 'label', className: 'dshspec-summaryLabel' }, t('changeHighlights')),
+                  summary.highlights.slice(0, 4).map((item, index) =>
+                    h('span', { key: index, className: 'dshspec-highlight', title: item }, item),
+                  ),
+                ),
             h('div', { className: 'dshspec-subHead' }, h('b', null, t('metadataLabel')), h('span', null, t('effectiveSchema') + ' · ' + (change.schemaName || '—'))),
             h(MetadataRows, { t, metadata: change.metadata }),
-            h(TaskChecklist, { t, tasks: change.tasks, docPath: tasksDocOf(change), openDoc }),
+            h(TaskChecklist, {
+              t,
+              tasks: change.tasks,
+              docPath: tasksDocOf(change),
+              openDoc,
+              changeName: change.name,
+              onToggleTask,
+              busyLine: taskBusyLine,
+              disabled: busy,
+            }),
             h('div', { className: 'dshspec-subHead' }, h('b', null, t('docs')), h('span', null, t('docsFromSchema'))),
             h(DocGrid, { t, docs: change.docs, openDoc }),
             h(
@@ -2971,16 +3688,24 @@ function createOpenSpecPlugin(require) {
   }
 
   /** The selected workspace: native overview, changes, project config, capabilities and archive. */
-  function WorkspaceDetail({ t, row, source, compose, align, init, onRefresh }) {
+  function WorkspaceDetail({ t, row, source, align, init, onRefresh, bindings, statusSource, run, openSession, sessionExists }) {
     const stateSource = source !== undefined ? source.hooks.state : undefined
     const state = useSyncExternalStore(
       stateSource !== undefined ? stateSource.subscribe : () => () => {},
       stateSource !== undefined ? stateSource.getSnapshot : () => ({ status: 'loading', cwd: row.cwd }),
     )
+    const bindingSnapshot = useBindings(bindings)
+    const sessionStatuses = useSessionStatuses(statusSource)
     const [expanded, setExpanded] = useState({})
     const [doc, setDoc] = useState(null)
     const [notice, setNotice] = useState(null)
     const [modal, setModal] = useState(null)
+    const [dialog, setDialog] = useState(null)
+    const [dialogBusy, setDialogBusy] = useState(false)
+    const [dialogError, setDialogError] = useState('')
+    const [busyChange, setBusyChange] = useState(null)
+    const [taskBusy, setTaskBusy] = useState(null)
+    const [commandResult, setCommandResult] = useState(null)
     const [changeLimit, revealChanges] = useVisibleLimit(CHANGE_PAGE_SIZE)
     const noticeTimer = useRef(null)
 
@@ -2998,18 +3723,94 @@ function createOpenSpecPlugin(require) {
         setNotice({
           tone: failed ? 'error' : 'info',
           icon: failed ? 'alert' : 'check',
-          text: failed ? outcome?.text ?? t('commandFailed') : `${t('fillComposer')} · ${line ?? ''}`,
+          text: failed ? outcome?.text ?? t('commandFailed') : `${t('commandSentTo')} · ${line ?? ''}`,
         })
         noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS)
       },
       [t],
     )
 
-    const commands = useCommands({
-      t,
-      insert: typeof compose === 'function' ? (line) => compose(row)(line) : undefined,
-      onResult: report,
-    })
+    // Session activity is the fastest signal that the workspace files changed
+    // (the AI may still be writing); re-read the Host state on every transition
+    // so the panel's progress and status chips settle without waiting for the
+    // polling tick.
+    useEffect(() => {
+      if (statusSource === undefined || typeof statusSource.subscribe !== 'function' || source === undefined) return () => {}
+      return statusSource.subscribe(() => {
+        void source.refresh()
+      })
+    }, [source, statusSource])
+
+    // When the browser blocks OS notifications, completion/permission notices
+    // still need a visible surface inside the panel.
+    useSystemNotice(
+      useCallback((text) => {
+        if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
+        setNotice({ tone: 'warn', icon: 'alert', text })
+        noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS)
+      }, []),
+    )
+
+    /** Run one command in the change's bound conversation and report its outcome. */
+    const runNow = useCallback(
+      async (line, changeName) => {
+        if (typeof run !== 'function') {
+          const failed = { ok: false, text: t('commandSendFailed') }
+          report(failed, line)
+          return failed
+        }
+        setBusyChange(typeof changeName === 'string' ? changeName : '__workspace__')
+        try {
+          const outcome = await run(line, changeName)
+          report(outcome, line)
+          if (
+            outcome !== undefined &&
+            outcome !== null &&
+            outcome.ok !== false &&
+            typeof outcome.resultText === 'string' &&
+            outcome.resultText !== '' &&
+            /^\/opsx-(?:status|validate)\b/.test(String(line ?? ''))
+          ) {
+            setCommandResult(outcome.resultText)
+          }
+          return outcome
+        } catch (failure) {
+          const failed = { ok: false, text: failure instanceof Error ? failure.message : String(failure) }
+          report(failed, line)
+          return failed
+        } finally {
+          setBusyChange(null)
+        }
+      },
+      [report, run, t],
+    )
+
+    /** Open a bound conversation from a change card chip. */
+    const openBoundSession = useCallback(
+      (binding) => {
+        if (binding === null || binding === undefined || typeof binding.sessionId !== 'string') return
+        if (typeof openSession === 'function') openSession(binding.sessionId)
+      },
+      [openSession],
+    )
+
+    /** Tick/untick one task and re-read the Host state. */
+    const toggleTask = useCallback(
+      async (changeName, line, done) => {
+        if (source === undefined || typeof source.toggleTask !== 'function') {
+          report({ ok: false, text: t('taskToggleFailed') })
+          return
+        }
+        setTaskBusy({ change: changeName, line })
+        try {
+          const result = await source.toggleTask(changeName, line, done)
+          if (result.ok !== true) report({ ok: false, text: result.error ?? t('taskToggleFailed') })
+        } finally {
+          setTaskBusy(null)
+        }
+      },
+      [report, source, t],
+    )
 
     const openDoc = useCallback(
       (item, focusLine) => {
@@ -3134,6 +3935,59 @@ function createOpenSpecPlugin(require) {
     const archived = state.status === 'ready' ? state.archived : []
     const changePage = paginate(changes, { pageSize: changeLimit })
     const warnings = Array.isArray(state.warnings) ? state.warnings : []
+    const pending = pendingAcceptanceTasks(changes)
+    const pendingLimited = changes.some(
+      (change) =>
+        Number.isFinite(change?.tasks?.total) &&
+        Number.isFinite(change?.tasks?.items?.length) &&
+        change.tasks.total > change.tasks.items.length,
+    )
+
+    /** Whether a change's bound conversation is currently busy (disable quick ticks). */
+    const isPendingChangeBusy = (changeName) => {
+      const change = changes.find((entry) => entry.name === changeName)
+      if (change === undefined) return false
+      const stored = bindings?.get(row.cwd, changeName) ?? null
+      const binding =
+        stored !== null && (typeof sessionExists !== 'function' || sessionExists(stored.sessionId)) ? stored : null
+      return busyChange === changeName || changeStatusInfo(change, binding, sessionStatuses, t).busy === true
+    }
+
+    /** Open the owning tasks.md at the pending task's line. */
+    const openPendingTask = (item) => {
+      const change = changes.find((entry) => entry.name === item.change)
+      const docPath = tasksDocOf(change)
+      if (typeof docPath !== 'string' || docPath === '') return
+      openDoc({ path: docPath, label: basenameOf(docPath) || t('taskList') }, item.line)
+    }
+
+    /** Send an auto-named propose command; the description is flattened to one line. */
+    const submitPropose = async ({ description }) => {
+      setDialogBusy(true)
+      setDialogError('')
+      const line = `/opsx-propose --auto ${String(description).replace(/\s+/g, ' ').trim()}`.trim()
+      const outcome = await runNow(line)
+      setDialogBusy(false)
+      if (outcome !== undefined && outcome !== null && outcome.ok === false) {
+        setDialogError(outcome.text ?? t('commandSendFailed'))
+        return
+      }
+      setDialog(null)
+    }
+
+    /** Send an explore command (topic optional) to a fresh/bound exploration session. */
+    const submitExplore = async (topic) => {
+      setDialogBusy(true)
+      setDialogError('')
+      const line = topic === '' ? '/opsx-explore' : `/opsx-explore ${String(topic).replace(/\s+/g, ' ').trim()}`
+      const outcome = await runNow(line)
+      setDialogBusy(false)
+      if (outcome !== undefined && outcome !== null && outcome.ok === false) {
+        setDialogError(outcome.text ?? t('commandSendFailed'))
+        return
+      }
+      setDialog(null)
+    }
 
     const validationModal =
       modal !== null && modal.kind === 'validate'
@@ -3223,9 +4077,9 @@ function createOpenSpecPlugin(require) {
         h(
           'div',
           { className: 'dshspec-detailActions' },
-          h(Button, { variant: 'ghost', size: 'md', icon: 'compass', title: '/opsx-explore [主题]', onClick: () => commands.fillExplore() }, t('explore')),
-          h(Button, { variant: 'outline', size: 'md', icon: 'filePlus', title: '/opsx-propose <change-name> [说明]', onClick: () => commands.fillPropose() }, t('propose')),
-          h(Button, { variant: 'ghost', size: 'md', icon: 'activity', title: '/opsx-status', onClick: () => commands.execute('/opsx-status') }, t('status')),
+          h(Button, { variant: 'ghost', size: 'md', icon: 'compass', title: '/opsx-explore [主题]', onClick: () => setDialog({ kind: 'explore' }) }, t('explore')),
+          h(Button, { variant: 'outline', size: 'md', icon: 'filePlus', title: '/opsx-propose <change-name> [说明]', onClick: () => setDialog({ kind: 'propose' }) }, t('propose')),
+          h(Button, { variant: 'ghost', size: 'md', icon: 'activity', title: '/opsx-status', onClick: () => void runNow('/opsx-status') }, t('status')),
         ),
       ),
       notice === null ? null : h(Banner, { tone: notice.tone, icon: notice.icon, wrap: notice.tone === 'error' }, notice.text),
@@ -3246,6 +4100,16 @@ function createOpenSpecPlugin(require) {
       state.status === 'ready'
         ? [
             h(SummaryBar, { key: 'summary', t, state }),
+            h(PendingAcceptanceSection, {
+              key: 'pending',
+              t,
+              pending,
+              limited: pendingLimited,
+              onOpenTask: openPendingTask,
+              onToggleTask: toggleTask,
+              taskBusy,
+              isBusy: isPendingChangeBusy,
+            }),
             state.backgroundError === undefined || state.backgroundError === null
               ? null
               : h(Banner, { key: 'background', tone: 'warn', wrap: true }, `${t('error')}：${state.backgroundError}`),
@@ -3259,7 +4123,7 @@ function createOpenSpecPlugin(require) {
                 h('span', { className: 'dshspec-sectionTitle' }, t('activeChanges')),
                 h('span', { className: 'dshspec-sectionCount' }, String(changes.length)),
                 h('span', { className: 'dshspec-space' }),
-                h(Button, { variant: 'primary', size: 'sm', icon: 'filePlus', onClick: () => commands.fillPropose() }, t('newProposal')),
+                h(Button, { variant: 'primary', size: 'sm', icon: 'filePlus', onClick: () => setDialog({ kind: 'propose' }) }, t('newProposal')),
               ),
               h(
                 'div',
@@ -3269,22 +4133,38 @@ function createOpenSpecPlugin(require) {
                       icon: 'sparkle',
                       title: t('noChanges'),
                       hint: t('noChangesHint'),
-                      action: h(Button, { variant: 'primary', size: 'md', icon: 'filePlus', onClick: () => commands.fillPropose() }, t('newProposal')),
+                      action: h(Button, { variant: 'primary', size: 'md', icon: 'filePlus', onClick: () => setDialog({ kind: 'propose' }) }, t('newProposal')),
                     })
-                  : changePage.items.map((change) =>
-                      h(ChangeCard, {
+                  : changePage.items.map((change) => {
+                      const storedBinding = bindings?.get(row.cwd, change.name) ?? null
+                      const binding =
+                        storedBinding !== null && (typeof sessionExists !== 'function' || sessionExists(storedBinding.sessionId))
+                          ? storedBinding
+                          : null
+                      const baseStatus = changeStatusInfo(change, binding, sessionStatuses, t)
+                      const runStatus =
+                        busyChange === change.name
+                          ? { ...baseStatus, kind: 'running', label: t('statusRunning'), busy: true }
+                          : baseStatus
+                      return h(ChangeCard, {
                         key: change.name,
                         t,
                         change: normalizeChangeState(change, change.name),
                         open: expanded[change.name] === true,
                         onToggle: () => toggleChange(change.name),
-                        commands,
                         openDoc,
                         onIssue: (issue) => openIssue(issue, change),
                         onValidate: openValidation,
                         onSyncPreview: openSyncPreview,
-                      }),
-                    ),
+                        runStatus,
+                        boundSession: binding,
+                        onOpenSession: openBoundSession,
+                        onRun: (line, changeName) => void runNow(line, changeName),
+                        onPropose: () => setDialog({ kind: 'propose' }),
+                        onToggleTask: toggleTask,
+                        taskBusyLine: taskBusy !== null && taskBusy.change === change.name ? taskBusy.line : null,
+                      })
+                    }),
                 h(ListMore, { t, hidden: changePage.hidden, reveal: Math.min(changePage.pageSize, changePage.hidden), onMore: revealChanges }),
               ),
             ),
@@ -3318,6 +4198,44 @@ function createOpenSpecPlugin(require) {
       validationModal,
       syncModal,
       specIssuesModal,
+      dialog !== null && dialog.kind === 'propose'
+        ? h(ProposeDialog, {
+            t,
+            busy: dialogBusy,
+            error: dialogError,
+            onClose: () => {
+              setDialog(null)
+              setDialogError('')
+            },
+            onSubmit: (value) => void submitPropose(value),
+          })
+        : null,
+      dialog !== null && dialog.kind === 'explore'
+        ? h(ExploreDialog, {
+            t,
+            busy: dialogBusy,
+            error: dialogError,
+            onClose: () => {
+              setDialog(null)
+              setDialogError('')
+            },
+            onSubmit: (topic) => void submitExplore(topic),
+          })
+        : null,
+      commandResult === null
+        ? null
+        : h(
+            Modal,
+            {
+              t,
+              title: t('status'),
+              description: t('statusDesc'),
+              onClose: () => setCommandResult(null),
+              width: 720,
+              focusCard: true,
+            },
+            h('pre', { className: 'dshspec-pre dshspec-prePlain' }, commandResult),
+          ),
       doc === null
         ? null
         : h(DocModal, {
@@ -3334,7 +4252,7 @@ function createOpenSpecPlugin(require) {
   let lastSelectedWorkspace = null
 
   /** The monitoring page: workspace switcher on top, selected workspace below. */
-  function OpenspecPanel({ t, rowsSource, sourceFor, composeFor, alignFor, initFor, onRefreshSessions }) {
+  function OpenspecPanel({ t, rowsSource, sourceFor, runFor, alignFor, initFor, onRefreshSessions, bindings, statusSource, openSession, sessionExists }) {
     const rows = useSyncExternalStore(rowsSource.subscribe, rowsSource.getSnapshot)
     const [selected, setSelected] = useState(() => lastSelectedWorkspace)
     const [nonce, setNonce] = useState(0)
@@ -3426,10 +4344,14 @@ function createOpenSpecPlugin(require) {
                     t,
                     row: selectedRow,
                     source: sourceFor(selectedRow),
-                    compose: composeFor,
+                    run: typeof runFor === 'function' ? (line, change) => runFor(selectedRow)(line, change) : undefined,
                     align: alignFor,
                     init: initFor,
                     onRefresh: onRefreshSessions,
+                    bindings,
+                    statusSource,
+                    openSession,
+                    sessionExists,
                   }),
             ],
       ),
@@ -3439,12 +4361,18 @@ function createOpenSpecPlugin(require) {
 
 
   /** Inline composer quick bar: native status, next-step action, skip_specs/blocked/skills signals. */
-  function DockBody({ t, state, source, openPanel, init, sessionId, variant }) {
+  function DockBody({ t, state, source, openPanel, init, sessionId, variant, bindings, statusSource, run, sessionExists }) {
     const [toast, setToast] = useState(null)
     const [selectedName, setSelectedName] = useState(null)
     const [menuOpen, setMenuOpen] = useState(false)
+    const [dialog, setDialog] = useState(null)
+    const [dialogBusy, setDialogBusy] = useState(false)
+    const [dialogError, setDialogError] = useState('')
+    const [sending, setSending] = useState(false)
     const menuRef = useRef(null)
     const toastTimer = useRef(null)
+    const bindingSnapshot = useBindings(bindings)
+    const sessionStatuses = useSessionStatuses(statusSource)
 
     useEffect(
       () => () => {
@@ -3474,17 +4402,44 @@ function createOpenSpecPlugin(require) {
       setToast(text)
       toastTimer.current = setTimeout(() => setToast(null), 3200)
     }, [])
+    useSystemNotice(showToast)
 
     const changes = state.status === 'ready' ? state.changes.map((change) => normalizeChangeState(change, change.name)) : []
     const rawTarget = changes.find((change) => change.name === selectedName) ?? primaryChange(state)
     const target = rawTarget === undefined ? undefined : normalizeChangeState(rawTarget, rawTarget.name)
-    const commands = useCommands({
-      t,
-      insert: (text) => insertIntoComposer(text),
-      onResult: (outcome) => {
-        if (outcome !== undefined && outcome !== null && outcome.ok === false) showToast(outcome.text ?? t('commandFailed'))
-      },
-    })
+    const cwd = typeof state.cwd === 'string' ? state.cwd : source?.cwd ?? ''
+    const storedBinding = target === undefined || cwd === '' ? null : bindings?.get(cwd, target.name) ?? null
+    const binding =
+      storedBinding !== null && (typeof sessionExists !== 'function' || sessionExists(storedBinding.sessionId))
+        ? storedBinding
+        : null
+    const baseStatus = changeStatusInfo(target, binding, sessionStatuses, t)
+    const busy = sending === true || baseStatus.busy === true
+
+    /** Send immediately in the change's bound conversation (no second Enter). */
+    const runNow = async (line, changeName) => {
+      if (typeof run !== 'function') {
+        showToast(t('commandSendFailed'))
+        return { ok: false, text: t('commandSendFailed') }
+      }
+      setSending(true)
+      try {
+        const outcome = await run(line, changeName)
+        if (outcome !== undefined && outcome !== null && outcome.ok === false) showToast(outcome.text ?? t('commandSendFailed'))
+        else {
+          const resultText = typeof outcome?.resultText === 'string' && outcome.resultText !== '' ? outcome.resultText : ''
+          const compact = resultText.replace(/\s+/g, ' ').trim()
+          showToast(compact === '' ? `${t('commandSentTo')} · ${line}` : compact.length > 220 ? `${compact.slice(0, 219)}…` : compact)
+        }
+        return outcome
+      } catch (failure) {
+        const text = failure instanceof Error ? failure.message : String(failure)
+        showToast(text)
+        return { ok: false, text }
+      } finally {
+        setSending(false)
+      }
+    }
 
     const action = deriveNextAction(target)
     const progress = taskProgressInfo(target?.tasks)
@@ -3492,11 +4447,38 @@ function createOpenSpecPlugin(require) {
     const nativeSkills = state.skills !== null && state.skills !== undefined && Array.isArray(state.skills.native) ? state.skills.native : []
     const fallbackActive = state.skills !== null && state.skills !== undefined && state.skills.fallbackActive === true
     const runNext = () => {
+      if (busy) return
       if (target === undefined || action.kind === 'propose') {
-        commands.fillPropose()
+        setDialog({ kind: 'propose' })
         return
       }
-      commands.execute(action.line)
+      void runNow(action.line, target.name)
+    }
+
+    const submitPropose = async ({ description }) => {
+      setDialogBusy(true)
+      setDialogError('')
+      const line = `/opsx-propose --auto ${String(description).replace(/\s+/g, ' ').trim()}`.trim()
+      const outcome = await runNow(line)
+      setDialogBusy(false)
+      if (outcome !== undefined && outcome !== null && outcome.ok === false) {
+        setDialogError(outcome.text ?? t('commandSendFailed'))
+        return
+      }
+      setDialog(null)
+    }
+
+    const submitExplore = async (topic) => {
+      setDialogBusy(true)
+      setDialogError('')
+      const line = topic === '' ? '/opsx-explore' : `/opsx-explore ${String(topic).replace(/\s+/g, ' ').trim()}`
+      const outcome = await runNow(line)
+      setDialogBusy(false)
+      if (outcome !== undefined && outcome !== null && outcome.ok === false) {
+        setDialogError(outcome.text ?? t('commandSendFailed'))
+        return
+      }
+      setDialog(null)
     }
 
     const dot = h('span', { className: 'dshspec-dot', style: { background: toneColor(target === undefined ? 'muted' : changeTone(target)) } })
@@ -3508,6 +4490,12 @@ function createOpenSpecPlugin(require) {
       target === undefined
         ? []
         : [
+            h(
+              'span',
+              { key: 'status', className: 'dshspec-statusBadge', 'data-status': busy ? 'running' : baseStatus.kind, title: busy ? (baseStatus.kind === 'waiting' ? t('statusWaitHint') : t('statusRunHint')) : baseStatus.label },
+              h(Icon, { name: busy || baseStatus.kind === 'running' ? 'refresh' : baseStatus.kind === 'waiting' ? 'alert' : baseStatus.kind === 'complete' ? 'check' : 'activity', size: 11 }),
+              busy ? t('statusRunning') : baseStatus.label,
+            ),
             target.schemaName === '' ? null : h(ToneBadge, { key: 'schema', tone: 'muted', title: tx(t, 'changeSchema', { name: target.schemaName }) }, target.schemaName),
             target.metadata.skip_specs === true ? h(ToneBadge, { key: 'skip', tone: 'muted', title: t('skipSpecs') }, t('skipSpecs')) : null,
             blocked.length > 0
@@ -3567,6 +4555,8 @@ function createOpenSpecPlugin(require) {
                     h('div', { className: 'dshspec-dockMenuHead' }, h('span', null, t('switchChange')), h('span', null, String(changes.length))),
                     changes.map((change) => {
                       const itemProgress = taskProgressInfo(change.tasks)
+                      const itemBinding = bindings?.get(cwd, change.name) ?? null
+                      const itemStatus = changeStatusInfo(change, itemBinding, sessionStatuses, t)
                       return h(
                         'button',
                         {
@@ -3583,7 +4573,7 @@ function createOpenSpecPlugin(require) {
                           },
                         },
                         h('span', { className: 'dshspec-dockMenuName' }, change.name),
-                        h(ToneBadge, { tone: change.isPlanningComplete ? 'success' : 'business' }, t(change.isPlanningComplete ? 'plannerComplete' : 'planning')),
+                        h(ToneBadge, { tone: itemStatus.tone }, itemStatus.label),
                         change.metadata.skip_specs === true ? h('span', { className: 'dshspec-dockMenuCount' }, 'skip_specs') : null,
                         itemProgress.total > 0 ? h('span', { className: 'dshspec-dockMenuCount' }, `${itemProgress.done}/${itemProgress.total}`) : null,
                         target !== undefined && change.name === target.name ? h(Icon, { name: 'check', size: 14 }) : null,
@@ -3609,34 +4599,60 @@ function createOpenSpecPlugin(require) {
         h(
           'div',
           { className: 'dshspec-seg' },
-          h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockGhost', title: '/opsx-explore [主题]', onClick: () => commands.fillExplore() }, t('explore')),
+          h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockGhost', title: '/opsx-explore [主题]', onClick: () => setDialog({ kind: 'explore' }) }, t('explore')),
           // The primary button already says「提案」when proposing is the next
           // step — do not repeat it in the segment next to it.
           action.kind === 'propose'
             ? null
-            : h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockGhost', title: '/opsx-propose <change-name> [说明]', onClick: () => commands.fillPropose() }, t('propose')),
+            : h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockGhost', title: '/opsx-propose <change-name> [说明]', onClick: () => setDialog({ kind: 'propose' }) }, t('propose')),
           h(
             Button,
             {
               variant: 'primary',
               size: 'sm',
-              icon: nextActionIcon(action.kind),
-              title: action.kind === 'propose' ? '/opsx-propose ' : action.line,
+              icon: busy ? 'refresh' : nextActionIcon(action.kind),
+              title: busy ? (baseStatus.kind === 'waiting' ? t('statusWaitHint') : t('statusRunHint')) : action.kind === 'propose' ? '/opsx-propose ' : action.line,
               onClick: runNext,
+              disabled: busy,
+              'data-dshspec-run-status': busy ? 'running' : baseStatus.kind,
             },
-            nextActionText(t, action),
+            busy ? (baseStatus.kind === 'waiting' ? t('statusWaiting') : t('statusRunning')) : nextActionText(t, action),
           ),
         ),
         skillsBadge === null ? null : h('span', { className: 'dshspec-dockSkills' }, skillsBadge),
-        h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockStatusBtn', title: '/opsx-status', onClick: () => commands.execute('/opsx-status') }, t('status')),
+        h(Button, { variant: 'ghost', size: 'sm', className: 'dshspec-dockStatusBtn', title: '/opsx-status', onClick: () => void runNow('/opsx-status') }, t('status')),
         h(IconButton, { icon: 'layout', label: t('openPanel'), size: 28, onClick: openPanel }),
       ),
       toast === null ? null : h('div', { className: 'dshspec-toast', role: 'status' }, h(Icon, { name: 'alert', size: 14 }), h('span', null, toast)),
+      dialog !== null && dialog.kind === 'propose'
+        ? h(ProposeDialog, {
+            t,
+            busy: dialogBusy,
+            error: dialogError,
+            onClose: () => {
+              setDialog(null)
+              setDialogError('')
+            },
+            onSubmit: (value) => void submitPropose(value),
+          })
+        : null,
+      dialog !== null && dialog.kind === 'explore'
+        ? h(ExploreDialog, {
+            t,
+            busy: dialogBusy,
+            error: dialogError,
+            onClose: () => {
+              setDialog(null)
+              setDialogError('')
+            },
+            onSubmit: (topic) => void submitExplore(topic),
+          })
+        : null,
     )
   }
 
   /** The quick bar: under the composer, or at the right end of the hero workspace row. */
-  function QuickBar({ state: stateSource, source, openPanel, t, init, sessionId, heroOnly }) {
+  function QuickBar({ state: stateSource, source, openPanel, t, init, sessionId, heroOnly, bindings, statusSource, run, sessionExists }) {
     if (stateSource === undefined || source === undefined) return null
     const state = useSyncExternalStore(stateSource.subscribe, stateSource.getSnapshot)
     if (state.status === 'loading') return null
@@ -3668,7 +4684,19 @@ function createOpenSpecPlugin(require) {
         h(IconButton, { icon: 'layout', label: t('openPanel'), size: 28, onClick: openPanel }),
       )
     }
-    return h(DockBody, { t, state, source, openPanel, init, sessionId, variant: heroOnly === true ? 'hero' : undefined })
+    return h(DockBody, {
+      t,
+      state,
+      source,
+      openPanel,
+      init,
+      sessionId,
+      variant: heroOnly === true ? 'hero' : undefined,
+      bindings,
+      statusSource,
+      run,
+      sessionExists,
+    })
   }
 
   /* ------------------------------------------------------------------ *
@@ -3694,7 +4722,7 @@ function createOpenSpecPlugin(require) {
   }
 
   /** Build marker for served-bundle verification. */
-  const BUILD = '20261020-responsive-dock'
+  const BUILD = '20261021-pending-list'
 
   /**
    * Register the locale dictionaries, the monitoring page, the sidebar glyph,
@@ -3705,6 +4733,11 @@ function createOpenSpecPlugin(require) {
     injectStyle()
     ctx.effect(() => ctx.locale.register(NS, { zh: T.zh, en: T.en }), 'dsh-spec: dictionaries')
     const t = ctx.locale.bind(NS)
+
+    /** One change ↔ conversation binding store for the panel, dock and notifier. */
+    const bindings = createBindingStore()
+    const uiSession = typeof ctx.get === 'function' ? ctx.get('uiSession') : ctx.uiSession
+    const statusSource = uiSession?.sessionStatus
 
     /** One workspace source per (cwd, session) pair, shared by the dock and the panel. */
     const sources = new Map()
@@ -3779,6 +4812,416 @@ function createOpenSpecPlugin(require) {
         if (typeof ctx.uiWorkspace?.openSession === 'function') ctx.uiWorkspace.openSession(created)
         await waitForDock(created, 10000)
         return fill()
+      } catch (error) {
+        return { ok: false, text: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
+    /* ------------------------------------------------------------------ *
+     * Direct command execution + change ↔ session binding.
+     * ------------------------------------------------------------------ */
+
+    /** Whether a session id is still present in the Session Controller. */
+    const sessionExists = (sessionId) => {
+      if (typeof sessionId !== 'string' || sessionId === '') return false
+      try {
+        const snap = ctx.sessions.list.getSnapshot()
+        return snap?.byId?.[sessionId] !== undefined
+      } catch {
+        return false
+      }
+    }
+
+    /** Session id from a connectWorkspace / create result. */
+    const sessionIdOf = (value) => {
+      if (typeof value === 'string') return value
+      if (value !== null && typeof value === 'object') {
+        if (typeof value.sessionId === 'string') return value.sessionId
+        if (typeof value.id === 'string') return value.id
+      }
+      return undefined
+    }
+
+    /** The phase a command line belongs to (binding metadata only). */
+    const phaseOfLine = (line) => {
+      const match = /^\/opsx-([a-z-]+)/.exec(String(line ?? ''))
+      return match === null ? 'command' : match[1]
+    }
+
+    /** Create (or reuse the workspace's blank) conversation for one action. */
+    const createSessionFor = async (row) => {
+      if (row.workspaceId !== undefined && typeof ctx.uiWorkspace?.connectWorkspace === 'function') {
+        const connected = await withTimeout(
+          Promise.resolve(ctx.uiWorkspace.connectWorkspace(row.workspaceId)),
+          20000,
+          '创建会话',
+        )
+        const id = sessionIdOf(connected)
+        if (typeof id === 'string') return id
+      }
+      if (row.workspaceId !== undefined && typeof ctx.sessions?.create === 'function') {
+        const id = sessionIdOf(await ctx.sessions.create({ workspaceId: row.workspaceId }))
+        if (typeof id === 'string') return id
+      }
+      if (typeof row.sessionId === 'string' && row.sessionId !== '') return row.sessionId
+      throw new Error(t('switchFailed'))
+    }
+
+    /** Focus one conversation without blocking the command transaction. */
+    const openSessionById = (sessionId) => {
+      try {
+        if (typeof ctx.uiWorkspace?.openSession === 'function') ctx.uiWorkspace.openSession(sessionId)
+      } catch {
+        /* the command can still run in a background session */
+      }
+    }
+
+    /** Duplicate-command guard for one conversation (rapid double clicks). */
+    const inFlightCommands = new Set()
+    const recentChangeActions = new Map()
+
+    /** Host `command.execute` transaction: unknown/malformed lines are explicit failures. */
+    const executeCommand = async (sessionId, line) => {
+      const result = await withTimeout(
+        Promise.resolve(ctx.remote.commands.execute(sessionId, line, [])),
+        60000,
+        '发送命令',
+      )
+      if (result === null || typeof result !== 'object') return { ok: false, text: t('commandSendFailed') }
+      if (result.ok !== true) {
+        return { ok: false, text: result.error?.message ?? t('commandSendFailed') }
+      }
+      const value = result.value
+      if (value === undefined || value === null) return { ok: false, text: `未知命令：${line}` }
+      const outcome = value.result
+      if (outcome !== null && typeof outcome === 'object' && outcome.kind === 'error') {
+        return { ok: false, text: typeof outcome.text === 'string' ? outcome.text : t('commandFailed') }
+      }
+      return {
+        ok: true,
+        text: line,
+        sessionId,
+        resultText: outcome !== null && typeof outcome === 'object' && typeof outcome.text === 'string' ? outcome.text : '',
+      }
+    }
+
+    /* ---- System notifications ---------------------------------------- */
+
+    let notificationAsked = false
+    const deniedNotices = new Set()
+
+    /** Request Notification permission from a user gesture; never throws. */
+    const ensureNotificationPermission = () => {
+      if (notificationAsked) return
+      notificationAsked = true
+      try {
+        if (typeof Notification === 'undefined') return
+        if (Notification.permission === 'default') {
+          Promise.resolve(Notification.requestPermission()).catch(() => {})
+        }
+      } catch {
+        /* notification API unavailable */
+      }
+    }
+
+    /**
+     * Show one OS notification; when the browser blocks it, dispatch an in-app
+     * notice so the panel/dock can still tell the user what happened.
+     */
+    const systemNotify = (title, body, sessionId) => {
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          const notification = new Notification(title, {
+            body,
+            tag: `dsh-spec:${sessionId ?? 'workspace'}:${body}`,
+            requireInteraction: false,
+            silent: false,
+          })
+          notification.onclick = () => {
+            try {
+              window.focus()
+            } catch {
+              /* window focus is best effort */
+            }
+            if (typeof sessionId === 'string' && sessionId !== '') openSessionById(sessionId)
+            try {
+              notification.close()
+            } catch {
+              /* already closed */
+            }
+          }
+          setTimeout(() => {
+            try {
+              notification.close()
+            } catch {
+              /* already closed */
+            }
+          }, 12000)
+          return true
+        }
+      } catch {
+        /* fall through to the in-app notice */
+      }
+      if (deniedNotices.has(title)) return false
+      deniedNotices.add(title)
+      try {
+        if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+          window.dispatchEvent(new CustomEvent('dsh-spec:notice', { detail: { title, text: body, sessionId } }))
+        }
+      } catch {
+        /* no DOM */
+      }
+      return false
+    }
+
+    /* ---- Auto-named proposals ---------------------------------------- *
+     * `/opsx-propose --auto` lets the AI choose the name itself, so there is
+     * no change name to bind at command time. Watch the workspace state for
+     * the first change that did not exist before the command and bind that
+     * change to the conversation that produced it.
+     * ------------------------------------------------------------------ */
+
+    const autoProposeWatchers = new Map()
+    const AUTO_PROPOSE_POLL_MS = 3000
+    const AUTO_PROPOSE_TIMEOUT_MS = 10 * 60 * 1000
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+    const watchAutoPropose = async (cwd, sessionId, beforeNames) => {
+      const previous = autoProposeWatchers.get(sessionId)
+      if (previous !== undefined) previous.cancelled = true
+      const record = { cancelled: false }
+      autoProposeWatchers.set(sessionId, record)
+      const started = Date.now()
+      while (!record.cancelled && Date.now() - started < AUTO_PROPOSE_TIMEOUT_MS) {
+        await sleep(AUTO_PROPOSE_POLL_MS)
+        if (record.cancelled) break
+        let snapshot
+        try {
+          snapshot = await callRoute(ctx, 'state', { cwd }, '读取变更列表')
+        } catch {
+          continue
+        }
+        const changes = Array.isArray(snapshot?.changes) ? snapshot.changes : []
+        const created = changes.find(
+          (change) => change !== null && typeof change === 'object' && typeof change.name === 'string' && !beforeNames.has(change.name),
+        )
+        if (created !== undefined) {
+          bindings.set(cwd, created.name, sessionId, 'propose')
+          if (autoProposeWatchers.get(sessionId) === record) autoProposeWatchers.delete(sessionId)
+          return
+        }
+      }
+      if (autoProposeWatchers.get(sessionId) === record) autoProposeWatchers.delete(sessionId)
+      if (!record.cancelled) systemNotify(t('autoProposeTimeoutTitle'), t('autoProposeTimeoutBody'), sessionId)
+    }
+    ctx.effect(
+      () => () => {
+        for (const record of autoProposeWatchers.values()) record.cancelled = true
+        autoProposeWatchers.clear()
+      },
+      'dsh-spec: auto-named proposal watchers',
+    )
+
+    /** Find the state source cached for one workspace (no new polling source). */
+    const sourceForCwd = (cwd) => {
+      for (const source of sources.values()) {
+        if (source.cwd === cwd) return source
+      }
+      return undefined
+    }
+
+    /** Notify the bound change when its session completes or asks for permission. */
+    const setupNotifications = () => {
+      if (statusSource === undefined || typeof statusSource.subscribe !== 'function') return () => {}
+      let previous = statusSource.getSnapshot() ?? EMPTY_SESSION_STATUSES
+      const unsubscribe = statusSource.subscribe(() => {
+        const next = statusSource.getSnapshot() ?? EMPTY_SESSION_STATUSES
+        for (const [sessionId, after] of next) {
+          const before = previous.get(sessionId)
+          if (before === after) continue
+          const info = bindings.findSession(sessionId)
+          if (info === null || info.change === null) continue
+          const pendingBefore = before?.pendingInteraction
+          const pendingNow = after?.pendingInteraction
+          if (pendingNow !== undefined && pendingNow !== null && pendingNow.kind !== pendingBefore?.kind) {
+            systemNotify(
+              tx(t, 'notifyPendingTitle', { change: info.change }),
+              t('notifyPendingBody'),
+              sessionId,
+            )
+            continue
+          }
+          if (before?.running === true && after?.running !== true) {
+            const source = sourceForCwd(info.cwd)
+            const snapshot = source?.hooks.state.getSnapshot()
+            const change = snapshot?.status === 'ready' ? snapshot.changes?.find((item) => item.name === info.change) : undefined
+            const complete = change?.isPlanningComplete === true && change?.listStatus === 'complete'
+            systemNotify(
+              tx(t, complete ? 'notifyDoneTitle' : 'notifyTurnTitle', { change: info.change }),
+              complete ? t('notifyDoneBody') : t('notifyTurnBody'),
+              sessionId,
+            )
+          }
+        }
+        previous = next
+      })
+      return unsubscribe
+    }
+    ctx.effect(setupNotifications, 'dsh-spec: completion/permission notifications')
+
+    /**
+     * Bind sessions started by typed phase commands (their Host titles are
+     * `[阶段] 主题`). This is the fallback that keeps a conversation bound even
+     * when it was not started from a panel button.
+     */
+    const setupTitleBindings = () => {
+      const read = () => {
+        try {
+          const snap = ctx.sessions.list.getSnapshot()
+          const rows = snap?.byId !== undefined && snap.byId !== null ? Object.values(snap.byId) : Array.isArray(snap) ? snap : []
+          for (const row of rows) {
+            if (row === null || typeof row !== 'object') continue
+            const sessionId = typeof row.id === 'string' ? row.id : typeof row.sessionId === 'string' ? row.sessionId : ''
+            const cwd = typeof row.cwd === 'string' ? row.cwd : ''
+            if (sessionId === '' || cwd === '') continue
+            const title =
+              typeof row.title === 'string'
+                ? row.title
+                : typeof row.projectionValues?.title === 'string'
+                  ? row.projectionValues.title
+                  : ''
+            if (title === '') continue
+            const match = /^\[(探索|提案|实施|更新|同步|归档|已同步|已归档)\]\s*(.*)$/.exec(title)
+            if (match === null) continue
+            const phase = match[1]
+            const subject = match[2].trim()
+            if (phase === '探索') {
+              bindings.setExplore(cwd, sessionId)
+              continue
+            }
+            if (phase === '已同步' || phase === '已归档') continue
+            if (subject === '' || subject.includes('…') || !/^[a-z0-9][a-z0-9-]*$/.test(subject)) continue
+            bindings.set(cwd, subject, sessionId, phase)
+          }
+        } catch {
+          /* session store unavailable: bindings stay as they are */
+        }
+      }
+      read()
+      return ctx.sessions.list.subscribe(read)
+    }
+    ctx.effect(setupTitleBindings, 'dsh-spec: bind sessions from phase titles')
+
+    /**
+     * Resolve the one conversation for one change (or explore action), bind it,
+     * open it and execute the command line immediately. `preferredSessionId` is
+     * the dock's current conversation; it is reused only when it is not already
+     * bound to a different change.
+     */
+    const runFor = (row, preferredSessionId) => async (line, changeName) => {
+      ensureNotificationPermission()
+      const change = typeof changeName === 'string' && changeName !== '' ? changeName : null
+      const isAutoPropose = /^\/opsx-propose\s+--auto(?:\s|$)/.test(String(line ?? ''))
+      try {
+        // The change name is chosen by the model, so capture the current names
+        // before the command and bind the first new one afterwards.
+        let autoBaseline = null
+        if (isAutoPropose) {
+          try {
+            const before = await callRoute(ctx, 'state', { cwd: row.cwd }, '读取变更列表')
+            autoBaseline = new Set(
+              (Array.isArray(before?.changes) ? before.changes : [])
+                .map((entry) => entry?.name)
+                .filter((name) => typeof name === 'string' && name !== ''),
+            )
+          } catch {
+            autoBaseline = null
+          }
+        }
+        let sessionId = ''
+        if (change !== null) {
+          const bound = bindings.get(row.cwd, change)
+          if (bound !== null && sessionExists(bound.sessionId)) {
+            sessionId = bound.sessionId
+          } else {
+            const candidate = typeof preferredSessionId === 'string' && preferredSessionId !== '' ? preferredSessionId : row.sessionId
+            if (typeof candidate === 'string' && sessionExists(candidate)) {
+              const owner = bindings.changeForSession(row.cwd, candidate)
+              const info = bindings.findSession(candidate)
+              if (owner === null && (info === null || info.change === null)) sessionId = candidate
+            }
+            if (sessionId === '') sessionId = await createSessionFor(row)
+            bindings.set(row.cwd, change, sessionId, phaseOfLine(line))
+          }
+        } else {
+          const candidate = typeof preferredSessionId === 'string' && preferredSessionId !== '' ? preferredSessionId : row.sessionId
+          const isExplore = /^\/opsx-explore(?:\s|$)/.test(String(line ?? ''))
+          if (isExplore || isAutoPropose) {
+            const candidateLive = statusSource?.getSnapshot?.().get?.(candidate)
+            const candidateBusy =
+              candidateLive?.running === true ||
+              (candidateLive?.pendingInteraction !== undefined && candidateLive?.pendingInteraction !== null)
+            if (
+              typeof candidate === 'string' &&
+              sessionExists(candidate) &&
+              bindings.changeForSession(row.cwd, candidate) === null &&
+              candidateBusy !== true
+            ) {
+              sessionId = candidate
+            }
+            if (sessionId === '') {
+              const explore = bindings.getExplore(row.cwd)
+              if (
+                explore !== null &&
+                sessionExists(explore.sessionId) &&
+                bindings.changeForSession(row.cwd, explore.sessionId) === null
+              ) {
+                const live = statusSource?.getSnapshot?.().get?.(explore.sessionId)
+                const busy = live?.running === true || (live?.pendingInteraction !== undefined && live?.pendingInteraction !== null)
+                if (!busy) sessionId = explore.sessionId
+              }
+            }
+            if (sessionId === '') sessionId = await createSessionFor(row)
+            if (isExplore) bindings.setExplore(row.cwd, sessionId)
+          } else {
+            // Direct commands such as /opsx-status may run in the current
+            // conversation even when it is bound to a change; they neither
+            // create nor steal a binding.
+            if (typeof candidate === 'string' && sessionExists(candidate)) sessionId = candidate
+            if (sessionId === '') sessionId = await createSessionFor(row)
+          }
+        }
+        // Defense in depth: the buttons are already disabled while the bound
+        // conversation is busy, but a stale/rapid click must not stack a second
+        // planning or implementation turn on the same change.
+        if (change !== null && statusSource !== undefined && typeof statusSource.getSnapshot === 'function') {
+          const live = statusSource.getSnapshot()?.get?.(sessionId)
+          if (live?.running === true || (live?.pendingInteraction !== undefined && live?.pendingInteraction !== null)) {
+            return { ok: false, text: live?.pendingInteraction !== undefined && live?.pendingInteraction !== null ? t('statusWaitHint') : t('statusRunHint') }
+          }
+        }
+        if (change !== null) {
+          const last = recentChangeActions.get(sessionId) ?? 0
+          if (inFlightCommands.has(sessionId) || Date.now() - last < 1500) {
+            return { ok: false, text: t('statusRunHint') }
+          }
+        }
+        if (inFlightCommands.has(sessionId)) return { ok: false, text: t('statusRunHint') }
+        inFlightCommands.add(sessionId)
+        try {
+          openSessionById(sessionId)
+          // Let navigation retain the Session before the host command transaction
+          // addresses it; the delay is tiny and only on an explicit user action.
+          await new Promise((resolve) => setTimeout(resolve, 50))
+          const outcome = await executeCommand(sessionId, line)
+          if (change !== null && outcome.ok === true) recentChangeActions.set(sessionId, Date.now())
+          if (isAutoPropose && autoBaseline !== null && outcome.ok === true) {
+            void watchAutoPropose(row.cwd, sessionId, autoBaseline)
+          }
+          return outcome
+        } finally {
+          inFlightCommands.delete(sessionId)
+        }
       } catch (error) {
         return { ok: false, text: error instanceof Error ? error.message : String(error) }
       }
@@ -3911,10 +5354,14 @@ function createOpenSpecPlugin(require) {
         t,
         rowsSource,
         sourceFor,
-        composeFor,
+        runFor,
         alignFor,
         initFor,
         onRefreshSessions: refreshAll,
+        bindings,
+        statusSource,
+        openSession: (sessionId) => openSessionById(sessionId),
+        sessionExists,
       }),
     }, OpenspecPanel))
 
@@ -3939,6 +5386,10 @@ function createOpenSpecPlugin(require) {
           state: source === undefined ? undefined : source.hooks.state,
           source,
           init: initFor,
+          bindings,
+          statusSource,
+          sessionExists,
+          run: row === undefined ? undefined : runFor(row, sessionId),
           openPanel: () => ctx.layout.selectPanel(PANEL_ID),
         }
       },
@@ -3963,13 +5414,17 @@ function createOpenSpecPlugin(require) {
           source,
           init: initFor,
           heroOnly: true,
+          bindings,
+          statusSource,
+          sessionExists,
+          run: row === undefined ? undefined : runFor(row, sessionId),
           openPanel: () => ctx.layout.selectPanel(PANEL_ID),
         }
       },
     }, QuickBar))
   }
 
-  return { inject: ['slots', 'locale', 'remote', 'remote.workspaceFiles', 'remote.commands', 'sessions', 'workspaces', 'uiWorkspace', 'connection', 'layout'], apply }
+  return { inject: ['slots', 'locale', 'remote', 'remote.workspaceFiles', 'remote.commands', 'sessions', 'workspaces', 'uiSession', 'uiWorkspace', 'connection', 'layout'], apply }
 }
 
 window.__ModuleLoader__.load({
