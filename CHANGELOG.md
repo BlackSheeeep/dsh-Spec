@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.1
+
+修复「长驻 DSH 进程还没重启，刷新页面后面板简略区空白」：只更新了浏览器半时，Host 的 `state` 载荷仍是旧版（0.9.x 只有 `description` / `highlights`，0.8.x 连 `summary` 都没有），面板「为什么做 / 会改什么」只能显示「尚未生成提案」。浏览器半现在会在 state 发布后按需回读 `proposal.md` 自补摘要，旧 Host 无需重启即可看到简略内容。
+
+### Fixed
+
+- **旧 Host 下简略区为空**：`createWorkspaceSource` 在每次 state 发布后，对 `summary.why` 为空的 change 通过既有的 `document` 路由读取其 `proposal.md`，按 Host 同口径提取 Why 首段与 `## What Changes` 前 4 条（Why 280 字符、每条 140 字符），只补空槽、不覆盖 Host 已给的值；回读结果按 change+文档路径缓存 10 秒，避免 2 秒轮询变成文档读取循环。
+- **混版载荷兼容**：`normalizeChangeSummary` 在缺少 `why` / `changes` 时回退到 0.9.x 的 `description` / `highlights`；`changeSummaryInfo` 再兜底 `description` → `headline`，折叠卡摘要行不再空白。
+- **测试**：`proposalSummaryDigest`（`## Why` / `## What Changes` 提取、CRLF/BOM、缺失章节、280/140 字符上限与截断标记）、`proposalDocOf` / `summaryNeedsProposalFallback` / `applyProposalDigest` 的空槽合并、`normalizeChangeSummary` 旧字段回退与「pre-0.9 Host 载荷 + proposal.md 回填」整链场景；全量 461 passed。
+
+### Notes
+
+- 本版只改浏览器半（`src/client-helpers.js` + `src/client.js`），Host 无改动；`lib/client.js` 重新构建后刷新页面即可生效，不需要重启 DSH。
+- 完整功能（如 Host 侧新增的逐文件 delta 计数、artifact `description` / `generates`）仍需在方便时重启 DSH 进程才会启用；简略区不再依赖这一步。
+
 ## 0.10.0
 
 面板 change 详情改为渐进式披露：折叠卡新增一行摘要，展开先给概览，文档按 artifact 分组且默认收起，Delta 文档只列一次并带逐文件操作计数；0 校验问题与空区块不再占位，展开状态只存在于内存。0.9.2 的变更卡片 headline 由本版本的摘要行与 L1 概览取代（`summary.headline` 仍保留在 Host 载荷中供旧客户端降级读取）。

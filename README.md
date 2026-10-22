@@ -2,7 +2,7 @@
 
 在 DeepSeek Harness 中管理 OpenSpec 项目：以 `openspec/` 文件为唯一状态源，提供变更面板、会话绑定与 `/opsx-*` 命令，不依赖 openspec CLI。
 
-当前版本 **0.10.0**：面板 change 卡片折叠态显示一行摘要，详情改为渐进式披露——展开先给概览（Why / What Changes / 影响状态），文档按 artifact 分组且默认收起，Delta 文档只列一次并带逐文件操作计数，0 校验问题与空区块不占位，展开状态只存在于内存；同时保留 0.9.x 的会话绑定、实时状态、等待验收、AI 自动命名与人工验收勾选。
+当前版本 **0.10.1**：面板 change 卡片折叠态显示一行摘要，详情改为渐进式披露——展开先给概览（Why / What Changes / 影响状态），文档按 artifact 分组且默认收起，Delta 文档只列一次并带逐文件操作计数，0 校验问题与空区块不占位，展开状态只存在于内存；同时保留 0.9.x 的会话绑定、实时状态、等待验收、AI 自动命名与人工验收勾选。0.10.1 起，长驻 DSH 进程仍加载旧 Host 时，浏览器半会回读 `proposal.md` 自补简略区，刷新页面即可看到 Why / What Changes，无需先重启。
 
 ## 为什么是 SDD
 
@@ -58,7 +58,7 @@ node tools/build.mjs
 node --test --test-isolation=none "tests/*.test.mjs"
 ```
 
-Host 半改动需重启 DSH；client 半重新构建后刷新页面。
+Host 半改动需重启 DSH；client 半重新构建后刷新页面。混版运行时（旧 Host + 新 client）面板会按需回读 `proposal.md` 补全简略区，因此升级 client 后不必为了「为什么做 / 会改什么」而重启进程；Host 侧新增能力仍以重启 DSH 为准。
 
 ## 截图（0.10.0）
 

@@ -65,6 +65,10 @@ function createOpenSpecPlugin(require) {
   const PENDING_PAGE_SIZE = 8
   /** Lines fetched per document page (the Host route reports truncation). */
   const DOC_PAGE_LINES = 2000
+  /** How long a proposal re-read for the summary fallback stays fresh. */
+  const SUMMARY_FALLBACK_TTL_MS = 10000
+  /** Line budget of the fallback proposal read (the Host caps one page at 4000). */
+  const SUMMARY_FALLBACK_LINES = 4000
 
   /** All user-visible copy lives here. */
   const T = {
@@ -1500,6 +1504,8 @@ function createOpenSpecPlugin(require) {
     let snapshot = { status: 'loading', cwd }
     const listeners = new Set()
     const disposers = []
+    /** proposal digest per change, keyed by change name + path (mixed-version fallback). */
+    const summaryFallbacks = new Map()
     let epoch = 0
     let watchAlive = false
     let watchFailed = false
@@ -1593,8 +1599,12 @@ function createOpenSpecPlugin(require) {
       try {
         const value = await callRoute(ctx, 'state', { cwd }, '读取 openspec 状态')
         if (request !== epoch) return
-        publish(normalizeState(value, cwd))
+        const state = normalizeState(value, cwd)
+        publish(state)
         ensureFreshness()
+        // Mixed-version Hosts (pre-0.10.0) carry no summary digest; fill it from
+        // proposal.md without blocking the first paint.
+        void hydrateProposalSummaries(state, request)
       } catch (error) {
         if (request !== epoch) return
         const message = error instanceof Error ? error.message : String(error)
@@ -1636,6 +1646,55 @@ function createOpenSpecPlugin(require) {
       } catch (error) {
         return { ok: false, path, text: '', offset, limit, truncated: false, totalLines: null, error: error instanceof Error ? error.message : String(error) }
       }
+    }
+
+    /**
+     * Fill the L1 "why / what changes" digest when the running Host predates the
+     * 0.10.0 `summary.why` / `summary.changes` payload.
+     *
+     * A long-lived DSH process keeps the Host half loaded while a page refresh
+     * picks up the new browser bundle, so a mixed version is the normal case
+     * right after an upgrade. `proposal.md` is still reachable through the
+     * `document` route the reader already uses, so the browser derives the
+     * digest locally instead of showing the "no proposal yet" placeholder.
+     * Results are cached briefly: the workspace poll must never turn into a
+     * document-read loop.
+     *
+     * @param {object} state - published `WorkspaceState` (mutated in place).
+     * @param {number} request - refresh epoch that owns this hydration.
+     * @returns {Promise<void>}
+     */
+    const hydrateProposalSummaries = async (state, request) => {
+      const changes = state !== null && typeof state === 'object' && Array.isArray(state.changes) ? state.changes : []
+      if (changes.length === 0) return
+      const now = Date.now()
+      let updated = false
+      for (const change of changes) {
+        if (request !== epoch) return
+        if (change === null || typeof change !== 'object') continue
+        if (!summaryNeedsProposalFallback(normalizeChangeSummary(change.summary))) continue
+        const doc = proposalDocOf(change)
+        if (doc === null) continue
+        const path = relPathOf(cwd, doc.path)
+        if (path === '') continue
+        const key = `${String(change.name ?? '')}\u0000${path}`
+        let digest = null
+        const cached = summaryFallbacks.get(key)
+        if (cached !== undefined && now - cached.at < SUMMARY_FALLBACK_TTL_MS) {
+          digest = cached.digest
+        } else {
+          const page = await readDocument(path, { offset: 1, limit: SUMMARY_FALLBACK_LINES })
+          if (request !== epoch) return
+          if (!page.ok) continue
+          digest = proposalSummaryDigest(page.text)
+          if (digest === null) continue
+          summaryFallbacks.set(key, { at: Date.now(), digest })
+        }
+        if (digest === null) continue
+        change.summary = applyProposalDigest(change.summary, digest)
+        updated = true
+      }
+      if (updated && request === epoch) publish(state)
     }
 
     /** Fallback archive detail for hosts without `archive-detail`: probe known artifacts. */

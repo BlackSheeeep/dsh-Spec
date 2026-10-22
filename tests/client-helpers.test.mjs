@@ -13,6 +13,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  applyProposalDigest,
   archiveEntryDate,
   archiveEntryLabel,
   artifactLabel,
@@ -47,8 +48,11 @@ import {
   normalizeDeltaFiles,
   paginate,
   pendingAcceptanceTasks,
+  proposalDocOf,
+  proposalSummaryDigest,
   schemaSourceText,
   sortArtifacts,
+  summaryNeedsProposalFallback,
   taskChecklistView,
   taskProgressInfo,
   taskProgressText,
@@ -810,4 +814,147 @@ test('normalizeChangeSummary / normalizeDeltaFiles: native payload passes throug
   assert.deepEqual(normalizeDeltaFiles([{ path: 'specs/a/spec.md', label: 'a', ADDED: 1, MODIFIED: 2, REMOVED: 3, RENAMED: 4 }]), [
     { path: 'specs/a/spec.md', label: 'a', ADDED: 1, MODIFIED: 2, REMOVED: 3, RENAMED: 4 },
   ])
+})
+
+test('normalizeChangeSummary: a 0.9.x Host summary fills Why/What from description/highlights', () => {
+  assert.deepEqual(normalizeChangeSummary({ headline: '标题', description: '为什么段落', highlights: ['变更一', '变更二'], source: 'proposal' }), {
+    goal: null,
+    why: '为什么段落',
+    whyTruncated: false,
+    changes: ['变更一', '变更二'],
+    changesHidden: 0,
+    changesTruncated: false,
+  })
+  // The native 0.10.0 fields always win over the legacy aliases.
+  assert.deepEqual(normalizeChangeSummary({ why: 'native', changes: ['n'], description: 'legacy', highlights: ['l'] }), {
+    goal: null,
+    why: 'native',
+    whyTruncated: false,
+    changes: ['n'],
+    changesHidden: 0,
+    changesTruncated: false,
+  })
+})
+
+test('changeSummaryInfo: legacy description/headline are the last non-empty fallbacks', () => {
+  assert.deepEqual(changeSummaryInfo({ description: '说明' }), { text: '说明', source: 'description', truncated: false })
+  assert.deepEqual(changeSummaryInfo({ headline: '标题' }), { text: '标题', source: 'headline', truncated: false })
+})
+
+test('proposalSummaryDigest: Why paragraph and What Changes bullets with Host caps', () => {
+  const markdown = [
+    '# Proposal',
+    '',
+    '## Why',
+    '',
+    '第一段为什么（`code` 与 **粗体**）。',
+    '同一段第二行。',
+    '',
+    '第二段不应进入摘要。',
+    '',
+    '## What Changes',
+    '',
+    '- 变更一',
+    '- **变更二**：带粗体',
+    '- 变更三',
+    '- 变更四',
+    '- 变更五',
+    '- 变更六',
+    '',
+    '## Impact',
+    '',
+    '- 影响不应进入变更列表',
+  ].join('\n')
+  assert.deepEqual(proposalSummaryDigest(markdown), {
+    why: '第一段为什么（code 与 粗体）。 同一段第二行。',
+    whyTruncated: false,
+    changes: ['变更一', '变更二：带粗体', '变更三', '变更四'],
+    changesHidden: 2,
+    changesTruncated: false,
+  })
+})
+
+test('proposalSummaryDigest: CRLF/BOM, missing Why, no What Changes, empty document', () => {
+  const crlf = '\uFEFF# Proposal\r\n\r\n## Why\r\n\r\nWindows 换行也要正确。\r\n'
+  assert.deepEqual(proposalSummaryDigest(crlf), {
+    why: 'Windows 换行也要正确。',
+    whyTruncated: false,
+    changes: [],
+    changesHidden: 0,
+    changesTruncated: false,
+  })
+  // No `## Why`: the first prose paragraph after the title is the fallback.
+  assert.equal(proposalSummaryDigest('# T\n\n简介段落。\n').why, '简介段落。')
+  // Nothing usable at all.
+  assert.equal(proposalSummaryDigest(''), null)
+  assert.equal(proposalSummaryDigest('   \n\n'), null)
+  assert.equal(proposalSummaryDigest('## Why\n\n'), null)
+})
+
+test('proposalSummaryDigest: caps at 280/140 chars and flags truncation', () => {
+  const longWhy = '为'.repeat(400)
+  const longChange = '变'.repeat(200)
+  const digest = proposalSummaryDigest(`## Why\n\n${longWhy}\n\n## What Changes\n\n- ${longChange}\n`)
+  assert.equal(digest.whyTruncated, true)
+  assert.equal(digest.why.length, 280)
+  assert.equal(digest.why.endsWith('…'), true)
+  assert.equal(digest.changesTruncated, true)
+  assert.equal(digest.changes[0].length, 140)
+  assert.equal(digest.changes[0].endsWith('…'), true)
+})
+
+test('proposalDocOf / summaryNeedsProposalFallback: locate the proposal row and detect a missing Why', () => {
+  const change = {
+    docs: [
+      { path: 'openspec/changes/c/specs/a/spec.md', artifactId: 'specs', kind: 'delta' },
+      { path: 'openspec/changes/c/proposal.md', artifactId: 'proposal', kind: 'artifact' },
+    ],
+  }
+  assert.equal(proposalDocOf(change).path, 'openspec/changes/c/proposal.md')
+  assert.equal(proposalDocOf({ docs: [{ path: 'openspec/changes/c/proposal.md', artifactId: 'docs' }] }).path, 'openspec/changes/c/proposal.md')
+  assert.equal(
+    proposalDocOf({ docs: [{ path: 'openspec/changes/c/specs/a/spec.md', artifactId: 'specs', kind: 'delta' }] }),
+    null,
+  )
+  assert.equal(proposalDocOf(undefined), null)
+  assert.equal(summaryNeedsProposalFallback({ why: null }), true)
+  assert.equal(summaryNeedsProposalFallback({ why: '  ' }), true)
+  assert.equal(summaryNeedsProposalFallback({ why: '为什么' }), false)
+})
+
+test('applyProposalDigest: fills only the missing slots and never overwrites Host text', () => {
+  const digest = { why: '本地 Why', whyTruncated: true, changes: ['本地变更'], changesHidden: 1, changesTruncated: false }
+  assert.deepEqual(applyProposalDigest({ why: null, changes: [] }, digest), {
+    why: '本地 Why',
+    whyTruncated: true,
+    changes: ['本地变更'],
+    changesHidden: 1,
+    changesTruncated: false,
+    source: 'proposal',
+  })
+  assert.deepEqual(applyProposalDigest({ why: 'Host', changes: ['H'], whyTruncated: true, source: 'proposal' }, digest), {
+    why: 'Host',
+    changes: ['H'],
+    whyTruncated: true,
+    changesHidden: 0,
+    changesTruncated: false,
+    source: 'proposal',
+  })
+  assert.deepEqual(applyProposalDigest(undefined, null), {})
+})
+
+test('mixed-version repro: a pre-0.9 Host payload is filled from proposal.md', () => {
+  // 0.8.0 Host: the change payload has no `summary` at all, but docs still list proposal.md.
+  const change = {
+    name: 'job-cost-observability',
+    summary: undefined,
+    docs: [{ path: 'openspec/changes/x/proposal.md', artifactId: 'proposal', kind: 'artifact' }],
+  }
+  assert.equal(summaryNeedsProposalFallback(normalizeChangeSummary(change.summary)), true)
+  const digest = proposalSummaryDigest('## Why\n\n动机。\n\n## What Changes\n\n- 一\n- 二\n')
+  const merged = normalizeChangeSummary(applyProposalDigest(change.summary, digest))
+  assert.equal(merged.why, '动机。')
+  assert.deepEqual(merged.changes, ['一', '二'])
+  assert.equal(changeSummaryInfo(merged).text, '动机。')
+  assert.deepEqual(changeDigestTotals(merged), { shown: 2, total: 2, truncated: false })
 })
