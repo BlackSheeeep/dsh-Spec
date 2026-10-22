@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.10.2
+
+修复「快捷条/hero 里的『开始提案』『探索』点击无反应」：0.10.0 把面板的对话框提交函数改成唯一实现时，快捷条（`DockBody`）里的 `submitPropose` / `submitExplore` 闭包被删掉，而 JSX 仍在调用，点击会抛 `ReferenceError` 并静默无动作。现在两个座位复用同一份提交实现，并由源码结构测试钉住这条接线。
+
+### Fixed
+
+- **快捷条「开始提案」失效**：对话页/hero 快捷条（含 `conversation.hero.options` 座位）弹出的「新建提案」对话框，点「开始提案」只会抛 `Uncaught ReferenceError: submitPropose is not defined`——对话框不关、命令不发送、也没有错误提示；面板（`WorkspaceDetail`）里的同名对话框不受影响。修复提取 `createDialogSubmitters` 共享工厂，面板与快捷条都从它取 `submitPropose` / `submitExplore`，避免再次出现「删一处、留一处」。
+- **快捷条「探索」对话框同样失效**：同一原因导致的 `submitExplore is not defined` 一并修复。
+- **面板动作失败时不再「无反应」**：`WorkspaceDetail` 的命令按钮在直接执行被拒绝（目标会话运行中/等待权限、Host 校验失败等）时，把完整命令填入目标会话的输入框（不自动发送）并提示「命令已填入输入框，请手动发送」；成功路径仍是直接执行。
+- **回归测试**：新增 `tests/client-structure.test.mjs`，从源码结构断言面板与快捷条都调用同一个 `createDialogSubmitters`，且两个对话框的提交调用都保留；全量 464 passed。
+
+### Notes
+
+- 本版只改浏览器半：`lib/client.js` 重建后刷新页面即可生效，不需要重启 DSH。
+- 面板动作的兜底只在直接执行失败时触发；若目标会话无法打开，仍显示原来的失败提示。
+
 ## 0.10.1
 
 修复「长驻 DSH 进程还没重启，刷新页面后面板简略区空白」：只更新了浏览器半时，Host 的 `state` 载荷仍是旧版（0.9.x 只有 `description` / `highlights`，0.8.x 连 `summary` 都没有），面板「为什么做 / 会改什么」只能显示「尚未生成提案」。浏览器半现在会在 state 发布后按需回读 `proposal.md` 自补摘要，旧 Host 无需重启即可看到简略内容。

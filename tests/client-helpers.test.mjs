@@ -855,6 +855,8 @@ test('proposalSummaryDigest: Why paragraph and What Changes bullets with Host ca
     '## What Changes',
     '',
     '- 变更一',
+    '  - 嵌套一（缩进条目不算一行，与 Host digest 一致）',
+    '  - 嵌套二',
     '- **变更二**：带粗体',
     '- 变更三',
     '- 变更四',

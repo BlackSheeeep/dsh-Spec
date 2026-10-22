@@ -324,8 +324,10 @@ const HELPER_SUMMARY_CHANGE_ROWS = 4
 const HELPER_H2_HEADING = /^##\s+(.+?)\s*$/
 /** Any markdown heading (a level-2 section ends at the next heading of any level). */
 const HELPER_ANY_HEADING = /^#{1,6}\s+/
-/** A bullet or ordered-list item. */
+/** A bullet or ordered-list item (any indent, used when skipping prose). */
 const HELPER_LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/
+/** A top-level bullet only; indented nested bullets are not digest rows (same rule as the Host). */
+const HELPER_TOP_LEVEL_LIST_ITEM = /^(?:[-*+])\s+(\S.*)$/
 /** A fenced code block delimiter. */
 const HELPER_FENCE = /^\s*(?:```|~~~)/
 
@@ -459,7 +461,10 @@ function helperFirstParagraph(body) {
 }
 
 /**
- * Bullet/ordered-list entries in a section body, in source order.
+ * Top-level bullet entries of a section body, in source order.
+ *
+ * Mirrors the Host digest: indented nested bullets and ordered lists are not
+ * separate rows, so the panel's `共 N 条` matches the new Host exactly.
  *
  * @param {string[]|undefined} body - section lines.
  * @returns {string[]} plain entries.
@@ -474,7 +479,7 @@ function helperListItems(body) {
       continue
     }
     if (inFence) continue
-    const match = HELPER_LIST_ITEM.exec(line)
+    const match = HELPER_TOP_LEVEL_LIST_ITEM.exec(line)
     if (match === null) continue
     const text = helperStripInlineMarkdown(match[1])
     if (text !== '') items.push(text)
