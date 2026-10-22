@@ -14,6 +14,7 @@
 - **压缩变更卡片摘要**：新增 `ConfirmChangeState.summary.headline`，按「`.openspec.yaml` goal → `## What Changes` 首条要点 → `## Why` 首句」提取一句短标题（如「新增幼狮卡牌」，上限 32 字），折叠卡片只显示这一行；完整描述与 `## What Changes` 要点移至展开详情，不再把整段 Why 截到面板上。
 - `buildAutoProposePrompt` 要求 AI 在 `.openspec.yaml` 写入 4–20 字的 `goal`（面板 headline）；显式 propose 提示词也要求 AI 在 goal 为空时补一句短摘要。
 - README 重写为「SDD 收益 → OpenSpec 的价值（状态持久化与可恢复性）→ 插件便利 → 快速开始 → 使用与技术细节」的简洁结构。
+- README 新增三个操作演示视频（多任务并行、一键使用与实时状态、变更自动摘要），视频压缩为 1280px H.264 并提供可点击缩略图。
 - 插件版本 `0.9.1` → `0.9.2`。
 
 ## 0.9.1
