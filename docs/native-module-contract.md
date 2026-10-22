@@ -252,6 +252,8 @@ export async function buildProposePrompt({ cwd, changeName, intent, schema, conf
 export async function buildAutoProposePrompt({ cwd, description, schema, config, created, existingNames })
 export async function buildApplyPrompt({ cwd, changeName, schema, config, change, artifactPrompt })
 export async function buildUpdatePrompt({ cwd, changeName, schema, config, change })
+export async function buildReportPrompt({ cwd, scope, changeName, changePath, change, facts, range, report, template, mainline })
+// -> single human-report prompt, 'change' or 'range' scope (§5.1)
 ```
 Boundaries: explore read-only; propose plan-only + stop; apply task-by-task, tick `apply.tracks`
 file as it works; update planning-only, no code (point to apply); archive produces no prompt.
@@ -348,6 +350,8 @@ request cap. Route methods (Lead, `src/host.js`):
 | `sync-preview` | `{ cwd, change }` | `{ preview: MergePlanPreview, text }` |
 | `document` | `{ cwd, path, offset?, limit? }` | `{ text, truncated, totalLines }` |
 | `archive-detail` | `{ cwd, path }` or `{ cwd, name }` | `{ change: ChangeState }` for one archived change (same §4 shape) |
+| `report-prompt` | `{ cwd, scope?: 'change'\|'range', path?, name?, from?, to?, reportRoot?, inArchive? }` | `{ text, scope, report: { path, absolutePath, exists }, template: { path, version }, included? }` |
+| `report-status` | same payload shape as `report-prompt` | `{ scope, exists, path, absolutePath?, generatedAt?, source?, included? }` |
 | `task-toggle` | `{ cwd, change, line, done }` | `{ ok, change, path, line, done, manual, task }` |
 | `init` | `{ cwd }` | `{ ok: true, text, created }` |
 
@@ -356,6 +360,129 @@ Only `init` and `task-toggle` write. `task-toggle` validates the change name, re
 `apply.tracks` file (default `tasks.md`), toggles exactly the 1-based checkbox line, preserves CRLF
 and BOM, and rejects a stale/non-task line instead of guessing. Direct command results are
 `{kind:'success'|'error', text}`.
+
+### 5.1 Human report actions (`report-prompt` / `report-status`, read-only)
+
+Both actions compose or discover human-report files for archived changes; **neither writes anything**:
+they only `stat` / read workspace files, never create directories or files and never start a model
+turn. The report HTML and its `report.json` reference are written by the AI inside a session, using
+the prompt these actions return.
+
+Common rules:
+
+- `scope` defaults to `'change'`. `reportRoot` defaults to the workspace-relative `人类文档`; it may be
+  relative (resolved under `cwd`), never contains `..` segments, and may be absolute only when it
+  stays inside `cwd` (mapped back to a workspace-relative path). Anything outside `cwd` is rejected
+  because the DSH file policy cannot write or verify it.
+- The optional project mainline card `openspec/report-context.md` is read (first 50 000 bytes) and
+  passed to the prompt builder as `{ text, source: 'card' }`; when missing/empty the prompt gets
+  `source: 'inferred'` and must label the report `主线来源：推断`.
+- The template is the absolute `src/report/report-template.html` path (`lib/report/report-template.html`
+  in a built Host), version `report-template/v1`. The prompt inlines the methodology
+  `src/report/report-methodology.md` (single source of truth, capped at 12 000 chars, compact fallback
+  when missing) and keeps the prompt fillable in the composer.
+
+**`scope='change'`** — one archived change:
+
+- `path` / `name` resolve exactly like `archive-detail` to `openspec/changes/archive/<dir>`
+  (bare `<dir>`, `archive/<dir>` and full `openspec/changes/archive/<dir>` are accepted). Anything
+  outside the archive prefix, containing `..` or escaping `cwd` is rejected; active changes are
+  rejected. Archived directories are named `YYYY-MM-DD-<change>`; facts come from
+  `computeChangeState(cwd, 'archive/<dir>')`, delta operations are parsed from the archived
+  `specs/<capability>/spec.md` files, and main spec paths are derived as
+  `openspec/specs/<capability>/spec.md`.
+- Output naming: `<reportRoot>/<change-name>/index.html` by default, where `<change-name>` is the
+  archive directory name with the `YYYY-MM-DD-` prefix stripped; with `inArchive: true` the output is
+  `openspec/changes/archive/<dir>/report.html` instead and no pointer is written.
+
+Request / response example:
+
+```json
+// POST /dsh-spec/report-prompt
+{ "type": "client-request", "rpcId": "r1", "method": "report-prompt",
+  "payload": { "cwd": "D:/work/app", "scope": "change",
+               "path": "openspec/changes/archive/2024-01-01-legacy-fixture" } }
+
+// result.value (text abbreviated)
+{ "scope": "change",
+  "text": "# Human report prompt — single archived change\n… ## Methodology … 主线锚定 …",
+  "report": { "path": "人类文档/legacy-fixture/index.html",
+              "absolutePath": "D:\\work\\app\\人类文档\\legacy-fixture\\index.html",
+              "exists": false },
+  "template": { "path": "D:\\dsh-spec\\src\\report\\report-template.html", "version": "report-template/v1" } }
+```
+
+**`scope='range'`** — one period report:
+
+- `from` / `to` are strict real calendar dates (`YYYY-MM-DD`); `from <= to` is required. The filter is
+  the archived-directory date prefix (`YYYY-MM-DD-<change>`), inclusive of both ends; archive
+  directories without a date prefix never match. 0 included changes and more than 30 included
+  changes are explicit errors (the error names the count and asks to shrink the range). `inArchive`
+  is ignored for this scope.
+- `included` is sorted by archived date and then name as `[{ name, changePath, date }]` where `name` is
+  the change name without the date prefix and `changePath` is `openspec/changes/archive/<dir>`.
+- Output naming: `<reportRoot>/<from>_<to>/index.html`, with the range reference
+  `<reportRoot>/<from>_<to>/report.json` recording
+  `{ scope:'range', from, to, generatedAt, template, included }`.
+
+Request / response example:
+
+```json
+// POST /dsh-spec/report-prompt
+{ "type": "client-request", "rpcId": "r2", "method": "report-prompt",
+  "payload": { "cwd": "D:/work/app", "scope": "range",
+               "from": "2024-01-01", "to": "2024-03-31" } }
+
+// result.value (text abbreviated)
+{ "scope": "range",
+  "text": "# Human report prompt — period report\n… ## Sub-agent orchestration (period scope only) …",
+  "report": { "path": "人类文档/2024-01-01_2024-03-31/index.html",
+              "absolutePath": "D:\\work\\app\\人类文档\\2024-01-01_2024-03-31\\index.html",
+              "exists": false },
+  "template": { "path": "D:\\dsh-spec\\src\\report\\report-template.html", "version": "report-template/v1" },
+  "included": [ { "name": "legacy-fixture",
+                  "changePath": "openspec/changes/archive/2024-01-01-legacy-fixture",
+                  "date": "2024-01-01" } ] }
+```
+
+**`report-status` discovery (read-only)** — single change, in order:
+
+1. pointer `<archive-dir>/report.json` (written when the report lives outside the archive directory):
+   parse `{ report, generatedAt, template, change }`; `report` may be workspace-relative (resolved under
+   `cwd`) or absolute. A workspace-contained target is stat-ed normally; for a target outside `cwd`
+   the file cannot be verified, so `exists` is determined by the pointer's presence only —
+   `source: 'pointer'`.
+2. naming convention `<reportRoot>/<change-name>/index.html` → `source: 'convention'`.
+3. archive-local report `<archive-dir>/report.html` → `source: 'archive'`.
+
+Period scope checks `<reportRoot>/<from>_<to>/index.html` (`source: 'convention'`) and reads the
+adjacent `report.json` for `generatedAt` and the included-change count. When nothing is found the
+value is `{ scope, exists: false, path: null }`; the action never guesses a path. Only
+workspace-contained paths are stat-ed; a stale pointer whose target disappeared falls through to the
+naming-convention / archive fallbacks.
+
+```json
+// POST /dsh-spec/report-status (existing out-of-archive report)
+{ "type": "client-request", "rpcId": "r3", "method": "report-status",
+  "payload": { "cwd": "D:/work/app", "scope": "change",
+               "path": "openspec/changes/archive/2024-01-01-legacy-fixture" } }
+
+// result.value
+{ "scope": "change", "exists": true,
+  "path": "人类文档/legacy-fixture/index.html",
+  "absolutePath": "D:\\work\\app\\人类文档\\legacy-fixture\\index.html",
+  "generatedAt": "2026-10-22T10:00:00.000Z", "source": "pointer" }
+```
+
+`buildReportPrompt` (`src/prompts.js`) composes the `text`: English instructions + a zh-CN report body
+requirement; change facts (archive path, name, schema/created, goal/why, artifact statuses, task
+progress, delta counts, main-spec paths, validation) or period facts (from/to, period name, included
+list); mainline card or inference instructions; the embedded methodology; template path + structural
+fallback; output contract (single HTML, `report.json` pointer/reference); evidence rules (delta is the
+`after` authority, honest 原文 / 推断 / 旧文本未留存 / 未验证); period-only read-only sub-agent
+orchestration (one fact card per included change, fixed fields, concurrency 4–6, sequential fallback,
+one merged report); and the finish contract (write only the report files, never touch
+proposal/design/tasks/delta/main specs, report paths instead of silently succeeding).
 
 `src/native/init.js` (Lead):
 ```js

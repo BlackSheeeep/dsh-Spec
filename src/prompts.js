@@ -25,12 +25,16 @@
  * task progress, operation guidance, plans in schema order).
  *
  * No filesystem writes happen here. The only reads are artifact templates
- * performed by the instruction composer when it is invoked, plus the bundled
+ * performed by the instruction composer when it is invoked, the bundled
  * vendored OPSX skill text loaded by `native/skill-adaptation.js` for the sync
- * and archive AI workflows.
+ * and archive AI workflows, and the bundled report methodology embedded by
+ * `buildReportPrompt` (which falls back to a compact constant when the asset is
+ * missing, e.g. in a partially built Host).
  *
  * @module dsh-spec/prompts
  */
+
+import { readFileSync } from 'node:fs'
 
 import { SNAPSHOT_VERSION, composeArtifactPrompt } from './native/instruction.js'
 import { loadAdaptedSkill } from './native/skill-adaptation.js'
@@ -1126,4 +1130,387 @@ export async function buildSyncWorkflowPrompt({ cwd, changeName, schema = null, 
  */
 export async function buildArchiveWorkflowPrompt({ cwd, changeName, schema = null, config = {}, change = null, facts = null } = {}) {
   return buildOpsxWorkflowPrompt({ kind: 'archive', changeName, schema, config, change, facts })
+}
+
+/** Maximum characters of the report methodology embedded in one prompt. */
+const REPORT_METHODOLOGY_LIMIT = 12_000
+
+/** Bundled report methodology: the single source of truth for the narrative rules. */
+const REPORT_METHODOLOGY_URL = new URL('./report/report-methodology.md', import.meta.url)
+
+/** Compact methodology used when the bundled asset is missing or unreadable. */
+const REPORT_METHODOLOGY_FALLBACK = [
+  '## 报告方法论（主线锚定 · 渐进披露 · 证据分级）',
+  '',
+  '1. 主线锚定三步：① 定位——这项工作属于哪个大系统、哪条核心主线、哪个支线能力，服务什么最终目标；② 展开——具体实现或修复了什么、改前 / 改后行为如何；③ 回归主线——用主线语言说明成果对核心能力或目标的影响。不要把 change 名、缺陷编号或「修复了 N 个 bug」当作标题 / 结论。',
+  '2. 渐进披露：首屏只给一句话主线定位 + 一句话成果；任务清单、文件落点、验证读数、术语等细节默认折叠（<details>），按需展开；概念 / 方法论单独成节或单独折叠。',
+  '3. 时间段汇总：先给出该时间段在核心主线上的统一定位与整体成果，再按支线 / 能力归组展开各 change，禁止把多份单变更报告拼接。',
+  '4. 证据分级：delta 是 after 权威；MODIFIED / REMOVED 的旧文本只有 proposal / design 原文或可定位的 git 历史支撑时才标「原文」，否则标「推断」或「旧文本未留存」；不得编造旧行为、测试结果或指标，材料中没有就写「归档材料中未见」或「未验证」。',
+  '5. 反模式：用 change 名 / 缺陷编号当标题；只罗列任务与文件；把推断写成事实；把多个 change 机械拼接；首屏堆细节；宣称无来源的测试通过或指标。',
+].join('\n')
+
+/** Report scopes accepted by `buildReportPrompt`. */
+const REPORT_SCOPES = new Set(['change', 'range'])
+
+/** Maximum delta-spec rows and pending-task rows rendered into one report prompt. */
+const REPORT_MAX_DELTA_ROWS = 40
+const REPORT_MAX_PENDING_TASKS = 15
+
+/**
+ * Read the bundled report methodology, bounded to keep the fill-the-composer
+ * prompt usable. Missing or empty assets fall back to the compact constant.
+ *
+ * @returns {string}
+ */
+function readReportMethodology() {
+  let text = ''
+  try {
+    text = readFileSync(REPORT_METHODOLOGY_URL, 'utf8').trim()
+  } catch {
+    return REPORT_METHODOLOGY_FALLBACK
+  }
+  if (text.length === 0) return REPORT_METHODOLOGY_FALLBACK
+  return text.length > REPORT_METHODOLOGY_LIMIT
+    ? `${text.slice(0, REPORT_METHODOLOGY_LIMIT)}\n\n[methodology truncated at ${REPORT_METHODOLOGY_LIMIT} characters]`
+    : text
+}
+
+/** Render `- label: value` only when the value is non-empty. */
+function reportFactLine(lines, label, value) {
+  const text = typeof value === 'string' ? value.trim() : value === null || value === undefined ? '' : String(value)
+  if (text.length > 0) lines.push(`- ${label}: ${text}`)
+}
+
+/**
+ * Mainline section: the optional project card when present, else explicit
+ * inference instructions that force the 「主线来源：推断」 label and name the
+ * missing gaps instead of inventing a system goal.
+ */
+function reportMainlineBlock(mainline) {
+  const text = typeof mainline?.text === 'string' ? mainline.text.trim() : ''
+  const lines = ['## Mainline anchor (read this first)']
+  if (text.length > 0 && mainline?.source === 'card') {
+    lines.push('', '主线来源：项目主线卡', '', text)
+    return lines.join('\n')
+  }
+  lines.push(
+    '',
+    'No project mainline card is available. Label the report exactly `主线来源：推断` and infer the mainline from, in this order: the `context` in `openspec/config.yaml`, the `## Purpose` of the main specs, the proposal `## Capabilities` / `## Impact`, and the design `## Context`.',
+    '',
+    'List these missing mainline gaps in the report instead of inventing them: larger system; core mainline and final goal; branch / capability map; current stage goal and reporting conventions.',
+  )
+  return lines.join('\n')
+}
+
+/** Parse one delta counter, tolerating the upper-case `delta` shape. */
+function deltaCounter(row, lower, upper) {
+  const value = row?.[lower] ?? row?.[upper]
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+/** Normalize delta rows to `{ path, capability, added, modified, removed, renamed }`. */
+function normalizeDeltaFiles(facts, change) {
+  const rows = Array.isArray(facts?.deltaFiles)
+    ? facts.deltaFiles
+    : Array.isArray(change?.delta?.files)
+      ? change.delta.files
+      : []
+  return rows.slice(0, REPORT_MAX_DELTA_ROWS).map((row) => ({
+    path: String(row?.path ?? ''),
+    capability: String(row?.capability ?? row?.label ?? ''),
+    added: deltaCounter(row, 'added', 'ADDED'),
+    modified: deltaCounter(row, 'modified', 'MODIFIED'),
+    removed: deltaCounter(row, 'removed', 'REMOVED'),
+    renamed: deltaCounter(row, 'renamed', 'RENAMED'),
+  }))
+}
+
+/** Main spec paths derived from delta capabilities when the caller did not pass them. */
+function mainSpecPathsOf(facts, deltaFiles) {
+  if (Array.isArray(facts?.mainSpecPaths)) return facts.mainSpecPaths.filter((value) => typeof value === 'string')
+  const seen = new Set()
+  for (const row of deltaFiles) {
+    if (row.capability === '') continue
+    seen.add(`openspec/specs/${row.capability}/spec.md`)
+  }
+  return [...seen]
+}
+
+/** `scope='change'` facts block: archive path, metadata, artifacts, tasks, deltas, specs, validation. */
+function reportChangeFactsBlock({ changeName, changePath, change, facts }) {
+  const metadata = facts?.metadata ?? change?.metadata ?? {}
+  const lines = [
+    '## Change facts (authoritative; do not invent)',
+    `- Change: ${changeName || change?.name || '(unknown)'}`,
+    `- Archive path: ${changePath || '(unknown)'}`,
+  ]
+  reportFactLine(lines, 'Schema', facts?.schemaName ?? metadata.schema ?? change?.schemaName)
+  reportFactLine(lines, 'Created', metadata.created)
+  reportFactLine(lines, 'Goal', metadata.goal ?? change?.summary?.goal)
+  reportFactLine(lines, 'Why / problem', change?.summary?.why)
+
+  const artifacts = Array.isArray(facts?.artifacts)
+    ? facts.artifacts
+    : Array.isArray(change?.artifacts)
+      ? change.artifacts.map((artifact) => ({ id: artifact.id, status: artifact.status }))
+      : []
+  if (artifacts.length > 0) {
+    lines.push(`- Artifacts: ${artifacts.map((artifact) => `${artifact.id}=${artifact.status}`).join(', ')}`)
+  }
+
+  const tasks = facts !== null && typeof facts === 'object' && 'tasks' in facts ? facts.tasks : change?.tasks ?? null
+  const total = typeof tasks?.total === 'number' ? tasks.total : null
+  const done = typeof tasks?.done === 'number' ? tasks.done : null
+  if (total !== null) {
+    lines.push(`- Tasks: ${done ?? 0}/${total} checked`)
+    const pending = Array.isArray(tasks.pending) ? tasks.pending : []
+    if (pending.length > 0) {
+      lines.push(`- Pending tasks (first ${Math.min(pending.length, REPORT_MAX_PENDING_TASKS)} of ${pending.length}):`)
+      for (const item of pending.slice(0, REPORT_MAX_PENDING_TASKS)) lines.push(`  - ${String(item)}`)
+    }
+  } else {
+    lines.push('- Tasks: no tasks file in this archived change')
+  }
+
+  const deltaFiles = normalizeDeltaFiles(facts, change)
+  let added = 0
+  let modified = 0
+  let removed = 0
+  let renamed = 0
+  for (const row of deltaFiles) {
+    added += row.added
+    modified += row.modified
+    removed += row.removed
+    renamed += row.renamed
+  }
+  if (deltaFiles.length > 0) {
+    lines.push('- Delta specs (the `after` authority):')
+    for (const row of deltaFiles) {
+      lines.push(
+        `  - ${row.path} — capability ${row.capability || '(unknown)'}: ADDED ${row.added}, MODIFIED ${row.modified}, REMOVED ${row.removed}, RENAMED ${row.renamed}`,
+      )
+    }
+    lines.push(`- Delta totals: ADDED ${added} / MODIFIED ${modified} / REMOVED ${removed} / RENAMED ${renamed}`)
+  } else {
+    lines.push('- Delta specs: none in this archived change')
+  }
+
+  const mainSpecPaths = mainSpecPathsOf(facts, deltaFiles)
+  if (mainSpecPaths.length > 0) {
+    lines.push(`- Main spec paths: ${mainSpecPaths.join(', ')}`)
+  }
+
+  const validation = facts?.validation ?? change?.validation
+  if (validation && typeof validation === 'object') {
+    lines.push(`- Validation: ${validation.errors ?? 0} ERROR / ${validation.warnings ?? 0} WARNING / ${validation.infos ?? 0} INFO`)
+  }
+  return lines.join('\n')
+}
+
+/** `scope='range'` facts block: inclusive period, included changes and period naming. */
+function reportRangeFactsBlock({ range }) {
+  const from = typeof range?.from === 'string' && range.from.length > 0 ? range.from : '<from>'
+  const to = typeof range?.to === 'string' && range.to.length > 0 ? range.to : '<to>'
+  const included = Array.isArray(range?.included) ? range.included : []
+  const lines = [
+    '## Period facts (authoritative; do not invent)',
+    `- From (inclusive): ${from}`,
+    `- To (inclusive): ${to}`,
+    `- Period name / output directory: ${from}_${to}`,
+    `- Included archived changes: ${included.length}`,
+  ]
+  if (included.length === 0) {
+    lines.push('- (no included changes were supplied)')
+  } else {
+    lines.push('- Included changes (name — archive path — archived date):')
+    for (const entry of included) {
+      lines.push(`  - ${entry?.name ?? '(unknown)'} — ${entry?.changePath ?? '(unknown path)'} — ${entry?.date ?? '(no date)'}`)
+    }
+  }
+  lines.push(
+    '',
+    `The report title and the archive-information section MUST show the period ${from} → ${to} (${included.length} changes), not the name of one change.`,
+    'The filtering semantics are the archived-directory dates (the `YYYY-MM-DD-` prefix), inclusive of both ends. State that counting basis in the report.',
+  )
+  return lines.join('\n')
+}
+
+/** Template section: absolute path + compact structural fallback when unreadable. */
+function reportTemplateBlock(template) {
+  const templatePath = typeof template?.path === 'string' ? template.path : ''
+  const version = typeof template?.version === 'string' ? template.version : ''
+  const lines = ['## Visual template']
+  if (templatePath !== '') lines.push(`- Template file (absolute path): ${templatePath}`)
+  if (version !== '') lines.push(`- Template version: ${version}`)
+  lines.push(
+    '- The report is ONE self-contained HTML file: all CSS inline in the template\'s `<style>` block, keep the template\'s class names and section order, no `<script>`, no external `<link>` / `<img>` / fonts / CDN / network assets, printable.',
+  )
+  let readable = false
+  if (templatePath !== '') {
+    try {
+      readFileSync(templatePath)
+      readable = true
+    } catch {
+      readable = false
+    }
+  }
+  if (readable) {
+    lines.push('- Read the template file before writing and reuse its inline CSS, classes and layout for this scope.')
+  } else {
+    lines.push(
+      '',
+      'The template file cannot be read. Use this compact structural fallback (same narrative order, inline CSS, `<details>` for details):',
+      '1. Hero: one-sentence mainline anchor + one-sentence result, in mainline language.',
+      '2. Mainline position: larger system, core mainline, branch / capability, final goal, and the mainline-source label.',
+      '3. What was done / period overview: outcome first; for one change the before → after behavior, for a period the unified position grouped by branch / capability.',
+      '4. Evidence and verification: evidence grade per claim (原文 / 推断 / 未验证), no invented tests or numbers.',
+      '5. Details folded in `<details>`: archived artifacts, task progress, file locations, delta operation counts, references.',
+      '6. Archive information and footer: change name or period, archive path(s), main spec paths, generatedAt, template version, and the statement that the report does not replace the spec source of truth.',
+    )
+  }
+  return lines.join('\n')
+}
+
+/** Output section: exactly which file(s) to write, pointer / reference retention included. */
+function reportOutputBlock({ cwd, scope, changeName, changePath, report, template, range }) {
+  const reportAbsolute =
+    typeof report?.absolutePath === 'string' && report.absolutePath.length > 0
+      ? report.absolutePath
+      : typeof report?.path === 'string'
+        ? report.path
+        : '(unknown)'
+  const templateVersion = typeof template?.version === 'string' ? template.version : 'report-template/v1'
+  const lines = ['## Output contract', `- Workspace: ${cwd ?? '(unknown)'}`]
+  if (scope === 'range') {
+    const directory =
+      typeof report?.directory === 'string' && report.directory.length > 0
+        ? report.directory
+        : typeof report?.path === 'string' && report.path.endsWith('/index.html')
+          ? report.path.slice(0, -'/index.html'.length)
+          : '(unknown)'
+    lines.push(
+      `- Write exactly ONE self-contained HTML report to: ${reportAbsolute}`,
+      `- Also write the reference file \`${directory}/report.json\` with JSON \`{ "scope": "range", "from": "${range?.from ?? ''}", "to": "${range?.to ?? ''}", "generatedAt": "<ISO-8601>", "template": "${templateVersion}", "included": [{ "name", "changePath", "date" }, ...] }\` recording every included change.`,
+      '- Do NOT write one report per change and do NOT create any other HTML file.',
+    )
+  } else {
+    lines.push(`- Write exactly ONE self-contained HTML report to: ${reportAbsolute}`)
+    if (report?.inArchive === true) {
+      lines.push('- The report lives directly inside the archived change directory, so no `report.json` pointer is needed.')
+    } else {
+      lines.push(
+        `- The report is outside the archive directory: also write the pointer \`${changePath}/report.json\` next to the archived change with JSON \`{ "report": "<the report path as written>", "generatedAt": "<ISO-8601>", "template": "${templateVersion}", "change": "${changeName}" }\`.`,
+        '- Write no other file.',
+      )
+    }
+  }
+  return lines.join('\n')
+}
+
+/** Evidence rules: delta is after authority; honest 原文 / 推断 / 旧文本未留存 grading. */
+function reportEvidenceBlock() {
+  return [
+    '## Evidence rules (non-negotiable)',
+    '- The archived delta specs are the authority for the `after` state; for MODIFIED / REMOVED requirements archiving does not preserve the old text.',
+    '- Label old text 原文 ONLY when the proposal / design original text or a locatable git history proves it; otherwise 推断, or 旧文本未留存 when even a reconstruction is impossible.',
+    '- Never invent tests, metrics, issue numbers, validation results or dates: write 归档材料中未见 or 未验证 instead.',
+    '- Keep every claim tied to its evidence grade and, for a period report, to the change it came from; never upgrade inference into fact.',
+  ].join('\n')
+}
+
+/** Period-only orchestration: one read-only fact card per included change, one merged report. */
+function reportOrchestrationBlock() {
+  return [
+    '## Sub-agent orchestration (period scope only)',
+    '- If this session supports sub-agents, dispatch one read-only sub-agent per included change listed above. Each returns one fixed fact card: change / archive path / date / capabilities / problem / intent / what changed / before-after (with evidence level) / evidence paths / limits / mainline candidate.',
+    '- Run at most 4-6 sub-agents concurrently; with more included changes, process them in batches.',
+    '- If sub-agents are unavailable or impractical, collect the same facts sequentially and label that fallback in the report.',
+    '- Sub-agents MUST NOT write or modify any file: no report, no proposal / design / tasks / delta, no main spec. They only read and return fact cards.',
+    '- The main session synthesizes ONE report: group by branch / capability, resolve conflicting fact cards explicitly (merge by timeline when several changes touched one capability; mark unresolved conflicts), and never concatenate the cards or produce one report per change.',
+  ].join('\n')
+}
+
+/** Finish contract: bounded writes, no planning-artifact edits, honest failure reporting. */
+function reportFinishContract({ scope }) {
+  return [
+    '## Finish contract',
+    '1. Write the file(s) named in the output contract and nothing else.',
+    '2. Do NOT modify proposal.md, design.md, tasks.md, any delta spec or any main spec.',
+    '3. If an output path cannot be written (for example the DSH file policy rejects it), stop and report the failure; never claim success or write somewhere else silently.',
+    '4. Keep the archive-information section and footer references, and state that the report does not replace the spec source of truth.',
+    scope === 'range'
+      ? '5. Final reply: the absolute report path(s) plus the number of included changes; nothing else.'
+      : '5. Final reply: the absolute report path(s); nothing else.',
+  ].join('\n')
+}
+
+/**
+ * Report prompt builder: one fill-the-composer prompt for either a single
+ * archived change or a period report. The instructions are English; the report
+ * itself must be written in Simplified Chinese (zh-CN).
+ *
+ * The narrative methodology comes from `src/report/report-methodology.md` (the
+ * single source of truth) and is embedded so it always reaches the model; when
+ * the asset is missing a compact fallback covering 主线锚定 / 渐进披露 / 证据分级
+ * is embedded instead. The HTML template is referenced by path (plus a compact
+ * outline fallback) so the prompt stays editable in the composer.
+ *
+ * This builder never writes; reading the methodology is its only I/O.
+ *
+ * @param {object} [options]
+ * @param {string} [options.cwd] absolute workspace root (kept for symmetry)
+ * @param {'change'|'range'} [options.scope] report scope
+ * @param {string} [options.changeName] archived change name (single-change scope)
+ * @param {string} [options.changePath] workspace-relative archived change directory (single-change scope)
+ * @param {object} [options.change] ChangeState of the archived change
+ * @param {object} [options.facts] single-change facts: schemaName, metadata, artifacts, tasks, deltaFiles, mainSpecPaths, validation
+ * @param {object} [options.range] period facts: `{ from, to, included: [{ name, changePath, date }] }`
+ * @param {object} [options.report] resolved output: single change `{ path, absolutePath, inArchive }`, period `{ path, absolutePath, directory }`
+ * @param {object} [options.template] `{ path: absoluteTemplatePath, version }`
+ * @param {object} [options.mainline] `{ text, source: 'card'|'inferred' }` (text may be '')
+ * @returns {Promise<string>} model-facing report prompt
+ */
+export async function buildReportPrompt({
+  cwd,
+  scope = 'change',
+  changeName = '',
+  changePath = '',
+  change = null,
+  facts = null,
+  range = null,
+  report = null,
+  template = null,
+  mainline = null,
+} = {}) {
+  const resolvedScope = REPORT_SCOPES.has(scope) ? scope : ''
+  if (resolvedScope === '') throw new Error(`unsupported report scope: ${String(scope)}`)
+  const title =
+    resolvedScope === 'range'
+      ? '# Human report prompt — period report'
+      : '# Human report prompt — single archived change'
+  const parts = [
+    title,
+    '',
+    'You are writing a human-facing report, not a specification. The report body MUST be written in Simplified Chinese (zh-CN); these English instructions only define the work.',
+  ]
+  if (resolvedScope === 'change') {
+    parts.push('', reportChangeFactsBlock({ changeName, changePath, change, facts }))
+  } else {
+    parts.push('', reportRangeFactsBlock({ range }))
+  }
+  parts.push('', reportMainlineBlock(mainline))
+  parts.push(
+    '',
+    '## Methodology (single source of truth — follow it exactly)',
+    '',
+    'This methodology enforces 主线锚定（mainline anchoring）, 渐进披露（progressive disclosure）and 证据分级（evidence grading）.',
+    '',
+    readReportMethodology(),
+  )
+  parts.push('', reportTemplateBlock(template))
+  parts.push('', reportOutputBlock({ cwd, scope: resolvedScope, changeName, changePath, report, template, range }))
+  parts.push('', reportEvidenceBlock())
+  if (resolvedScope === 'range') parts.push('', reportOrchestrationBlock())
+  parts.push('', reportFinishContract({ scope: resolvedScope }))
+  return parts.join('\n')
 }

@@ -2,7 +2,7 @@
 
 在 DeepSeek Harness 中管理 OpenSpec 项目：以 `openspec/` 文件为唯一状态源，提供变更面板、会话绑定与 `/opsx-*` 命令，不依赖 openspec CLI。
 
-当前版本 **0.10.1**：面板 change 卡片折叠态显示一行摘要，详情改为渐进式披露——展开先给概览（Why / What Changes / 影响状态），文档按 artifact 分组且默认收起，Delta 文档只列一次并带逐文件操作计数，0 校验问题与空区块不占位，展开状态只存在于内存；同时保留 0.9.x 的会话绑定、实时状态、等待验收、AI 自动命名与人工验收勾选。0.10.1 起，长驻 DSH 进程仍加载旧 Host 时，浏览器半会回读 `proposal.md` 自补简略区，刷新页面即可看到 Why / What Changes，无需先重启。
+当前版本 **0.11.0**：面板 change 卡片折叠态显示一行摘要，详情改为渐进式披露——展开先给概览（Why / What Changes / 影响状态），文档按 artifact 分组且默认收起，Delta 文档只列一次并带逐文件操作计数，0 校验问题与空区块不占位，展开状态只存在于内存；同时保留 0.9.x 的会话绑定、实时状态、等待验收、AI 自动命名与人工验收勾选。0.10.1 起，长驻 DSH 进程仍加载旧 Host 时，浏览器半会回读 `proposal.md` 自补简略区，刷新页面即可看到 Why / What Changes，无需先重启。0.11.0 起新增人类报告：归档变更（单个或按时间段汇总）可一键把「主线锚定」报告提示词填入会话输入框（不自动发送），内置方法论与自包含 HTML 模板、可选主线卡与证据分级，报告引用随归档保留。
 
 ## 为什么是 SDD
 
@@ -135,6 +135,22 @@ Host 半改动需重启 DSH；client 半重新构建后刷新页面。混版运�
 
 系统通知需浏览器授权。Markdown 文档在面板内的大尺寸阅读器中打开，支持放大、截断后继续读取与「去工作区对齐」。
 
+### 人类报告
+
+归档的目标是给人看，而不仅是给规格用。面板为两类范围提供报告入口：
+
+- **单变更报告**：展开「已归档变更」后，每个归档条目右侧有报告按钮；点击打开报告对话框（报告目录、或直接写入归档目录、已有报告状态）。
+- **时间段报告**：归档区标题右侧的「按时间段生成报告」入口，选择起止日期（默认近 7 天，按归档日期含首尾统计），对话框实时显示命中的已归档变更数量与清单。
+
+对话框提交后只把组合好的报告提示词填入目标会话输入框，**不会自动发送**，可在发送前修改提示词。提示词要求报告按「先定位主线 → 再展开本次工作 → 最后回归主线」组织，细节默认折叠、证据分级（原文 / 推断 / 未验证）如实标注；时间段报告还要求主会话为每个 change 派发只读子 agent 收集事实卡，再汇总成**一份**按时间段命名的报告。
+
+- 报告目录默认为工作区下的 `人类文档/`，按工作区记住（浏览器 `localStorage`，不写入 `openspec/`）；也可填绝对路径，但必须位于当前工作区内（工作区外路径会被 Host 拒绝，因为 DSH 文件策略无法写入或校验）。
+- 输出命名：单变更写入 `<报告目录>/<change-name>/index.html`，或选择写入归档目录的 `report.html`；时间段写入 `<报告目录>/<from>_<to>/index.html`。
+- 已生成的报告由只读动作 `report-status` 发现：对话框显示「已生成」、生成时间与路径，可沙箱预览（`<iframe sandbox="">`，不执行报告脚本）或复制路径。
+- 可选的项目级主线卡 `openspec/report-context.md` 存在时，提示词锚定真实主线；缺失时报告标注「主线来源：推断」并列出缺口。
+
+报告写到归档目录之外时，归档目录会留下 `report.json` 指针；时间段报告在 `<from>_<to>/report.json` 记录范围与纳入清单。报告自身在「归档信息」与页脚保留引用，并声明不替代规格真相源。
+
 ## 命令
 
 DSH 命令名不能带冒号，原生 `/opsx:*` 映射为 kebab-case：
@@ -181,13 +197,15 @@ artifact 状态仅由文件决定：
 src/host.js            Host 半：命令族、/dsh-spec 路由、fallback skills provider
 src/commands.js        九条命令：变更选择、propose 脚手架、AI sync/archive、确定性路径、直出
 src/session-titles.js  阶段会话标题组合与幂等写入
-src/prompts.js         阶段提示词、OPSX sync/archive 提示词、AI 自动命名提示词
+src/prompts.js         阶段提示词、OPSX sync/archive 提示词、AI 自动命名提示词、报告提示词
+src/report/            报告方法论（内嵌进提示词）与自包含 HTML 模板（构建镜像到 lib/report/）
 src/native/**          纯 JS 原生语义引擎：yaml / config / metadata / schema / graph /
                        spec / summary / tasks / validate / state / instruction / merge /
                        archive / skills / skill-adaptation / init / fsio
 src/native-snapshot/   固定版本 schema、模板与 12 个 OPSX SKILL.md 快照
-src/client.js          浏览器半：面板、快捷条、绑定、直接执行、状态订阅、通知、文档阅读器
-src/client-helpers.js  纯展示辅助：排序、摘要、分页、任务清单、等待验收聚合
+src/client.js          浏览器半：面板、快捷条、绑定、直接执行、状态订阅、通知、文档阅读器、
+                       报告对话框与沙箱预览
+src/client-helpers.js  纯展示辅助：排序、摘要、分页、任务清单、等待验收聚合、报告区间与输出路径
 tools/build.mjs        构建（Host 拷贝 + client 内联，无打包器）
 tools/sync-native-snapshot.mjs  开发期刷新内置 schema/模板/skills 快照与版本标记
 tests/                 node:test 单元与集成测试

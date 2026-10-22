@@ -1270,3 +1270,212 @@ export function groupSpecsByPath(specs) {
   walk(list.slice().sort((left, right) => left.name.localeCompare(right.name)), '', 0)
   return rows
 }
+
+/* -------------------------------------------------------------------- *
+ * Human reports — date ranges, output naming and report preferences.
+ *
+ * The report dialog is pure browser UI: the Host only composes the prompt
+ * (`report-prompt`) and reports whether a report already exists
+ * (`report-status`). Range defaulting, the output file name and the tolerant
+ * per-workspace `localStorage` shape stay pure so they are testable without a
+ * DOM. Local dates are computed with the browser's own calendar (no UTC
+ * conversion): an archived change belongs to the calendar day the user saw.
+ * -------------------------------------------------------------------- */
+
+/** Default report root, workspace-relative (the Host resolves it). */
+const HELPER_REPORT_ROOT = '人类文档'
+
+/** Days covered by the default period report range: today plus six days back. */
+const HELPER_REPORT_RANGE_DAYS = 6
+
+/** Coerce a timestamp / Date to finite epoch milliseconds (fallback: now). */
+function helperReportTime(nowValue) {
+  const raw = nowValue instanceof Date ? nowValue.getTime() : typeof nowValue === 'number' ? nowValue : Number.NaN
+  return Number.isFinite(raw) ? raw : Date.now()
+}
+
+/**
+ * Local calendar date of a moment as `YYYY-MM-DD`.
+ *
+ * @param {number|Date} [nowValue] - epoch milliseconds (or Date); defaults to now.
+ * @returns {string} local `YYYY-MM-DD`.
+ */
+export function reportLocalDate(nowValue = Date.now()) {
+  const date = new Date(helperReportTime(nowValue))
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/**
+ * Default period report range: `to` is today, `from` is six days earlier
+ * (both inclusive), so the dialog opens on the last seven local days.
+ *
+ * @param {number|Date} [nowValue] - epoch milliseconds (or Date); defaults to now.
+ * @returns {{from: string, to: string}} inclusive local date range.
+ */
+export function reportDefaultRange(nowValue = Date.now()) {
+  const time = helperReportTime(nowValue)
+  const start = new Date(time)
+  start.setDate(start.getDate() - HELPER_REPORT_RANGE_DAYS)
+  return { from: reportLocalDate(start.getTime()), to: reportLocalDate(time) }
+}
+
+/**
+ * Archived changes whose archive date falls inside an inclusive range.
+ *
+ * Rows without a usable `YYYY-MM-DD` date are excluded (the period prompt has
+ * no way to place them). An empty `from` / `to` bound is tolerated as
+ * "unbounded" so a partially typed range never crashes the dialog. The result
+ * is sorted by date, then display name, matching the report's change list.
+ *
+ * @param {Array<{name?: string, changeName?: string, date?: string}>} archived - `WorkspaceState.archived`.
+ * @param {string} from - inclusive lower bound `YYYY-MM-DD`.
+ * @param {string} to - inclusive upper bound `YYYY-MM-DD`.
+ * @returns {Array<object>} matching rows in report order.
+ */
+export function reportArchivedInRange(archived, from, to) {
+  const start = typeof from === 'string' ? from.trim() : ''
+  const end = typeof to === 'string' ? to.trim() : ''
+  const rows = []
+  for (const entry of Array.isArray(archived) ? archived : []) {
+    if (entry === null || typeof entry !== 'object') continue
+    const date = archiveEntryDate(entry)
+    if (date === null) continue
+    if (start !== '' && date < start) continue
+    if (end !== '' && date > end) continue
+    rows.push(entry)
+  }
+  rows.sort((left, right) => {
+    const leftDate = archiveEntryDate(left) ?? ''
+    const rightDate = archiveEntryDate(right) ?? ''
+    if (leftDate !== rightDate) return leftDate < rightDate ? -1 : 1
+    return archiveEntryLabel(left).localeCompare(archiveEntryLabel(right))
+  })
+  return rows
+}
+
+/**
+ * Normalize the user-entered report root: trimmed, POSIX separators, no
+ * trailing slash, defaulting to `人类文档`. Absolute paths are preserved (the
+ * dialog warns that DSH's file policy may reject them).
+ *
+ * @param {unknown} value - raw input value.
+ * @returns {string} normalized report root.
+ */
+export function normalizeReportRoot(value) {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (raw === '') return HELPER_REPORT_ROOT
+  const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized === '' ? HELPER_REPORT_ROOT : normalized
+}
+
+/** Trim one path segment (change name / range half) to a POSIX-safe piece. */
+function helperReportSegment(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '')
+}
+
+/**
+ * Workspace-relative output path of a report:
+ * `<root>/<change-name>/index.html` for one change, or
+ * `<root>/<from>_<to>/index.html` for a period report.
+ *
+ * The archive-folder mode is intentionally not handled here: it is a single
+ * archive path (`openspec/changes/archive/<dir>/report.html`) owned by the Host.
+ *
+ * @param {{scope?: 'change'|'range', root?: unknown, changeName?: unknown, from?: unknown, to?: unknown}} [options] - report target.
+ * @returns {string} workspace-relative POSIX path.
+ */
+export function reportOutputRelPath(options) {
+  const root = normalizeReportRoot(options?.root)
+  if (options?.scope === 'range') {
+    const from = helperReportSegment(options?.from)
+    const to = helperReportSegment(options?.to)
+    return `${root}/${from}_${to}/index.html`
+  }
+  const change = helperReportSegment(options?.changeName)
+  return change === '' ? `${root}/index.html` : `${root}/${change}/index.html`
+}
+
+/**
+ * Stable, separator-normalized workspace key of the report settings (same
+ * shape as the change bindings' key, so per-workspace preferences line up).
+ *
+ * @param {string} cwd - absolute workspace root.
+ * @returns {string} normalized key.
+ */
+export function reportSettingsCwdKey(cwd) {
+  return String(cwd ?? '').replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+/**
+ * Coerce an arbitrary localStorage value into the report settings shape:
+ * `{version: 1, workspaces: {<cwdKey>: {root, mode}}}` where `mode` is
+ * `'root'` (report root) or `'archive'` (single-change report inside the
+ * archive folder). Unknown keys, malformed workspaces and bad modes degrade to
+ * defaults instead of throwing.
+ *
+ * @param {unknown} value - parsed localStorage value.
+ * @returns {{version: 1, workspaces: Record<string, {root: string, mode: 'root'|'archive'}>}} settings.
+ */
+export function normalizeReportSettings(value) {
+  const settings = value !== null && typeof value === 'object' ? value : {}
+  const rawWorkspaces = settings.workspaces !== null && typeof settings.workspaces === 'object' ? settings.workspaces : {}
+  /** @type {Record<string, {root: string, mode: 'root'|'archive'}>} */
+  const workspaces = {}
+  for (const [rawCwd, rawWorkspace] of Object.entries(rawWorkspaces)) {
+    const key = reportSettingsCwdKey(rawCwd)
+    if (key === '') continue
+    const workspace = rawWorkspace !== null && typeof rawWorkspace === 'object' ? rawWorkspace : {}
+    workspaces[key] = {
+      root: normalizeReportRoot(workspace.root),
+      mode: workspace.mode === 'archive' ? 'archive' : 'root',
+    }
+  }
+  return { version: 1, workspaces }
+}
+
+/**
+ * Defensive view of one `report-status` result, always with every field the
+ * dialog renders (a pre-0.11 Host answers nothing useful, which must read as
+ * "not generated", not crash the dialog).
+ *
+ * @param {unknown} value - raw `report-status` value.
+ * @param {'change'|'range'} [scope] - requested scope (wins over the payload).
+ * @returns {{scope: 'change'|'range', exists: boolean, path: string|null, absolutePath: string|null, generatedAt: string|null, source: string, included: Array<{name: string, changePath: string, date: string|null}>, includedCount: number}} status.
+ */
+export function normalizeReportStatus(value, scope) {
+  const status = value !== null && typeof value === 'object' ? value : {}
+  const requested = scope === 'range' || scope === 'change' ? scope : status.scope === 'range' ? 'range' : 'change'
+  const path = typeof status.path === 'string' && status.path.trim() !== '' ? status.path : null
+  const included = Array.isArray(status.included)
+    ? status.included
+        .filter((item) => item !== null && typeof item === 'object')
+        .map((item) => ({
+          name: typeof item.name === 'string' ? item.name : '',
+          changePath: typeof item.changePath === 'string' ? item.changePath : '',
+          date: typeof item.date === 'string' && item.date.trim() !== '' ? item.date : null,
+        }))
+        .filter((item) => item.name !== '' || item.changePath !== '')
+    : []
+  // `report-status` reports a period's included count as a number (the prompt
+  // action returns the full entry list); expose both without guessing.
+  const includedCount =
+    typeof status.included === 'number' && Number.isFinite(status.included) && status.included > 0
+      ? Math.floor(status.included)
+      : included.length
+  return {
+    scope: requested,
+    exists: status.exists === true && path !== null,
+    path,
+    absolutePath: typeof status.absolutePath === 'string' && status.absolutePath.trim() !== '' ? status.absolutePath : null,
+    generatedAt: typeof status.generatedAt === 'string' && status.generatedAt.trim() !== '' ? status.generatedAt : null,
+    source: typeof status.source === 'string' ? status.source : '',
+    included,
+    includedCount,
+  }
+}
