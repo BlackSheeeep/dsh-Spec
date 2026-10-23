@@ -117,6 +117,7 @@ fs.writeFileSync(path.join(lib, 'commands.js'), read('src/commands.js'))
 fs.writeFileSync(path.join(lib, 'session-titles.js'), read('src/session-titles.js'))
 copyTree('src/native', 'lib/native')
 copyTree('src/native-snapshot', 'lib/native-snapshot')
+copyTree('src/report', 'lib/report')
 fs.writeFileSync(path.join(lib, 'client.js'), `${clientWithHelpers.trimEnd()}\n`)
 
 const HOST_MODULES = ['index.js', 'prompts.js', 'commands.js', 'session-titles.js']
@@ -124,5 +125,5 @@ for (const module of HOST_MODULES) {
   await import(pathToFileURL(path.join(lib, module)).href)
 }
 console.log(
-  `dsh-spec: built lib/index.js, lib/prompts.js, lib/commands.js, lib/session-titles.js, lib/client.js, lib/native/, lib/native-snapshot/ (v${manifest.version})`,
+  `dsh-spec: built lib/index.js, lib/prompts.js, lib/commands.js, lib/session-titles.js, lib/client.js, lib/native/, lib/native-snapshot/, lib/report/ (v${manifest.version})`,
 )

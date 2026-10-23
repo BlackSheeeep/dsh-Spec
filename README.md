@@ -2,7 +2,7 @@
 
 在 DeepSeek Harness 中管理 OpenSpec 项目：以 `openspec/` 文件为唯一状态源，提供变更面板、会话绑定与 `/opsx-*` 命令，不依赖 openspec CLI。
 
-当前版本 **0.11.0**：在 0.10.0 的渐进式详情之上新增**多角色任务编排**——一个程序可以拆成多个子 change，产品 / 设计 / 开发 / 测试分别使用不同模型会话，按依赖工件门禁推进；每个角色只收到目标、依赖工件与 handoff，不共享其他角色的对话。0.9.x 的会话绑定、实时状态、等待验收、AI 自动命名与人工验收勾选保持不变。
+当前版本 **0.12.0**：在 0.11.0 的人类报告与 0.10.x 渐进式详情之上新增**多角色任务编排**——一个程序可以拆成多个子 change，产品 / 设计 / 开发 / 测试分别使用不同模型会话，按依赖工件门禁推进；每个角色只收到目标、依赖工件与 handoff，不共享其他角色的对话。0.9.x 的会话绑定、实时状态、等待验收、AI 自动命名与人工验收勾选保持不变。
 
 ## 为什么是 SDD
 
@@ -30,7 +30,7 @@ OpenSpec 的核心机制，是将变更的规划与执行状态外化为仓库�
 
 - **单一视图**：工件进度、任务进度、变更状态、摘要、等待验收任务与归档记录集中在一个面板。
 - **一变更一会话**：每个 change 绑定独立会话，可并行推进；切换 change 自动回到对应会话。
-- **操作直达**：面板按钮直接执行 `/opsx-*`，无需填写命令后再按一次回车。
+- **操作直达**：面板按钮直接执行 `/opsx-*`，无需填写命令后再按一次回车；直接执行失败（如目标会话运行中）时自动把命令填入该会话输入框，由你手动发送。
 - **运行态可见**：会话运行或等待权限时禁用主操作；完成后通知并恢复。
 - **等待验收**：汇总所有未勾选任务，按「人工验收 / 其他待办」分组，可勾选或打开 `tasks.md`。
 - **AI 总结命名**：提案只需描述；AI 概括要点、选择 change 名并创建工件。
@@ -110,7 +110,7 @@ node tools/build.mjs
 node --test --test-isolation=none "tests/*.test.mjs"
 ```
 
-Host 半改动需重启 DSH；client 半重新构建后刷新页面。
+Host 半改动需重启 DSH；client 半重新构建后刷新页面。混版运行时（旧 Host + 新 client）面板会按需回读 `proposal.md` 补全简略区，因此升级 client 后不必为了「为什么做 / 会改什么」而重启进程；Host 侧新增能力仍以重启 DSH 为准。
 
 ## 截图（0.10.0）
 
@@ -132,6 +132,14 @@ Host 半改动需重启 DSH；client 半重新构建后刷新页面。
 |---|---|
 | ![快捷条](docs/quickbar.png) | ![归档](docs/archive.png) |
 
+## 演示视频
+
+点击缩略图播放或下载 MP4。
+
+| 多任务并行不抢会话窗口 | 一键使用与实时状态更新 | 变更自动提取摘要信息 |
+|---|---|---|
+| [![多任务并行不抢会话窗口](docs/videos/multi-session-parallel.jpg)](docs/videos/multi-session-parallel.mp4) | [![一键使用与实时状态更新](docs/videos/one-click-live-status.jpg)](docs/videos/one-click-live-status.mp4) | [![变更自动提取摘要信息](docs/videos/auto-summary.jpg)](docs/videos/auto-summary.mp4) |
+| 每个 change 绑定独立会话，切换不打断。<br>[▶ 播放](docs/videos/multi-session-parallel.mp4) | 面板按钮直接执行，状态实时刷新。<br>[▶ 播放](docs/videos/one-click-live-status.mp4) | AI 概括描述，生成一句话摘要。<br>[▶ 播放](docs/videos/auto-summary.mp4) |
 
 ## 使用
 
@@ -178,6 +186,22 @@ Host 半改动需重启 DSH；client 半重新构建后刷新页面。
 ### 通知与文档
 
 系统通知需浏览器授权。Markdown 文档在面板内的大尺寸阅读器中打开，支持放大、截断后继续读取与「去工作区对齐」。
+
+### 人类报告
+
+归档的目标是给人看，而不仅是给规格用。面板为两类范围提供报告入口：
+
+- **单变更报告**：展开「已归档变更」后，每个归档条目右侧有报告按钮；点击打开报告对话框（报告目录、或直接写入归档目录、已有报告状态）。
+- **时间段报告**：归档区标题右侧的「按时间段生成报告」入口，选择起止日期（默认近 7 天，按归档日期含首尾统计），对话框实时显示命中的已归档变更数量与清单。
+
+对话框提交后只把组合好的报告提示词填入目标会话输入框，**不会自动发送**，可在发送前修改提示词。提示词要求报告按「先定位主线 → 再展开本次工作 → 最后回归主线」组织，细节默认折叠、证据分级（原文 / 推断 / 未验证）如实标注；时间段报告还要求主会话为每个 change 派发只读子 agent 收集事实卡，再汇总成**一份**按时间段命名的报告。
+
+- 报告目录默认为工作区下的 `人类文档/`，按工作区记住（浏览器 `localStorage`，不写入 `openspec/`）；也可填绝对路径，但必须位于当前工作区内（工作区外路径会被 Host 拒绝，因为 DSH 文件策略无法写入或校验）。
+- 输出命名：单变更写入 `<报告目录>/<change-name>/index.html`，或选择写入归档目录的 `report.html`；时间段写入 `<报告目录>/<from>_<to>/index.html`。
+- 已生成的报告由只读动作 `report-status` 发现：对话框显示「已生成」、生成时间与路径，可沙箱预览（`<iframe sandbox="">`，不执行报告脚本）或复制路径。
+- 可选的项目级主线卡 `openspec/report-context.md` 存在时，提示词锚定真实主线；缺失时报告标注「主线来源：推断」并列出缺口。
+
+报告写到归档目录之外时，归档目录会留下 `report.json` 指针；时间段报告在 `<from>_<to>/report.json` 记录范围与纳入清单。报告自身在「归档信息」与页脚保留引用，并声明不替代规格真相源。
 
 ## 命令
 
@@ -226,13 +250,15 @@ artifact 状态仅由文件决定：
 src/host.js            Host 半：命令族、/dsh-spec 路由、fallback skills provider
 src/commands.js        十条命令：变更选择、propose 脚手架、AI sync/archive、确定性路径、直出、/opsx-role
 src/session-titles.js  阶段会话标题组合与幂等写入
-src/prompts.js         阶段提示词、OPSX sync/archive 提示词、AI 自动命名提示词
+src/prompts.js         阶段提示词、OPSX sync/archive 提示词、AI 自动命名提示词、报告提示词
+src/report/            报告方法论（内嵌进提示词）与自包含 HTML 模板（构建镜像到 lib/report/）
 src/native/**          纯 JS 原生语义引擎：yaml / config / metadata / schema / graph /
                        spec / summary / tasks / validate / state / instruction / merge /
                        archive / skills / skill-adaptation / init / fsio / orchestration
 src/native-snapshot/   固定版本 schema、模板与 12 个 OPSX SKILL.md 快照
-src/client.js          浏览器半：面板、快捷条、绑定、直接执行、状态订阅、通知、文档阅读器
-src/client-helpers.js  纯展示辅助：排序、摘要、分页、任务清单、等待验收聚合
+src/client.js          浏览器半：面板、快捷条、绑定、直接执行、状态订阅、通知、文档阅读器、
+                       报告对话框与沙箱预览
+src/client-helpers.js  纯展示辅助：排序、摘要、分页、任务清单、等待验收聚合、报告区间与输出路径
 tools/build.mjs        构建（Host 拷贝 + client 内联，无打包器）
 tools/sync-native-snapshot.mjs  开发期刷新内置 schema/模板/skills 快照与版本标记
 tests/                 node:test 单元与集成测试
@@ -253,6 +279,7 @@ tests/                 node:test 单元与集成测试
 - **选择器边界**：仅在 Web 客户端、≥2 个进行中 change 时接管 change 命令；不做内联补全与标志二级选择。
 - **新会话里的命令结果可见性**：hero 页没有会话轨迹，只有会产生模型回合的命令（探索 / 提案 / 实施 / 更新 / 同步 / 归档的默认 AI 路径）能在提交后切到对话并显示结果；返回直接命令结果的命令（`/opsx-status`、`/opsx-validate`、`--yes` 确定性归档、规划已完成的 `/opsx-propose` 直出等）需要已有会话轨迹才能看到输出。归档按钮因此固定走 AI 路径。
 - **propose 续做边界**：同名 `/opsx-propose` 对已存在 change 按原生状态分支——规划未完成时原地续做（不重写 `.openspec.yaml`，只创建缺失工件；已有工件只读），规划已完成时直出下一步指引、不产生模型回合。`specs/**` 完整性由提示词按 capability 核对，不是引擎级强校验；中断造成的孤立 change 不会被自动删除或回滚。
+- **面板失败兜底**：面板动作优先直接执行；被拒绝或执行失败时回退为「把命令填入目标会话输入框」而不自动发送，因此失败不再表现为点击无反应，最终发送仍由用户确认。
 - **写操作范围**：面板只通过 `task-toggle`、`orchestration-*` 路由写任务勾选、编排元数据与子 change 骨架；sync / archive 仍由命令触发（默认 AI 工作流不写盘，`--yes` 才确定性写盘）。
 - **expanded 命令族**：new / continue / ff / verify / bulk-archive / onboard 只通过内置 OPSX skills（文件语义）提供，不提供对应 `/opsx-*` 命令。
 - **多角色门禁是工件级而非语义级**：门禁检查 proposal / specs / design / tasks / qa 报告是否存在、任务是否全部完成，不判断规格或代码质量；最终质量仍由用户验收。

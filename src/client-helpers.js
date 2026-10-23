@@ -237,40 +237,349 @@ export function deltaFileOpsText(t, file) {
 /**
  * Pick the one-line summary rendered on a collapsed change card.
  *
- * Priority: `.openspec.yaml` `goal` → proposal `## Why` digest → none (the panel
- * shows a "no proposal yet" placeholder). The host already bounds the digest,
- * so this only trims and reports whether a full-text entry is needed.
+ * Priority: `.openspec.yaml` `goal` → proposal `## Why` digest → the legacy
+ * 0.9.x `description`/`headline` fields (still sent by an old Host) → none (the
+ * panel shows a "no proposal yet" placeholder). The host already bounds the
+ * digest, so this only trims and reports whether a full-text entry is needed.
  *
- * @param {{goal?: string|null, why?: string|null, whyTruncated?: boolean, changesHidden?: number, changesTruncated?: boolean}|null} [summary] - `ChangeState.summary`.
- * @returns {{text: string, source: 'goal'|'why'|'none', truncated: boolean}} summary candidate.
+ * @param {{goal?: string|null, why?: string|null, description?: string|null, headline?: string|null, whyTruncated?: boolean, changesHidden?: number, changesTruncated?: boolean}|null} [summary] - `ChangeState.summary`.
+ * @returns {{text: string, source: 'goal'|'why'|'description'|'headline'|'none', truncated: boolean}} summary candidate.
  */
 export function changeSummaryInfo(summary) {
   const goal = typeof summary?.goal === 'string' ? summary.goal.trim() : ''
   if (goal !== '') return { text: goal, source: 'goal', truncated: false }
   const why = typeof summary?.why === 'string' ? summary.why.trim() : ''
-  if (why === '') return { text: '', source: 'none', truncated: false }
-  const truncated =
-    summary?.whyTruncated === true || summary?.changesTruncated === true || helperNumber(summary?.changesHidden) > 0
-  return { text: why, source: 'why', truncated }
+  if (why !== '') {
+    const truncated =
+      summary?.whyTruncated === true || summary?.changesTruncated === true || helperNumber(summary?.changesHidden) > 0
+    return { text: why, source: 'why', truncated }
+  }
+  const description = typeof summary?.description === 'string' ? summary.description.trim() : ''
+  if (description !== '') return { text: description, source: 'description', truncated: false }
+  const headline = typeof summary?.headline === 'string' ? summary.headline.trim() : ''
+  if (headline !== '') return { text: headline, source: 'headline', truncated: false }
+  return { text: '', source: 'none', truncated: false }
 }
 
 /**
- * Normalize the bounded proposal digest from the Host. An older Host has no
- * `summary` field, so every field degrades to an empty value instead of
- * crashing the card.
+ * Localized text helper: first non-empty trimmed string.
+ *
+ * @param {...unknown} values - candidates in priority order.
+ * @returns {string} first non-empty trimmed text, else `''`.
+ */
+function helperFirstText(...values) {
+  for (const value of values) {
+    if (typeof value !== 'string') continue
+    const text = value.trim()
+    if (text !== '') return value
+  }
+  return ''
+}
+
+/**
+ * Non-empty string list copy; anything else degrades to `[]`.
+ *
+ * @param {unknown} value - candidate list.
+ * @returns {string[]} only non-blank string entries.
+ */
+function helperStringList(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item.trim() !== '') : []
+}
+
+/**
+ * Normalize the bounded proposal digest from the Host.
+ *
+ * A 0.10.0 Host sends `summary.why` / `summary.changes`; a 0.9.x Host only sends
+ * `summary.description` / `summary.highlights`, so those legacy fields fill the
+ * same slots here. A pre-0.9 Host has no `summary` at all, in which case every
+ * field degrades to an empty value instead of crashing the card (the panel then
+ * re-reads `proposal.md` through `proposalSummaryDigest`).
  *
  * @param {object|null|undefined} value - raw `ChangeState.summary`.
  * @returns {{goal: string|null, why: string|null, whyTruncated: boolean, changes: string[], changesHidden: number, changesTruncated: boolean}} normalized digest.
  */
 export function normalizeChangeSummary(value) {
   const summary = value !== null && typeof value === 'object' ? value : {}
+  const why = helperFirstText(summary.why, summary.description)
+  const nativeChanges = helperStringList(summary.changes)
+  const changes = nativeChanges.length > 0 ? nativeChanges : helperStringList(summary.highlights)
   return {
     goal: typeof summary.goal === 'string' && summary.goal.trim() !== '' ? summary.goal : null,
-    why: typeof summary.why === 'string' && summary.why.trim() !== '' ? summary.why : null,
+    why: why === '' ? null : why,
     whyTruncated: summary.whyTruncated === true,
-    changes: Array.isArray(summary.changes) ? summary.changes.filter((item) => typeof item === 'string' && item.trim() !== '') : [],
+    changes,
     changesHidden: helperNumber(summary.changesHidden),
     changesTruncated: summary.changesTruncated === true,
+  }
+}
+
+/** Character budget of the `## Why` digest (mirrors the 0.10.0 Host payload). */
+const HELPER_SUMMARY_WHY_CHARS = 280
+/** Character budget of one `## What Changes` bullet. */
+const HELPER_SUMMARY_CHANGE_CHARS = 140
+/** Row budget of the `## What Changes` digest. */
+const HELPER_SUMMARY_CHANGE_ROWS = 4
+
+/** Level-2 markdown heading (`## Why`). */
+const HELPER_H2_HEADING = /^##\s+(.+?)\s*$/
+/** Any markdown heading (a level-2 section ends at the next heading of any level). */
+const HELPER_ANY_HEADING = /^#{1,6}\s+/
+/** A bullet or ordered-list item (any indent, used when skipping prose). */
+const HELPER_LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/
+/** A top-level bullet only; indented nested bullets are not digest rows (same rule as the Host). */
+const HELPER_TOP_LEVEL_LIST_ITEM = /^(?:[-*+])\s+(\S.*)$/
+/** A fenced code block delimiter. */
+const HELPER_FENCE = /^\s*(?:```|~~~)/
+
+/** Preferred headings that introduce the proposal motivation paragraph. */
+const HELPER_WHY_HEADINGS = ['why', 'motivation', 'background', 'rationale', '背景', '动机', '为什么']
+/** Preferred headings that introduce the proposal change list. */
+const HELPER_CHANGE_HEADINGS = [
+  'what changes',
+  'what changed',
+  'changes',
+  'change summary',
+  'summary of changes',
+  '变更内容',
+  '改动内容',
+  '变更摘要',
+]
+
+/** Collapse whitespace runs into single spaces and trim. */
+function helperCollapse(value) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim()
+}
+
+/** Cap text at a character budget without splitting surrogate pairs (`…` marks truncation). */
+function helperCap(value, maxChars) {
+  const text = helperCollapse(value)
+  if (text.length <= maxChars) return text
+  let output = ''
+  let used = 0
+  for (const character of text) {
+    if (used >= Math.max(1, maxChars - 1)) break
+    output += character
+    used += character.length
+  }
+  return `${output.trimEnd()}…`
+}
+
+/** Strip the most common inline markdown so the panel shows prose, not syntax. */
+function helperStripInlineMarkdown(value) {
+  return helperCollapse(
+    String(value ?? '')
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/`{1,3}([^`]+)`{1,3}/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/<[^>]+>/g, ''),
+  )
+}
+
+/**
+ * Split a document into level-2 sections: lower-cased heading text → body lines.
+ * Fenced code blocks are inert; any higher/lower heading closes the section.
+ *
+ * @param {string[]} lines - normalized document lines.
+ * @returns {Map<string, string[]>} sections in source order.
+ */
+function helperSectionMap(lines) {
+  /** @type {Map<string, string[]>} */
+  const sections = new Map()
+  let current
+  let inFence = false
+  for (const line of lines) {
+    if (HELPER_FENCE.test(line)) {
+      inFence = !inFence
+      if (current !== undefined) current.push(line)
+      continue
+    }
+    if (!inFence) {
+      const heading = HELPER_H2_HEADING.exec(line)
+      if (heading !== null) {
+        current = []
+        sections.set(heading[1].trim().toLowerCase(), current)
+        continue
+      }
+      if (HELPER_ANY_HEADING.test(line)) {
+        current = undefined
+        continue
+      }
+    }
+    if (current !== undefined) current.push(line)
+  }
+  return sections
+}
+
+/**
+ * First matching section body from a preferred heading list.
+ *
+ * @param {Map<string, string[]>} sections - section map.
+ * @param {string[]} names - preferred lower-case headings.
+ * @returns {string[]|undefined} body lines when the section exists.
+ */
+function helperPreferredSection(sections, names) {
+  for (const name of names) {
+    const body = sections.get(name)
+    if (body !== undefined) return body
+  }
+  return undefined
+}
+
+/**
+ * First non-empty prose paragraph in a body (bullets/headings/fences/quotes skipped).
+ *
+ * @param {string[]|undefined} body - section lines.
+ * @returns {string} plain paragraph text.
+ */
+function helperFirstParagraph(body) {
+  const lines = Array.isArray(body) ? body : []
+  const paragraph = []
+  let inFence = false
+  for (const line of lines) {
+    if (HELPER_FENCE.test(line)) {
+      inFence = !inFence
+      if (paragraph.length > 0) break
+      continue
+    }
+    if (inFence) continue
+    const trimmed = line.trim()
+    if (trimmed === '') {
+      if (paragraph.length > 0) break
+      continue
+    }
+    if (HELPER_ANY_HEADING.test(trimmed) || HELPER_LIST_ITEM.test(trimmed) || /^>\s?/.test(trimmed)) {
+      if (paragraph.length > 0) break
+      continue
+    }
+    paragraph.push(trimmed)
+  }
+  return helperStripInlineMarkdown(paragraph.join(' '))
+}
+
+/**
+ * Top-level bullet entries of a section body, in source order.
+ *
+ * Mirrors the Host digest: indented nested bullets and ordered lists are not
+ * separate rows, so the panel's `共 N 条` matches the new Host exactly.
+ *
+ * @param {string[]|undefined} body - section lines.
+ * @returns {string[]} plain entries.
+ */
+function helperListItems(body) {
+  const lines = Array.isArray(body) ? body : []
+  const items = []
+  let inFence = false
+  for (const line of lines) {
+    if (HELPER_FENCE.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const match = HELPER_TOP_LEVEL_LIST_ITEM.exec(line)
+    if (match === null) continue
+    const text = helperStripInlineMarkdown(match[1])
+    if (text !== '') items.push(text)
+  }
+  return items
+}
+
+/**
+ * Derive a bounded change digest from `proposal.md` text.
+ *
+ * This mirrors the Host's 0.10.0 `summary` digest. The browser half only needs
+ * it when the running Host predates that payload (a long-lived DSH process
+ * keeps the Host loaded while a page refresh picks up the new client), so the
+ * L1 "why / what changes" overview still has content in a mixed-version setup.
+ *
+ * @param {string|null|undefined} markdown - proposal document text.
+ * @returns {{why: string|null, whyTruncated: boolean, changes: string[], changesHidden: number, changesTruncated: boolean}|null} digest, or `null` when the document has neither section.
+ */
+export function proposalSummaryDigest(markdown) {
+  const lines = String(markdown ?? '')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+  if (lines.join('').trim() === '') return null
+  const sections = helperSectionMap(lines)
+  let whyText = helperFirstParagraph(helperPreferredSection(sections, HELPER_WHY_HEADINGS))
+  if (whyText === '') {
+    // No `## Why`: use the first prose paragraph anywhere after the title.
+    whyText = helperFirstParagraph(lines.slice(1))
+  }
+  const changeItems = helperListItems(helperPreferredSection(sections, HELPER_CHANGE_HEADINGS))
+  const why = whyText === '' ? null : helperCap(whyText, HELPER_SUMMARY_WHY_CHARS)
+  const whyTruncated = whyText.length > HELPER_SUMMARY_WHY_CHARS
+  const kept = changeItems.slice(0, HELPER_SUMMARY_CHANGE_ROWS)
+  const changes = kept.map((item) => helperCap(item, HELPER_SUMMARY_CHANGE_CHARS))
+  if (why === null && changes.length === 0) return null
+  return {
+    why,
+    whyTruncated,
+    changes,
+    changesHidden: Math.max(0, changeItems.length - kept.length),
+    changesTruncated: kept.some((item) => item.length > HELPER_SUMMARY_CHANGE_CHARS),
+  }
+}
+
+/**
+ * The `proposal.md` row of a change's document list (null when absent).
+ *
+ * @param {{docs?: Array<object>}|null|undefined} change - normalized `ChangeState`.
+ * @returns {{path: string}|null} document row.
+ */
+export function proposalDocOf(change) {
+  const docs = Array.isArray(change?.docs) ? change.docs : []
+  const usable = docs.filter(
+    (doc) => doc !== null && typeof doc === 'object' && typeof doc.path === 'string' && doc.path !== '' && doc.kind !== 'delta',
+  )
+  for (const doc of usable) {
+    if (String(doc.artifactId ?? '') === 'proposal') return doc
+  }
+  const fallback = usable.find((doc) => String(doc.path).replace(/\\/g, '/').endsWith('proposal.md'))
+  return fallback ?? null
+}
+
+/**
+ * Whether a normalized summary still lacks the `## Why` paragraph (the panel's
+ * L1 overview would show the "no proposal yet" placeholder).
+ *
+ * @param {{why?: string|null}|null|undefined} summary - normalized `ChangeState.summary`.
+ * @returns {boolean} true when a proposal re-read can fill it.
+ */
+export function summaryNeedsProposalFallback(summary) {
+  const why = typeof summary?.why === 'string' ? summary.why.trim() : ''
+  return why === ''
+}
+
+/**
+ * Merge a locally derived proposal digest into a summary without overwriting
+ * values the Host already supplied. Truncation flags follow whichever source
+ * filled the slot, so "查看全文" entries stay honest.
+ *
+ * @param {object|null|undefined} summary - raw `ChangeState.summary`.
+ * @param {{why: string|null, whyTruncated: boolean, changes: string[], changesHidden: number, changesTruncated: boolean}|null} digest - output of {@link proposalSummaryDigest}.
+ * @returns {object} merged summary (a new object when `summary` is not one).
+ */
+export function applyProposalDigest(summary, digest) {
+  const base = summary !== null && typeof summary === 'object' ? summary : {}
+  if (digest === null || typeof digest !== 'object') return base
+  const hasWhy = typeof base.why === 'string' && base.why.trim() !== ''
+  const baseChanges = helperStringList(base.changes)
+  const hasChanges = baseChanges.length > 0
+  const digestWhy = typeof digest.why === 'string' && digest.why !== '' ? digest.why : null
+  const digestChanges = helperStringList(digest.changes)
+  return {
+    ...base,
+    why: hasWhy ? base.why : digestWhy,
+    whyTruncated: base.whyTruncated === true || (!hasWhy && digest.whyTruncated === true),
+    changes: hasChanges ? baseChanges : digestChanges,
+    changesHidden: hasChanges ? helperNumber(base.changesHidden) : helperNumber(digest.changesHidden),
+    changesTruncated: hasChanges ? base.changesTruncated === true : digest.changesTruncated === true,
+    source: typeof base.source === 'string' && base.source !== 'none' ? base.source : 'proposal',
   }
 }
 
@@ -960,4 +1269,213 @@ export function groupSpecsByPath(specs) {
   }
   walk(list.slice().sort((left, right) => left.name.localeCompare(right.name)), '', 0)
   return rows
+}
+
+/* -------------------------------------------------------------------- *
+ * Human reports — date ranges, output naming and report preferences.
+ *
+ * The report dialog is pure browser UI: the Host only composes the prompt
+ * (`report-prompt`) and reports whether a report already exists
+ * (`report-status`). Range defaulting, the output file name and the tolerant
+ * per-workspace `localStorage` shape stay pure so they are testable without a
+ * DOM. Local dates are computed with the browser's own calendar (no UTC
+ * conversion): an archived change belongs to the calendar day the user saw.
+ * -------------------------------------------------------------------- */
+
+/** Default report root, workspace-relative (the Host resolves it). */
+const HELPER_REPORT_ROOT = '人类文档'
+
+/** Days covered by the default period report range: today plus six days back. */
+const HELPER_REPORT_RANGE_DAYS = 6
+
+/** Coerce a timestamp / Date to finite epoch milliseconds (fallback: now). */
+function helperReportTime(nowValue) {
+  const raw = nowValue instanceof Date ? nowValue.getTime() : typeof nowValue === 'number' ? nowValue : Number.NaN
+  return Number.isFinite(raw) ? raw : Date.now()
+}
+
+/**
+ * Local calendar date of a moment as `YYYY-MM-DD`.
+ *
+ * @param {number|Date} [nowValue] - epoch milliseconds (or Date); defaults to now.
+ * @returns {string} local `YYYY-MM-DD`.
+ */
+export function reportLocalDate(nowValue = Date.now()) {
+  const date = new Date(helperReportTime(nowValue))
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/**
+ * Default period report range: `to` is today, `from` is six days earlier
+ * (both inclusive), so the dialog opens on the last seven local days.
+ *
+ * @param {number|Date} [nowValue] - epoch milliseconds (or Date); defaults to now.
+ * @returns {{from: string, to: string}} inclusive local date range.
+ */
+export function reportDefaultRange(nowValue = Date.now()) {
+  const time = helperReportTime(nowValue)
+  const start = new Date(time)
+  start.setDate(start.getDate() - HELPER_REPORT_RANGE_DAYS)
+  return { from: reportLocalDate(start.getTime()), to: reportLocalDate(time) }
+}
+
+/**
+ * Archived changes whose archive date falls inside an inclusive range.
+ *
+ * Rows without a usable `YYYY-MM-DD` date are excluded (the period prompt has
+ * no way to place them). An empty `from` / `to` bound is tolerated as
+ * "unbounded" so a partially typed range never crashes the dialog. The result
+ * is sorted by date, then display name, matching the report's change list.
+ *
+ * @param {Array<{name?: string, changeName?: string, date?: string}>} archived - `WorkspaceState.archived`.
+ * @param {string} from - inclusive lower bound `YYYY-MM-DD`.
+ * @param {string} to - inclusive upper bound `YYYY-MM-DD`.
+ * @returns {Array<object>} matching rows in report order.
+ */
+export function reportArchivedInRange(archived, from, to) {
+  const start = typeof from === 'string' ? from.trim() : ''
+  const end = typeof to === 'string' ? to.trim() : ''
+  const rows = []
+  for (const entry of Array.isArray(archived) ? archived : []) {
+    if (entry === null || typeof entry !== 'object') continue
+    const date = archiveEntryDate(entry)
+    if (date === null) continue
+    if (start !== '' && date < start) continue
+    if (end !== '' && date > end) continue
+    rows.push(entry)
+  }
+  rows.sort((left, right) => {
+    const leftDate = archiveEntryDate(left) ?? ''
+    const rightDate = archiveEntryDate(right) ?? ''
+    if (leftDate !== rightDate) return leftDate < rightDate ? -1 : 1
+    return archiveEntryLabel(left).localeCompare(archiveEntryLabel(right))
+  })
+  return rows
+}
+
+/**
+ * Normalize the user-entered report root: trimmed, POSIX separators, no
+ * trailing slash, defaulting to `人类文档`. Absolute paths are preserved (the
+ * dialog warns that DSH's file policy may reject them).
+ *
+ * @param {unknown} value - raw input value.
+ * @returns {string} normalized report root.
+ */
+export function normalizeReportRoot(value) {
+  const raw = typeof value === 'string' ? value.trim() : ''
+  if (raw === '') return HELPER_REPORT_ROOT
+  const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized === '' ? HELPER_REPORT_ROOT : normalized
+}
+
+/** Trim one path segment (change name / range half) to a POSIX-safe piece. */
+function helperReportSegment(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '')
+}
+
+/**
+ * Workspace-relative output path of a report:
+ * `<root>/<change-name>/index.html` for one change, or
+ * `<root>/<from>_<to>/index.html` for a period report.
+ *
+ * The archive-folder mode is intentionally not handled here: it is a single
+ * archive path (`openspec/changes/archive/<dir>/report.html`) owned by the Host.
+ *
+ * @param {{scope?: 'change'|'range', root?: unknown, changeName?: unknown, from?: unknown, to?: unknown}} [options] - report target.
+ * @returns {string} workspace-relative POSIX path.
+ */
+export function reportOutputRelPath(options) {
+  const root = normalizeReportRoot(options?.root)
+  if (options?.scope === 'range') {
+    const from = helperReportSegment(options?.from)
+    const to = helperReportSegment(options?.to)
+    return `${root}/${from}_${to}/index.html`
+  }
+  const change = helperReportSegment(options?.changeName)
+  return change === '' ? `${root}/index.html` : `${root}/${change}/index.html`
+}
+
+/**
+ * Stable, separator-normalized workspace key of the report settings (same
+ * shape as the change bindings' key, so per-workspace preferences line up).
+ *
+ * @param {string} cwd - absolute workspace root.
+ * @returns {string} normalized key.
+ */
+export function reportSettingsCwdKey(cwd) {
+  return String(cwd ?? '').replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+/**
+ * Coerce an arbitrary localStorage value into the report settings shape:
+ * `{version: 1, workspaces: {<cwdKey>: {root, mode}}}` where `mode` is
+ * `'root'` (report root) or `'archive'` (single-change report inside the
+ * archive folder). Unknown keys, malformed workspaces and bad modes degrade to
+ * defaults instead of throwing.
+ *
+ * @param {unknown} value - parsed localStorage value.
+ * @returns {{version: 1, workspaces: Record<string, {root: string, mode: 'root'|'archive'}>}} settings.
+ */
+export function normalizeReportSettings(value) {
+  const settings = value !== null && typeof value === 'object' ? value : {}
+  const rawWorkspaces = settings.workspaces !== null && typeof settings.workspaces === 'object' ? settings.workspaces : {}
+  /** @type {Record<string, {root: string, mode: 'root'|'archive'}>} */
+  const workspaces = {}
+  for (const [rawCwd, rawWorkspace] of Object.entries(rawWorkspaces)) {
+    const key = reportSettingsCwdKey(rawCwd)
+    if (key === '') continue
+    const workspace = rawWorkspace !== null && typeof rawWorkspace === 'object' ? rawWorkspace : {}
+    workspaces[key] = {
+      root: normalizeReportRoot(workspace.root),
+      mode: workspace.mode === 'archive' ? 'archive' : 'root',
+    }
+  }
+  return { version: 1, workspaces }
+}
+
+/**
+ * Defensive view of one `report-status` result, always with every field the
+ * dialog renders (a pre-0.11 Host answers nothing useful, which must read as
+ * "not generated", not crash the dialog).
+ *
+ * @param {unknown} value - raw `report-status` value.
+ * @param {'change'|'range'} [scope] - requested scope (wins over the payload).
+ * @returns {{scope: 'change'|'range', exists: boolean, path: string|null, absolutePath: string|null, generatedAt: string|null, source: string, included: Array<{name: string, changePath: string, date: string|null}>, includedCount: number}} status.
+ */
+export function normalizeReportStatus(value, scope) {
+  const status = value !== null && typeof value === 'object' ? value : {}
+  const requested = scope === 'range' || scope === 'change' ? scope : status.scope === 'range' ? 'range' : 'change'
+  const path = typeof status.path === 'string' && status.path.trim() !== '' ? status.path : null
+  const included = Array.isArray(status.included)
+    ? status.included
+        .filter((item) => item !== null && typeof item === 'object')
+        .map((item) => ({
+          name: typeof item.name === 'string' ? item.name : '',
+          changePath: typeof item.changePath === 'string' ? item.changePath : '',
+          date: typeof item.date === 'string' && item.date.trim() !== '' ? item.date : null,
+        }))
+        .filter((item) => item.name !== '' || item.changePath !== '')
+    : []
+  // `report-status` reports a period's included count as a number (the prompt
+  // action returns the full entry list); expose both without guessing.
+  const includedCount =
+    typeof status.included === 'number' && Number.isFinite(status.included) && status.included > 0
+      ? Math.floor(status.included)
+      : included.length
+  return {
+    scope: requested,
+    exists: status.exists === true && path !== null,
+    path,
+    absolutePath: typeof status.absolutePath === 'string' && status.absolutePath.trim() !== '' ? status.absolutePath : null,
+    generatedAt: typeof status.generatedAt === 'string' && status.generatedAt.trim() !== '' ? status.generatedAt : null,
+    source: typeof status.source === 'string' ? status.source : '',
+    included,
+    includedCount,
+  }
 }

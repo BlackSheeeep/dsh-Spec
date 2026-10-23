@@ -19,6 +19,7 @@ import {
   buildAutoProposePrompt,
   buildExplorePrompt,
   buildProposePrompt,
+  buildReportPrompt,
   buildSyncWorkflowPrompt,
   buildUpdatePrompt,
   firstToken,
@@ -101,6 +102,7 @@ test('prompt builders expose exactly the contract surface', () => {
     'buildAutoProposePrompt',
     'buildExplorePrompt',
     'buildProposePrompt',
+    'buildReportPrompt',
     'buildSyncWorkflowPrompt',
     'buildUpdatePrompt',
     'firstToken',
@@ -866,5 +868,284 @@ test('workflow prompts accept a bare schema definition', async () => {
   // A bare definition carries no resolution source; the header still names the schema.
   assert.match(prompt, /Schema: spec-driven \(unknown source\)/)
   assert.match(prompt, /### Vendored workflow: openspec-sync-specs/)
+})
+
+// ---------------------------------------------------------------------------
+// Human report prompts (buildReportPrompt)
+// ---------------------------------------------------------------------------
+
+/** A template path that never exists: forces the compact structural fallback. */
+const MISSING_TEMPLATE = { path: '/dsh-spec-tests/does-not-exist/report-template.html', version: 'report-template/v1' }
+
+/** Single-change report facts (shape the host composes for `report-prompt`). */
+function reportFacts(overrides = {}) {
+  return {
+    schemaName: 'spec-driven',
+    metadata: { found: true, schema: 'spec-driven', created: '2024-01-01', goal: 'legacy fixture goal' },
+    artifacts: [
+      { id: 'proposal', status: 'done' },
+      { id: 'specs', status: 'done' },
+      { id: 'design', status: 'skipped' },
+      { id: 'tasks', status: 'done' },
+    ],
+    tasks: { total: 3, done: 2, pending: ['2.3 finish the report route'] },
+    deltaFiles: [
+      {
+        path: 'openspec/changes/archive/2024-01-01-legacy-fixture/specs/human-reports/spec.md',
+        capability: 'human-reports',
+        added: 2,
+        modified: 1,
+        removed: 0,
+        renamed: 0,
+      },
+    ],
+    mainSpecPaths: ['openspec/specs/human-reports/spec.md'],
+    validation: { errors: 1, warnings: 2, infos: 3 },
+    ...overrides,
+  }
+}
+
+/** Archived ChangeState fixture for the report builders. */
+function archivedReportChange(overrides = {}) {
+  return changeState(
+    [artifactRow('proposal', 'done'), artifactRow('specs', 'done'), artifactRow('design', 'skipped'), artifactRow('tasks', 'done')],
+    {
+      name: 'archive/2024-01-01-legacy-fixture',
+      metadata: {
+        found: true,
+        schema: 'spec-driven',
+        created: '2024-01-01',
+        goal: 'legacy fixture goal',
+        skip_specs: false,
+        retire_capabilities: false,
+      },
+      summary: {
+        headline: 'legacy fixture',
+        description: 'keep archived changes explainable',
+        highlights: [],
+        source: 'proposal',
+        goal: 'legacy fixture goal',
+        why: 'archived changes stay explainable to human readers',
+        whyTruncated: false,
+        changes: [],
+        changesHidden: 0,
+        changesTruncated: false,
+      },
+      ...overrides,
+    },
+  )
+}
+
+/** Resolved single-change output (as the host resolves it). */
+function archivedChangeReport(overrides = {}) {
+  return {
+    path: '人类文档/legacy-fixture/index.html',
+    absolutePath: 'D:/DSHarness/dsh-Spec/tests/fixtures/workspace/人类文档/legacy-fixture/index.html',
+    inArchive: false,
+    ...overrides,
+  }
+}
+
+/** Resolved period output (as the host resolves it). */
+function periodReport(overrides = {}) {
+  return {
+    path: '人类文档/2024-01-01_2024-03-31/index.html',
+    absolutePath: 'D:/DSHarness/dsh-Spec/tests/fixtures/workspace/人类文档/2024-01-01_2024-03-31/index.html',
+    directory: '人类文档/2024-01-01_2024-03-31',
+    ...overrides,
+  }
+}
+
+/** Included-change rows for a period report. */
+function periodRange(overrides = {}) {
+  return {
+    from: '2024-01-01',
+    to: '2024-03-31',
+    included: [
+      { name: 'legacy-fixture', changePath: 'openspec/changes/archive/2024-01-01-legacy-fixture', date: '2024-01-01' },
+      { name: 'add-dark-mode', changePath: 'openspec/changes/archive/2024-02-10-add-dark-mode', date: '2024-02-10' },
+    ],
+    ...overrides,
+  }
+}
+
+test('report prompt for one archived change carries facts, mainline, methodology, template, output and evidence rules', async () => {
+  const prompt = await buildReportPrompt({
+    cwd: 'D:/DSHarness/dsh-Spec/tests/fixtures/workspace',
+    scope: 'change',
+    changeName: 'legacy-fixture',
+    changePath: 'openspec/changes/archive/2024-01-01-legacy-fixture',
+    change: archivedReportChange(),
+    facts: reportFacts(),
+    report: archivedChangeReport(),
+    template: MISSING_TEMPLATE,
+    mainline: { text: '项目主线：让归档变更可被人快速理解。', source: 'card' },
+  })
+
+  assert.ok(prompt.length > 1000, 'the report prompt must not be empty')
+  // Role + scope.
+  assert.match(prompt, /human-facing report, not a specification/i)
+  assert.match(prompt, /Simplified Chinese \(zh-CN\)/)
+  assert.match(prompt, /# Human report prompt — single archived change/)
+  // Change facts.
+  assert.match(prompt, /Change: legacy-fixture/)
+  assert.match(prompt, /Archive path: openspec\/changes\/archive\/2024-01-01-legacy-fixture/)
+  assert.match(prompt, /Schema: spec-driven/)
+  assert.match(prompt, /Created: 2024-01-01/)
+  assert.match(prompt, /Goal: legacy fixture goal/)
+  assert.match(prompt, /Why \/ problem: archived changes stay explainable to human readers/)
+  assert.match(prompt, /proposal=done/)
+  assert.match(prompt, /Tasks: 2\/3 checked/)
+  assert.match(prompt, /2\.3 finish the report route/)
+  assert.match(prompt, /DELTA|Delta specs \(the `after` authority\)/i)
+  assert.match(prompt, /ADDED 2, MODIFIED 1, REMOVED 0, RENAMED 0/)
+  assert.match(prompt, /Delta totals: ADDED 2 \/ MODIFIED 1 \/ REMOVED 0 \/ RENAMED 0/)
+  assert.match(prompt, /Main spec paths: openspec\/specs\/human-reports\/spec\.md/)
+  assert.match(prompt, /Validation: 1 ERROR \/ 2 WARNING \/ 3 INFO/)
+  // Mainline card wins over inference.
+  assert.match(prompt, /主线来源：项目主线卡/)
+  assert.match(prompt, /让归档变更可被人快速理解/)
+  assert.ok(!prompt.includes('No project mainline card is available'), 'a present card must suppress the inference instructions')
+  // Methodology markers (embedded from src/report/report-methodology.md or its fallback).
+  assert.match(prompt, /## Methodology \(single source of truth/)
+  assert.match(prompt, /主线锚定/)
+  assert.match(prompt, /渐进披露/)
+  assert.match(prompt, /证据分级/)
+  // Template path + structural fallback (the fake path is unreadable).
+  assert.ok(prompt.includes(MISSING_TEMPLATE.path))
+  assert.ok(prompt.includes('report-template/v1'))
+  assert.match(prompt, /The template file cannot be read/)
+  assert.match(prompt, /Hero: one-sentence mainline anchor/)
+  assert.match(prompt, /<details>/)
+  // Output: absolute report path + report.json pointer for an out-of-archive report.
+  assert.ok(prompt.includes(archivedChangeReport().absolutePath))
+  assert.match(prompt, /openspec\/changes\/archive\/2024-01-01-legacy-fixture\/report\.json/)
+  assert.match(prompt, /"generatedAt": "<ISO-8601>"/)
+  assert.match(prompt, /"change": "legacy-fixture"/)
+  // Evidence honesty.
+  assert.match(prompt, /MODIFIED \/ REMOVED/)
+  assert.match(prompt, /原文/)
+  assert.match(prompt, /推断/)
+  assert.match(prompt, /旧文本未留存/)
+  assert.match(prompt, /归档材料中未见/)
+  assert.match(prompt, /未验证/)
+  // No period-only blocks.
+  assert.ok(!prompt.includes('Sub-agent orchestration'), 'single-change prompts carry no sub-agent orchestration')
+  assert.ok(!prompt.includes('Period facts'))
+  // Finish contract.
+  assert.match(prompt, /## Finish contract/)
+  assert.match(prompt, /Do NOT modify proposal\.md, design\.md, tasks\.md/)
+  assert.match(prompt, /Final reply: the absolute report path\(s\); nothing else\./)
+})
+
+test('report prompt for one archived change infers the mainline when no card exists', async () => {
+  const prompt = await buildReportPrompt({
+    scope: 'change',
+    changeName: 'legacy-fixture',
+    changePath: 'openspec/changes/archive/2024-01-01-legacy-fixture',
+    change: archivedReportChange(),
+    facts: reportFacts(),
+    report: archivedChangeReport(),
+    template: MISSING_TEMPLATE,
+    mainline: { text: '', source: 'inferred' },
+  })
+  assert.match(prompt, /主线来源：推断/)
+  assert.match(prompt, /No project mainline card is available/)
+  assert.match(prompt, /infer the mainline from, in this order/i)
+  assert.match(prompt, /missing mainline gaps/i)
+  assert.ok(!prompt.includes('项目主线：'), 'the inference path must not invent card text')})
+
+test('report prompt for one archived change respects the in-archive output mode', async () => {
+  const prompt = await buildReportPrompt({
+    scope: 'change',
+    changeName: 'legacy-fixture',
+    changePath: 'openspec/changes/archive/2024-01-01-legacy-fixture',
+    change: archivedReportChange(),
+    facts: reportFacts(),
+    report: archivedChangeReport({
+      path: 'openspec/changes/archive/2024-01-01-legacy-fixture/report.html',
+      absolutePath: 'D:/DSHarness/dsh-Spec/tests/fixtures/workspace/openspec/changes/archive/2024-01-01-legacy-fixture/report.html',
+      inArchive: true,
+    }),
+    template: MISSING_TEMPLATE,
+    mainline: { text: 'card text', source: 'card' },
+  })
+  assert.ok(prompt.includes('D:/DSHarness/dsh-Spec/tests/fixtures/workspace/openspec/changes/archive/2024-01-01-legacy-fixture/report.html'))
+  assert.match(prompt, /directly inside the archived change directory, so no `report\.json` pointer is needed/)
+})
+
+test('report prompt for a period carries the range, included changes, naming, sub-agent orchestration and one-report contract', async () => {
+  const range = periodRange()
+  const prompt = await buildReportPrompt({
+    cwd: 'D:/DSHarness/dsh-Spec/tests/fixtures/workspace',
+    scope: 'range',
+    range,
+    report: periodReport(),
+    template: {
+      path: fileURLToPath(new URL('../src/report/report-template.html', import.meta.url)),
+      version: 'report-template/v1',
+    },
+    mainline: { text: '项目主线：把 OpenSpec 工作流本地化。', source: 'card' },
+  })
+
+  assert.ok(prompt.length > 1000, 'the period report prompt must not be empty')
+  assert.match(prompt, /# Human report prompt — period report/)
+  // Period facts.
+  assert.match(prompt, /From \(inclusive\): 2024-01-01/)
+  assert.match(prompt, /To \(inclusive\): 2024-03-31/)
+  assert.match(prompt, /Period name \/ output directory: 2024-01-01_2024-03-31/)
+  assert.match(prompt, /Included archived changes: 2/)
+  for (const entry of range.included) {
+    assert.ok(prompt.includes(entry.name), `included change ${entry.name} must be listed`)
+    assert.ok(prompt.includes(entry.changePath), `archive path for ${entry.name} must be listed`)
+    assert.ok(prompt.includes(entry.date), `archive date for ${entry.name} must be listed`)
+  }
+  assert.match(prompt, /MUST show the period 2024-01-01 → 2024-03-31 \(2 changes\)/)
+  // Output: one period-named HTML + its range report.json.
+  assert.ok(prompt.includes(periodReport().absolutePath))
+  assert.ok(prompt.includes('人类文档/2024-01-01_2024-03-31/report.json'))
+  assert.match(prompt, /"scope": "range"/)
+  assert.match(prompt, /"from": "2024-01-01", "to": "2024-03-31"/)
+  assert.match(prompt, /Do NOT write one report per change/)
+  // Methodology + mainline.
+  assert.match(prompt, /主线锚定/)
+  assert.match(prompt, /渐进披露/)
+  assert.match(prompt, /证据分级/)
+  assert.match(prompt, /主线来源：项目主线卡/)
+  // Sub-agent orchestration: one read-only card per change, fixed fields, concurrency, fallback, no writes, one merged report.
+  assert.match(prompt, /## Sub-agent orchestration \(period scope only\)/)
+  assert.match(prompt, /one read-only sub-agent per included change/)
+  assert.match(prompt, /change \/ archive path \/ date \/ capabilities \/ problem \/ intent \/ what changed \/ before-after/)
+  assert.match(prompt, /4-6 sub-agents concurrently/)
+  assert.match(prompt, /Sub-agents MUST NOT write or modify any file/)
+  assert.match(prompt, /synthesizes ONE report/)
+  assert.match(prompt, /group by branch \/ capability/)
+  assert.match(prompt, /label that fallback in the report/)
+  // Finish contract names the included count.
+  assert.match(prompt, /number of included changes/)
+  // No single-change-only blocks.
+  assert.ok(!prompt.includes('## Change facts'))
+})
+
+test('report prompt builder tolerates missing facts, range and template data', async () => {
+  const changePrompt = await buildReportPrompt({ scope: 'change' })
+  assert.ok(changePrompt.length > 1000)
+  assert.match(changePrompt, /Change: \(unknown\)/)
+  assert.match(changePrompt, /Archive path: \(unknown\)/)
+  assert.match(changePrompt, /Tasks: no tasks file/)
+  assert.match(changePrompt, /Delta specs: none/)
+  assert.match(changePrompt, /主线来源：推断/)
+  assert.match(changePrompt, /## Finish contract/)
+
+  const rangePrompt = await buildReportPrompt({ scope: 'range' })
+  assert.ok(rangePrompt.length > 1000)
+  assert.match(rangePrompt, /From \(inclusive\): <from>/)
+  assert.match(rangePrompt, /Period name \/ output directory: <from>_<to>/)
+  assert.match(rangePrompt, /no included changes were supplied/)
+  assert.match(rangePrompt, /Included archived changes: 0/)
+})
+
+test('report prompt builder rejects an unsupported scope', async () => {
+  await assert.rejects(() => buildReportPrompt({ scope: 'workspace' }), /unsupported report scope/)
 })
 

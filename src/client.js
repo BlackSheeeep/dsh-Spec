@@ -65,6 +65,10 @@ function createOpenSpecPlugin(require) {
   const PENDING_PAGE_SIZE = 8
   /** Lines fetched per document page (the Host route reports truncation). */
   const DOC_PAGE_LINES = 2000
+  /** How long a proposal re-read for the summary fallback stays fresh. */
+  const SUMMARY_FALLBACK_TTL_MS = 10000
+  /** Line budget of the fallback proposal read (the Host caps one page at 4000). */
+  const SUMMARY_FALLBACK_LINES = 4000
 
   /** All user-visible copy lives here. */
   const T = {
@@ -322,6 +326,7 @@ function createOpenSpecPlugin(require) {
       commandSentTo: '已发送到会话',
       commandSending: '正在发送…',
       commandSendFailed: '发送失败',
+      commandDrafted: '命令已填入输入框，请手动发送',
       manualTask: '人工验收',
       manualTaskHint: '该任务需要人工验收，完成后可在这里手动勾选。',
       taskToggleFailed: '更新任务失败',
@@ -375,6 +380,47 @@ function createOpenSpecPlugin(require) {
       notificationsBlocked: '浏览器未授权系统通知，已改为面板内提示。',
       autoProposeTimeoutTitle: 'OpenSpec · 自动命名未完成',
       autoProposeTimeoutBody: 'AI 没有在 10 分钟内创建新的变更目录；请检查会话，或手动执行 /opsx-propose <name>。',
+      // 人类报告：单变更 / 时间段入口、报告对话框与沙箱预览。
+      reportEntry: '报告',
+      reportPeriodEntry: '按时间段生成报告',
+      reportDialogTitle: '生成人类报告',
+      reportDialogDesc: '报告先定位这项工作在主线上的位置，再展开细节；提交只把报告提示词填入会话输入框，不自动发送。',
+      reportScopeChange: '单个变更',
+      reportScopeRange: '时间段',
+      reportRangeFrom: '起始日期',
+      reportRangeTo: '结束日期',
+      reportRangeHint: '按归档日期统计，含首尾两天。',
+      reportIncludedCount: '区间内 {count} 个已归档变更',
+      reportIncludedList: '纳入的变更',
+      reportChangeLabel: '变更',
+      reportDateLabel: '归档日期',
+      reportOutputPath: '输出路径',
+      reportRootLabel: '报告目录',
+      reportRootHint: '工作区相对目录，默认「人类文档」；绝对路径仅支持工作区内。',
+      reportRootPlaceholder: '人类文档',
+      reportArchiveMode: '写入归档目录（report.html）',
+      reportStatusLabel: '报告状态',
+      reportStatusMissing: '未生成',
+      reportStatusGenerated: '已生成',
+      reportGeneratedAt: '生成时间 {time}',
+      reportStatusLoading: '读取中…',
+      reportStatusFailed: '读取失败',
+      reportGenerate: '生成报告提示词',
+      reportRegenerate: '重新生成',
+      reportPreview: '预览',
+      reportCopyPath: '复制路径',
+      reportPromptFilled: '提示词已填入输入框，请手动发送',
+      reportPathCopied: '报告路径已复制',
+      reportCopyFailed: '复制失败，请手动复制路径',
+      reportPreviewTitle: '预览报告',
+      reportPreviewNote: '预览在禁用脚本的沙箱中渲染，不执行报告内脚本；显示异常时可复制路径用浏览器打开。',
+      reportPreviewTruncated: '报告较大，预览只显示前 {shown} 行。',
+      reportPreviewUnavailable: '预览不可用',
+      reportWarningAbsolute: '报告目录必须位于当前工作区内；工作区外的绝对路径会被拒绝',
+      reportWarningRangeOrder: '起始日期晚于结束日期',
+      reportWarningRangeMissing: '请选择起始与结束日期',
+      reportWarningRangeEmpty: '区间内没有已归档变更',
+      reportComposeMissing: '无法定位目标会话输入框，报告提示词未填入',
     },
     en: {
       panel: 'OpenSpec',
@@ -630,6 +676,7 @@ function createOpenSpecPlugin(require) {
       commandSentTo: 'Sent to session',
       commandSending: 'Sending…',
       commandSendFailed: 'Send failed',
+      commandDrafted: 'Command filled into the composer — press Enter to send',
       manualTask: 'Manual check',
       manualTaskHint: 'This task needs manual acceptance; tick it here once verified.',
       taskToggleFailed: 'Failed to update the task',
@@ -683,6 +730,47 @@ function createOpenSpecPlugin(require) {
       notificationsBlocked: 'System notifications are not permitted; showing an in-panel notice instead.',
       autoProposeTimeoutTitle: 'OpenSpec · auto-naming did not finish',
       autoProposeTimeoutBody: 'The AI did not create a new change directory within 10 minutes. Check the session or run /opsx-propose <name> manually.',
+      // Human reports: the two entries, the report dialog and the sandboxed preview.
+      reportEntry: 'Report',
+      reportPeriodEntry: 'Period report',
+      reportDialogTitle: 'Generate a human report',
+      reportDialogDesc: 'The report anchors this work on the mainline before the details; submitting only fills the composer — nothing is sent automatically.',
+      reportScopeChange: 'Single change',
+      reportScopeRange: 'Date range',
+      reportRangeFrom: 'From',
+      reportRangeTo: 'To',
+      reportRangeHint: 'Counted by archive date, both bounds inclusive.',
+      reportIncludedCount: '{count} archived changes in range',
+      reportIncludedList: 'Included changes',
+      reportChangeLabel: 'Change',
+      reportDateLabel: 'Archived',
+      reportOutputPath: 'Output path',
+      reportRootLabel: 'Report root',
+      reportRootHint: 'Workspace-relative directory, default 人类文档; absolute paths must stay inside the workspace.',
+      reportRootPlaceholder: '人类文档',
+      reportArchiveMode: 'Write into the archive folder (report.html)',
+      reportStatusLabel: 'Report status',
+      reportStatusMissing: 'Not generated',
+      reportStatusGenerated: 'Generated',
+      reportGeneratedAt: 'Generated {time}',
+      reportStatusLoading: 'Checking…',
+      reportStatusFailed: 'Status check failed',
+      reportGenerate: 'Fill report prompt',
+      reportRegenerate: 'Regenerate',
+      reportPreview: 'Preview',
+      reportCopyPath: 'Copy path',
+      reportPromptFilled: 'Prompt filled into the composer — press Enter to send',
+      reportPathCopied: 'Report path copied',
+      reportCopyFailed: 'Copy failed — copy the path manually',
+      reportPreviewTitle: 'Report preview',
+      reportPreviewNote: 'Preview renders in a script-disabled sandbox; if it looks wrong, copy the path and open the file in a browser.',
+      reportPreviewTruncated: 'The report is large — previewing the first {shown} lines.',
+      reportPreviewUnavailable: 'Preview unavailable',
+      reportWarningAbsolute: 'The report root must be inside the workspace; absolute paths outside it are rejected',
+      reportWarningRangeOrder: 'The start date is after the end date',
+      reportWarningRangeMissing: 'Pick both a start and an end date',
+      reportWarningRangeEmpty: 'No archived change in this range',
+      reportComposeMissing: 'Could not reach a target composer; the report prompt was not filled',
     },
   }
 
@@ -976,6 +1064,29 @@ function createOpenSpecPlugin(require) {
 .dshspec-nameRow .dshspec-input{flex:1;min-width:0;font-size:13px;height:36px;font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace)}
 .dshspec-hint{font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary)}
 .dshspec-errorText{font-size:12px;line-height:17px;color:var(--dsw-alias-state-error-primary)}
+
+/* Human reports: scope tabs, range inputs, status and sandboxed preview --- */
+.dshspec-scopeTabs{display:flex;align-items:center;gap:3px;align-self:flex-start;padding:3px;border-radius:12px;background:var(--dsw-alias-interactive-bg-hover)}
+.dshspec-scopeTab{display:inline-flex;align-items:center;justify-content:center;height:30px;padding:0 13px;border:none;border-radius:9px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12.5px;line-height:1;cursor:pointer;transition:background .12s ease,color .12s ease}
+.dshspec-scopeTab:hover:not(:disabled){color:var(--dsw-alias-label-primary)}
+.dshspec-scopeTab:disabled{opacity:.4;cursor:default}
+.dshspec-scopeTab:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}
+.dshspec-scopeTab[data-active='true']{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:var(--dsw-shadow-lv1)}
+.dshspec-rangeGrid{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;min-width:0}
+.dshspec-rangeGrid .dshspec-field{flex:1 1 150px;min-width:130px}
+.dshspec-rangeGrid .dshspec-input{font-variant-numeric:tabular-nums}
+.dshspec-reportStatus{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:10px;background:var(--dsw-alias-interactive-bg-hover);font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary);min-width:0}
+.dshspec-reportStatus b{font-weight:500;color:var(--dsw-alias-label-primary)}
+.dshspec-reportStatusMeta{min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.dshspec-reportStatusActions{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap}
+.dshspec-reportList{display:flex;flex-direction:column;gap:1px;max-height:180px;overflow:auto;padding:5px 10px;border:.5px solid var(--dsw-alias-border-l2);border-radius:10px}
+.dshspec-reportListItem{display:flex;align-items:baseline;gap:10px;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.dshspec-reportListItemName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11.5px}
+.dshspec-reportListItemDate{flex:none;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.dshspec-outputPath{font-family:var(--dsw-font-family-code,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary);overflow-wrap:anywhere}
+.dshspec-toggleRow{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:18px;color:var(--dsw-alias-label-secondary);cursor:pointer;min-width:0}
+.dshspec-toggleRow input{flex:none;margin:2px 0 0;accent-color:var(--dsw-alias-state-business-primary)}
+.dshspec-reportFrame{display:block;width:100%;height:min(70vh,640px);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:#fff}
 
 /* Document viewer ------------------------------------------------------ */
 .dshspec-docViewport{max-height:min(78vh,1040px);overflow:auto;padding:2px 2px 8px;border-top:.5px solid var(--dsw-alias-border-l1);margin-top:2px}
@@ -1385,6 +1496,47 @@ function createOpenSpecPlugin(require) {
    * writes the plan. The client never guesses the name locally.
    * ------------------------------------------------------------------ */
 
+  /**
+   * Build the two dialog submit handlers once: the panel and the quick bar
+   * render the same propose/explore dialogs, and duplicating the closures let
+   * one copy get lost in a merge while its JSX kept calling it (0.10.0 threw
+   * `submitPropose is not defined` when「开始提案」was clicked from the quick bar).
+   *
+   * @param {object} deps - the seat's translator, command runner and dialog setters.
+   * @returns {{submitPropose: Function, submitExplore: Function}} the submit handlers.
+   */
+  function createDialogSubmitters({ t, runNow, setDialogBusy, setDialogError, setDialog }) {
+    /** Send an auto-named propose command; the description is flattened to one line. */
+    const submitPropose = async ({ description }) => {
+      setDialogBusy(true)
+      setDialogError('')
+      const line = `/opsx-propose --auto ${String(description).replace(/\s+/g, ' ').trim()}`.trim()
+      const outcome = await runNow(line)
+      setDialogBusy(false)
+      if (outcome !== undefined && outcome !== null && outcome.ok === false) {
+        setDialogError(outcome.text ?? t('commandSendFailed'))
+        return
+      }
+      setDialog(null)
+    }
+
+    /** Send an explore command (topic optional) to a fresh/bound exploration session. */
+    const submitExplore = async (topic) => {
+      setDialogBusy(true)
+      setDialogError('')
+      const line = topic === '' ? '/opsx-explore' : `/opsx-explore ${String(topic).replace(/\s+/g, ' ').trim()}`
+      const outcome = await runNow(line)
+      setDialogBusy(false)
+      if (outcome !== undefined && outcome !== null && outcome.ok === false) {
+        setDialogError(outcome.text ?? t('commandSendFailed'))
+        return
+      }
+      setDialog(null)
+    }
+
+    return { submitPropose, submitExplore }
+  }
+
   function ProposeDialog({ t, busy, error: externalError, onClose, onSubmit }) {
     const [description, setDescription] = useState('')
     const [error, setError] = useState('')
@@ -1608,6 +1760,8 @@ function createOpenSpecPlugin(require) {
     let snapshot = { status: 'loading', cwd }
     const listeners = new Set()
     const disposers = []
+    /** proposal digest per change, keyed by change name + path (mixed-version fallback). */
+    const summaryFallbacks = new Map()
     let epoch = 0
     let watchAlive = false
     let watchFailed = false
@@ -1701,8 +1855,12 @@ function createOpenSpecPlugin(require) {
       try {
         const value = await callRoute(ctx, 'state', { cwd }, '读取 openspec 状态')
         if (request !== epoch) return
-        publish(normalizeState(value, cwd))
+        const state = normalizeState(value, cwd)
+        publish(state)
         ensureFreshness()
+        // Mixed-version Hosts (pre-0.10.0) carry no summary digest; fill it from
+        // proposal.md without blocking the first paint.
+        void hydrateProposalSummaries(state, request)
       } catch (error) {
         if (request !== epoch) return
         const message = error instanceof Error ? error.message : String(error)
@@ -1744,6 +1902,73 @@ function createOpenSpecPlugin(require) {
       } catch (error) {
         return { ok: false, path, text: '', offset, limit, truncated: false, totalLines: null, error: error instanceof Error ? error.message : String(error) }
       }
+    }
+
+    /**
+     * Fill the L1 "why / what changes" digest when the running Host predates the
+     * 0.10.0 `summary.why` / `summary.changes` payload.
+     *
+     * A long-lived DSH process keeps the Host half loaded while a page refresh
+     * picks up the new browser bundle, so a mixed version is the normal case
+     * right after an upgrade. `proposal.md` is still reachable through the
+     * `document` route the reader already uses, so the browser derives the
+     * digest locally instead of showing the "no proposal yet" placeholder.
+     * Reads run in parallel and are cached briefly (the workspace poll must
+     * never turn into a document-read loop). The hydrated state is published as
+     * a NEW snapshot object: the panel's store compares snapshot identities, so
+     * mutating the current one in place would not re-render the collapsed
+     * summary lines.
+     *
+     * @param {object} state - just-published `WorkspaceState` (never mutated).
+     * @param {number} request - refresh epoch that owns this hydration.
+     * @returns {Promise<void>}
+     */
+    const hydrateProposalSummaries = async (state, request) => {
+      const changes = state !== null && typeof state === 'object' && Array.isArray(state.changes) ? state.changes : []
+      if (changes.length === 0) return
+      const now = Date.now()
+      /** @type {Array<{index: number, change: object, path: string, key: string, digest: object|null}>} */
+      const targets = []
+      for (const [index, change] of changes.entries()) {
+        if (request !== epoch) return
+        if (change === null || typeof change !== 'object') continue
+        if (!summaryNeedsProposalFallback(normalizeChangeSummary(change.summary))) continue
+        const doc = proposalDocOf(change)
+        if (doc === null) continue
+        const path = relPathOf(cwd, doc.path)
+        if (path === '') continue
+        const key = `${String(change.name ?? '')}\u0000${path}`
+        const cached = summaryFallbacks.get(key)
+        const digest = cached !== undefined && now - cached.at < SUMMARY_FALLBACK_TTL_MS ? cached.digest : null
+        targets.push({ index, change, path, key, digest })
+      }
+      if (targets.length === 0) return
+      await Promise.all(
+        targets
+          .filter((target) => target.digest === null)
+          .map(async (target) => {
+            const page = await readDocument(target.path, { offset: 1, limit: SUMMARY_FALLBACK_LINES })
+            if (!page.ok) return
+            const digest = proposalSummaryDigest(page.text)
+            if (digest === null) return
+            target.digest = digest
+            summaryFallbacks.set(target.key, { at: Date.now(), digest })
+          }),
+      )
+      if (request !== epoch) return
+      /** @type {Map<number, object>} */
+      const summaries = new Map()
+      for (const target of targets) {
+        if (target.digest === null) continue
+        summaries.set(target.index, applyProposalDigest(target.change.summary, target.digest))
+      }
+      if (summaries.size === 0) return
+      publish({
+        ...state,
+        changes: changes.map((change, index) =>
+          summaries.has(index) ? { ...change, summary: summaries.get(index) } : change,
+        ),
+      })
     }
 
     /** Fallback archive detail for hosts without `archive-detail`: probe known artifacts. */
@@ -1816,6 +2041,31 @@ function createOpenSpecPlugin(require) {
       }
     }
 
+    /**
+     * Compose the human-report prompt for one archived change or a date range
+     * (`report-prompt`, read-only). Returns the raw Host value: `{text, ...}`.
+     *
+     * @param {object} payload - report payload (`scope`, `path`/`name` or `from`/`to`, `reportRoot`, `inArchive`).
+     * @returns {Promise<object>} Host value with the composed prompt.
+     */
+    const reportPrompt = async (payload) => {
+      const value = await callRoute(ctx, 'report-prompt', { cwd, ...payload }, '生成报告提示词')
+      return value
+    }
+
+    /**
+     * Discover an existing report for one archived change or a date range
+     * (`report-status`, read-only). Returns the raw Host value; the dialog
+     * normalizes it with `normalizeReportStatus`.
+     *
+     * @param {object} payload - same payload shape as {@link reportPrompt}.
+     * @returns {Promise<object>} Host value with `{exists, path, ...}`.
+     */
+    const reportStatus = async (payload) => {
+      const value = await callRoute(ctx, 'report-status', { cwd, ...payload }, '读取报告状态')
+      return value
+    }
+
     /** Tick or untick one task checkbox (`task-toggle` route method), then re-read state. */
     const toggleTask = async (changeName, line, done) => {
       try {
@@ -1882,6 +2132,8 @@ function createOpenSpecPlugin(require) {
       loadArchive,
       validateChange,
       syncPreview,
+      reportPrompt,
+      reportStatus,
       toggleTask,
     }
   }
@@ -1968,6 +2220,66 @@ function createOpenSpecPlugin(require) {
       if (typeof localStorage !== 'undefined') localStorage.setItem(BINDINGS_KEY, JSON.stringify(snapshot))
     } catch {
       /* quota/private mode: bindings stay in memory for this page */
+    }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Report settings.
+   *
+   * The report root / archive-folder choice is a browser UI preference, not
+   * OpenSpec workflow state: it lives in this browser's localStorage, keyed by
+   * the canonical workspace path (the same precedent as the change bindings),
+   * and is never written into `openspec/`.
+   * ------------------------------------------------------------------ */
+
+  /** localStorage key; bump the suffix when the shape changes. */
+  const REPORT_SETTINGS_KEY = 'dsh-spec.report.v1'
+
+  /** One workspace's report preference, defaulting to the report root mode. */
+  const DEFAULT_REPORT_SETTINGS = Object.freeze({ root: normalizeReportRoot(undefined), mode: 'root' })
+
+  /**
+   * Read one workspace's report preference; blocked storage degrades to the
+   * default instead of throwing in the dialog.
+   *
+   * @param {string} cwd - absolute workspace root.
+   * @returns {{root: string, mode: 'root'|'archive'}} preference for this workspace.
+   */
+  function loadReportSettings(cwd) {
+    try {
+      if (typeof localStorage === 'undefined') return { ...DEFAULT_REPORT_SETTINGS }
+      const raw = localStorage.getItem(REPORT_SETTINGS_KEY)
+      if (raw === null || raw === '') return { ...DEFAULT_REPORT_SETTINGS }
+      const settings = normalizeReportSettings(JSON.parse(raw))
+      return settings.workspaces[reportSettingsCwdKey(cwd)] ?? { ...DEFAULT_REPORT_SETTINGS }
+    } catch {
+      return { ...DEFAULT_REPORT_SETTINGS }
+    }
+  }
+
+  /**
+   * Persist one workspace's report preference; storage failures are ignored
+   * (the dialog keeps working with its in-memory value for this page).
+   *
+   * @param {string} cwd - absolute workspace root.
+   * @param {{root?: string, mode?: 'root'|'archive'}} patch - preference fields to update.
+   * @returns {void}
+   */
+  function saveReportSettings(cwd, patch) {
+    try {
+      if (typeof localStorage === 'undefined') return
+      const key = reportSettingsCwdKey(cwd)
+      if (key === '') return
+      const raw = localStorage.getItem(REPORT_SETTINGS_KEY)
+      const settings = normalizeReportSettings(raw === null || raw === '' ? undefined : JSON.parse(raw))
+      const current = settings.workspaces[key] ?? { ...DEFAULT_REPORT_SETTINGS }
+      settings.workspaces[key] = {
+        root: patch?.root === undefined ? current.root : normalizeReportRoot(patch.root),
+        mode: patch?.mode === 'archive' ? 'archive' : patch?.mode === 'root' ? 'root' : current.mode,
+      }
+      localStorage.setItem(REPORT_SETTINGS_KEY, JSON.stringify({ version: 1, workspaces: settings.workspaces }))
+    } catch {
+      /* quota/private mode: the preference stays in this dialog instance */
     }
   }
 
@@ -2509,6 +2821,47 @@ function createOpenSpecPlugin(require) {
     editor.textContent = line
     editor.dispatchEvent(new Event('input', { bubbles: true }))
     return true
+  }
+
+  /**
+   * Copy one plain-text value to the clipboard. The async Clipboard API is
+   * preferred; a temporary textarea keeps the button working when the browser
+   * blocks it (or when the page is not focused). Never throws.
+   *
+   * @param {string} text - text to copy.
+   * @returns {Promise<boolean>} whether the copy likely succeeded.
+   */
+  async function copyTextToClipboard(text) {
+    const value = String(text ?? '')
+    if (value === '') return false
+    try {
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard !== undefined &&
+        typeof navigator.clipboard.writeText === 'function'
+      ) {
+        await navigator.clipboard.writeText(value)
+        return true
+      }
+    } catch {
+      /* fall through to the DOM fallback */
+    }
+    try {
+      if (typeof document === 'undefined') return false
+      const area = document.createElement('textarea')
+      area.value = value
+      area.setAttribute('readonly', '')
+      area.style.position = 'fixed'
+      area.style.top = '-1000px'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      const copied = typeof document.execCommand === 'function' ? document.execCommand('copy') === true : false
+      document.body.removeChild(area)
+      return copied
+    } catch {
+      return false
+    }
   }
 
   /* ------------------------------------------------------------------ *
@@ -3922,11 +4275,13 @@ function createOpenSpecPlugin(require) {
   }
 
   /** Archive rows grouped by local date; each change's artifacts/tasks/metadata load on demand. */
-  function ArchiveSection({ t, source, archived, openDoc }) {
+  function ArchiveSection({ t, source, archived, openDoc, cwd, compose, onNotice }) {
     const [open, setOpen] = useState(false)
     const [expanded, setExpanded] = useState({})
     const [details, setDetails] = useState({})
     const [limit, reveal] = useVisibleLimit(ARCHIVE_PAGE_SIZE)
+    const [reportDialog, setReportDialog] = useState(null)
+    const [reportPreview, setReportPreview] = useState(null)
     const groups = groupArchivedByLocalDate(archived)
 
     const visibleGroups = []
@@ -3977,6 +4332,22 @@ function createOpenSpecPlugin(require) {
       if (willOpen && details[key] === undefined) load(entry)
     }
 
+    /**
+     * Open the report dialog for one archived row. The event is stopped so the
+     * row never expands/collapses (or toggles on keyboard Enter) as a side
+     * effect of asking for a report.
+     *
+     * @param {object} entry - one `WorkspaceState.archived` row.
+     * @returns {(event?: Event) => void} click/key handler.
+     */
+    const openReport = (entry) => (event) => {
+      if (event !== undefined && event !== null && typeof event.stopPropagation === 'function') event.stopPropagation()
+      setReportDialog({ scope: 'change', entry })
+    }
+
+    /** Open the same dialog in the period scope from the section header. */
+    const openPeriodReport = () => setReportDialog({ scope: 'range' })
+
     const renderDetail = (detail, entry) => {
       if (detail === undefined || detail.status === 'loading') {
         return h('div', { className: 'dshspec-inlineLoad' }, h(Icon, { name: 'refresh', size: 14, className: 'dshspec-spin' }), h('span', null, t('archiveDetailLoading')))
@@ -4015,12 +4386,20 @@ function createOpenSpecPlugin(require) {
       )
     }
 
-    return h(
+    const sectionNode = h(
       Section,
       {
         title: t('archiveSectionTitle'),
         count: archived.length,
         headMeta: h('span', { className: 'dshspec-note' }, t('archivedHint')),
+        action:
+          archived.length === 0
+            ? null
+            : h(
+                Button,
+                { variant: 'outline', size: 'sm', icon: 'file', title: t('reportPeriodEntry'), onClick: openPeriodReport },
+                t('reportPeriodEntry'),
+              ),
         defaultOpen: false,
       },
       archived.length === 0
@@ -4073,6 +4452,15 @@ function createOpenSpecPlugin(require) {
                         )
                       : null,
                     h('span', { className: 'dshspec-space' }),
+                    h(IconButton, {
+                      icon: 'file',
+                      label: t('reportEntry'),
+                      size: 26,
+                      onClick: openReport(entry),
+                      onKeyDown: (event) => {
+                        if (event.key === 'Enter' || event.key === ' ') event.stopPropagation()
+                      },
+                    }),
                     h(Icon, { name: 'archive', size: 14, className: 'dshspec-decoIcon' }),
                   ),
                   isOpen ? h('div', { className: 'dshspec-itemBody' }, renderDetail(detail, entry)) : null,
@@ -4081,6 +4469,540 @@ function createOpenSpecPlugin(require) {
             ),
           ),
       h(ListMore, { t, hidden, reveal: Math.min(limit, hidden), onMore: reveal }),
+    )
+    // The report entries live in the section header (visible while collapsed),
+    // so the dialogs render as SIBLINGS of the collapsible section instead of
+    // inside its body — otherwise a collapsed archive view would swallow them.
+    return h(
+      React.Fragment,
+      null,
+      sectionNode,
+      reportDialog === null
+        ? null
+        : h(ReportDialog, {
+            t,
+            scope: reportDialog.scope,
+            entry: reportDialog.entry,
+            archived,
+            cwd,
+            source,
+            compose,
+            onNotice,
+            onPreview: (report) => {
+              // Preview replaces the form (never stacks two modal layers).
+              setReportPreview({
+                path: report.path ?? report.absolutePath,
+                absolutePath: report.absolutePath,
+                back: reportDialog,
+              })
+              setReportDialog(null)
+            },
+            onClose: () => setReportDialog(null),
+          }),
+      reportPreview === null
+        ? null
+        : h(ReportPreviewDialog, {
+            t,
+            source,
+            path: reportPreview.path,
+            absolutePath: reportPreview.absolutePath,
+            onClose: () => {
+              const back = reportPreview.back ?? null
+              setReportPreview(null)
+              if (back !== null) setReportDialog(back)
+            },
+          }),
+    )
+  }
+
+  /**
+   * Report dialog — one archived change or a date range.
+   *
+   * The dialog only composes the human-report prompt and fills the target
+   * conversation draft: the Host calls (`report-prompt` / `report-status`) are
+   * read-only and nothing is ever sent. The period hit list is computed locally
+   * from `state.archived[].date`, so changing the range costs no Host call.
+   * An existing report is discovered through `report-status` and can be
+   * previewed inline (sandboxed iframe) or copied as a path.
+   */
+  function ReportDialog({ t, scope: initialScope, entry, archived, cwd, source, compose, onNotice, onPreview, onClose }) {
+    const initialSettings = useRef(null)
+    if (initialSettings.current === null) initialSettings.current = loadReportSettings(cwd)
+    const [scope, setScope] = useState(initialScope === 'range' ? 'range' : 'change')
+    const [root, setRoot] = useState(initialSettings.current.root)
+    const [inArchive, setInArchive] = useState(initialSettings.current.mode === 'archive')
+    const [range, setRange] = useState(() => reportDefaultRange())
+    const [status, setStatus] = useState({ loading: true, value: null, error: '' })
+    const [busy, setBusy] = useState(false)
+    const [error, setError] = useState('')
+    const [preview, setPreview] = useState(null)
+    const changeEntry = entry !== null && typeof entry === 'object' ? entry : null
+
+    const rangeMode = scope === 'range'
+    const included = rangeMode ? reportArchivedInRange(archived, range.from, range.to) : []
+    const rangeMissing = rangeMode && (String(range.from).trim() === '' || String(range.to).trim() === '')
+    const rangeInvalid = rangeMode && rangeMissing !== true && String(range.from) > String(range.to)
+    const rangeEmpty = rangeMode && rangeMissing !== true && rangeInvalid !== true && included.length === 0
+    const changeLabel = archiveEntryLabel(changeEntry ?? {})
+    const changeDate = archiveEntryDate(changeEntry ?? {})
+    const normalizedRoot = normalizeReportRoot(root)
+    // Absolute report roots are accepted only inside the workspace (the Host
+    // rejects outside paths because the DSH file policy cannot write or verify
+    // them); warn as soon as the typed root would fall outside.
+    const absoluteRoot = /^(?:[A-Za-z]:[\\/]|\/)/.test(normalizedRoot)
+    const cwdKey = String(cwd ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    const rootKey = normalizedRoot.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    const absoluteRootOutside = absoluteRoot && cwdKey !== '' && rootKey !== cwdKey && !rootKey.startsWith(`${cwdKey}/`)
+    const archiveDir =
+      changeEntry !== null && typeof changeEntry.name === 'string' && changeEntry.name !== '' ? changeEntry.name : changeLabel
+    const outputPath = rangeMode
+      ? reportOutputRelPath({ scope: 'range', root: normalizedRoot, from: range.from, to: range.to })
+      : inArchive
+        ? `openspec/changes/archive/${archiveDir}/report.html`
+        : reportOutputRelPath({ scope: 'change', root: normalizedRoot, changeName: changeLabel })
+
+    // Discover an existing report for the current target. `root` is not a
+    // dependency on purpose: retyping the directory must not flood the Host
+    // with status calls; the status is re-read when scope / range / target
+    // changes (and after a successful generation, when the dialog closes).
+    useEffect(() => {
+      let cancelled = false
+      const payload =
+        scope === 'range'
+          ? { scope: 'range', from: range.from, to: range.to, reportRoot: normalizeReportRoot(root) }
+          : {
+              scope: 'change',
+              path: relPathOf(cwd, changeEntry?.path ?? ''),
+              name: archiveEntryLabel(changeEntry ?? {}),
+              // Archive mode ignores the report root; omit it so an old
+              // out-of-workspace preference cannot fail the status read.
+              ...(inArchive ? { inArchive: true } : { reportRoot: normalizeReportRoot(root), inArchive: false }),
+            }
+      // An incomplete / inverted / empty range can never have a report (the Host
+      // rejects it too), so skip the status call and show "not generated".
+      if (
+        scope === 'range' &&
+        (String(range.from).trim() === '' ||
+          String(range.to).trim() === '' ||
+          String(range.from) > String(range.to) ||
+          reportArchivedInRange(archived, range.from, range.to).length === 0)
+      ) {
+        setStatus({ loading: false, value: null, error: '' })
+        return () => {
+          cancelled = true
+        }
+      }
+      setStatus({ loading: true, value: null, error: '' })
+      const timer = setTimeout(() => {
+        if (source === undefined || typeof source.reportStatus !== 'function') {
+          if (!cancelled) setStatus({ loading: false, value: null, error: t('reportStatusFailed') })
+          return
+        }
+        void source
+          .reportStatus(payload)
+          .then((value) => {
+            if (!cancelled) setStatus({ loading: false, value: normalizeReportStatus(value, scope), error: '' })
+          })
+          .catch((failure) => {
+            if (!cancelled) {
+              setStatus({ loading: false, value: null, error: failure instanceof Error ? failure.message : String(failure) })
+            }
+          })
+      }, 240)
+      return () => {
+        cancelled = true
+        clearTimeout(timer)
+      }
+    }, [scope, range.from, range.to, changeEntry, inArchive, source, t])
+
+    const report = status.value !== null && status.value !== undefined && status.value.exists === true ? status.value : null
+
+    /**
+     * Show the existing report. The archive section lifts preview into its own
+     * state so the form and the sandboxed viewer are never stacked; without
+     * that owner the dialog offers the same preview inline.
+     *
+     * @param {object} target - normalized report-status value.
+     */
+    const openPreview = (target) => {
+      const previewTarget = {
+        path: target.path ?? target.absolutePath,
+        absolutePath: target.absolutePath ?? target.path,
+      }
+      if (typeof onPreview === 'function') {
+        onPreview(previewTarget)
+        return
+      }
+      setPreview(previewTarget)
+    }
+
+    /** Copy the discovered report path (absolute first) and report the outcome. */
+    const copyPath = async () => {
+      if (report === null) return
+      const target = report.absolutePath ?? report.path
+      if (typeof target !== 'string' || target === '') return
+      const copied = await copyTextToClipboard(target)
+      if (typeof onNotice === 'function') {
+        onNotice({ ok: copied === true, text: t(copied === true ? 'reportPathCopied' : 'reportCopyFailed') }, null, t(copied === true ? 'reportPathCopied' : 'reportCopyFailed'))
+      }
+    }
+
+    /** Compose the Host prompt, fill the target draft, then close — never send. */
+    const submit = async () => {
+      if (busy === true) return
+      if (rangeMissing) {
+        setError(t('reportWarningRangeMissing'))
+        return
+      }
+      if (rangeInvalid) {
+        setError(t('reportWarningRangeOrder'))
+        return
+      }
+      if (rangeEmpty) {
+        setError(t('reportWarningRangeEmpty'))
+        return
+      }
+      if (typeof compose !== 'function') {
+        setError(t('reportComposeMissing'))
+        return
+      }
+      setBusy(true)
+      setError('')
+      try {
+        const payload = rangeMode
+          ? { scope: 'range', from: range.from, to: range.to, reportRoot: normalizedRoot }
+          : {
+              scope: 'change',
+              path: relPathOf(cwd, changeEntry?.path ?? ''),
+              name: changeLabel,
+              // Archive mode ignores the report root; omit it so an old
+              // out-of-workspace preference cannot fail prompt composition.
+              ...(inArchive ? { inArchive: true } : { reportRoot: normalizedRoot, inArchive: false }),
+            }
+        // Host contract: report-prompt is read-only and only returns the prompt.
+        const result = source === undefined || typeof source.reportPrompt !== 'function' ? null : await source.reportPrompt(payload)
+        const text = typeof result?.text === 'string' ? result.text : ''
+        if (text.trim() === '') throw new Error(t('commandFailed'))
+        const filled = await compose(text)
+        if (filled === false || (filled !== null && typeof filled === 'object' && filled.ok === false)) {
+          throw new Error(filled?.text ?? t('reportComposeMissing'))
+        }
+        saveReportSettings(cwd, { root: normalizedRoot, mode: inArchive ? 'archive' : 'root' })
+        if (typeof onNotice === 'function') onNotice({ ok: true, text: t('reportPromptFilled') }, null, t('reportPromptFilled'))
+        onClose()
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : String(failure))
+      } finally {
+        setBusy(false)
+      }
+    }
+
+    // Preview replaces the dialog instead of stacking a second modal, so Esc /
+    // backdrop closes exactly one layer and returns to the report form.
+    if (preview !== null) {
+      return h(ReportPreviewDialog, {
+        t,
+        source,
+        path: preview.path,
+        absolutePath: preview.absolutePath,
+        onClose: () => setPreview(null),
+      })
+    }
+
+    const statusNode = status.loading
+      ? h(
+          'div',
+          { className: 'dshspec-reportStatus' },
+          h(Icon, { name: 'refresh', size: 14, className: 'dshspec-spin' }),
+          h('b', null, t('reportStatusLabel')),
+          h('span', { className: 'dshspec-reportStatusMeta' }, t('reportStatusLoading')),
+        )
+      : status.error !== ''
+        ? h(Banner, { tone: 'warn', wrap: true }, `${t('reportStatusFailed')}：${status.error}`)
+        : report !== null
+          ? h(
+              'div',
+              { className: 'dshspec-reportStatus' },
+              h('b', null, t('reportStatusLabel')),
+              h('span', { className: 'dshspec-reportStatusMeta' }, t('reportStatusGenerated')),
+              report.generatedAt === null
+                ? null
+                : h('span', { className: 'dshspec-reportStatusMeta' }, tx(t, 'reportGeneratedAt', { time: report.generatedAt })),
+              report.path === null
+                ? null
+                : h('span', { className: 'dshspec-reportStatusMeta', title: report.absolutePath ?? report.path }, report.path),
+              rangeMode && report.includedCount > 0
+                ? h('span', { className: 'dshspec-reportStatusMeta' }, tx(t, 'reportIncludedCount', { count: report.includedCount }))
+                : null,
+              h(
+                'span',
+                { className: 'dshspec-reportStatusActions' },
+                h(
+                  Button,
+                  {
+                    variant: 'ghost',
+                    size: 'sm',
+                    icon: 'file',
+                    onClick: () => openPreview(report),
+                  },
+                  t('reportPreview'),
+                ),
+                h(Button, { variant: 'ghost', size: 'sm', icon: 'file', onClick: () => void copyPath() }, t('reportCopyPath')),
+              ),
+            )
+          : h(
+              'div',
+              { className: 'dshspec-reportStatus' },
+              h(Icon, { name: 'info', size: 14 }),
+              h('b', null, t('reportStatusLabel')),
+              h('span', null, t('reportStatusMissing')),
+            )
+
+    const scopeNode = h(
+      'div',
+      { className: 'dshspec-scopeTabs', role: 'tablist' },
+      h(
+        'button',
+        {
+          type: 'button',
+          role: 'tab',
+          className: 'dshspec-scopeTab',
+          'aria-selected': rangeMode ? 'false' : 'true',
+          'data-active': rangeMode ? undefined : 'true',
+          disabled: changeEntry === null,
+          onClick: () => setScope('change'),
+        },
+        t('reportScopeChange'),
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          role: 'tab',
+          className: 'dshspec-scopeTab',
+          'aria-selected': rangeMode ? 'true' : 'false',
+          'data-active': rangeMode ? 'true' : undefined,
+          onClick: () => setScope('range'),
+        },
+        t('reportScopeRange'),
+      ),
+    )
+
+    const targetNode = rangeMode
+      ? [
+          h(
+            'div',
+            { key: 'range', className: 'dshspec-rangeGrid' },
+            h(
+              'div',
+              { className: 'dshspec-field' },
+              h('label', { className: 'dshspec-fieldLabel' }, t('reportRangeFrom')),
+              h('input', {
+                className: 'dshspec-input',
+                type: 'date',
+                value: range.from,
+                'data-autofocus': true,
+                onChange: (event) => setRange((prev) => ({ ...prev, from: event.target.value })),
+              }),
+            ),
+            h(
+              'div',
+              { className: 'dshspec-field' },
+              h('label', { className: 'dshspec-fieldLabel' }, t('reportRangeTo')),
+              h('input', {
+                className: 'dshspec-input',
+                type: 'date',
+                value: range.to,
+                onChange: (event) => setRange((prev) => ({ ...prev, to: event.target.value })),
+              }),
+            ),
+          ),
+          h('div', { key: 'rangeHint', className: 'dshspec-hint' }, t('reportRangeHint')),
+          rangeMissing || rangeInvalid || rangeEmpty
+            ? h(
+                Banner,
+                { key: 'rangeWarn', tone: 'warn', wrap: true },
+                rangeMissing
+                  ? t('reportWarningRangeMissing')
+                  : rangeInvalid
+                    ? t('reportWarningRangeOrder')
+                    : t('reportWarningRangeEmpty'),
+              )
+            : h(
+                'div',
+                { key: 'included', className: 'dshspec-field' },
+                h('label', { className: 'dshspec-fieldLabel' }, `${t('reportIncludedList')} · ${tx(t, 'reportIncludedCount', { count: included.length })}`),
+                h(
+                  'div',
+                  { className: 'dshspec-reportList' },
+                  included.slice(0, 10).map((item) => {
+                    const name = archiveEntryLabel(item)
+                    const date = archiveEntryDate(item)
+                    return h(
+                      'div',
+                      { key: `${item.name ?? ''}\u0000${name}`, className: 'dshspec-reportListItem' },
+                      h('span', { className: 'dshspec-reportListItemName', title: String(item.path ?? item.name ?? '') }, name),
+                      date === null ? null : h('span', { className: 'dshspec-reportListItemDate' }, date),
+                    )
+                  }),
+                ),
+                included.length > 10 ? h('div', { className: 'dshspec-note' }, moreItemsText(t, included.length - 10)) : null,
+              ),
+        ]
+      : h(
+          'div',
+          { className: 'dshspec-reportStatus' },
+          h('b', null, t('reportChangeLabel')),
+          h('span', { className: 'dshspec-reportStatusMeta' }, changeLabel),
+          changeDate === null ? null : h('span', { className: 'dshspec-reportListItemDate' }, `${t('reportDateLabel')} ${changeDate}`),
+          changeEntry === null
+            ? null
+            : h('span', { className: 'dshspec-outputPath' }, relPathOf(cwd, changeEntry.path ?? '')),
+        )
+
+    return h(
+      Modal,
+      {
+        t,
+        title: t('reportDialogTitle'),
+        description: t('reportDialogDesc'),
+        onClose,
+        width: 640,
+        footer: [
+          h(Button, { key: 'cancel', variant: 'ghost', size: 'md', onClick: onClose, disabled: busy }, t('dialogCancel')),
+          h(
+            Button,
+            {
+              key: 'generate',
+              variant: 'primary',
+              size: 'md',
+              icon: 'file',
+              onClick: () => void submit(),
+              disabled: busy === true || rangeMissing || rangeInvalid || rangeEmpty || (rangeMode !== true && changeEntry === null),
+            },
+            busy === true ? t('commandSending') : report !== null ? t('reportRegenerate') : t('reportGenerate'),
+          ),
+        ],
+      },
+      scopeNode,
+      targetNode,
+      h(
+        'div',
+        { className: 'dshspec-field' },
+        h('label', { className: 'dshspec-fieldLabel' }, t('reportRootLabel')),
+        h('input', {
+          className: 'dshspec-input',
+          type: 'text',
+          value: root,
+          placeholder: t('reportRootPlaceholder'),
+          spellCheck: false,
+          onChange: (event) => setRoot(event.target.value),
+        }),
+        h('div', { className: 'dshspec-hint' }, t('reportRootHint')),
+      ),
+      rangeMode || changeEntry === null
+        ? null
+        : h(
+            'label',
+            { className: 'dshspec-toggleRow' },
+            h('input', {
+              type: 'checkbox',
+              checked: inArchive,
+              onChange: (event) => setInArchive(event.target.checked),
+            }),
+            h('span', null, t('reportArchiveMode')),
+          ),
+      h(
+        'div',
+        { className: 'dshspec-kv' },
+        h('span', { className: 'dshspec-kvLabel' }, t('reportOutputPath')),
+        h('span', { className: 'dshspec-kvValue dshspec-outputPath' }, outputPath),
+      ),
+      absoluteRootOutside && (rangeMode || inArchive !== true) ? h(Banner, { tone: 'warn', wrap: true }, t('reportWarningAbsolute')) : null,
+      statusNode,
+      error === '' ? null : h(Banner, { tone: 'error', wrap: true }, error),
+    )
+  }
+
+  /**
+   * Read-only report preview.
+   *
+   * The report HTML is fetched through the existing `document` route and
+   * rendered in a `sandbox=""` iframe (no scripts, no same-origin access to the
+   * host page). A truncated read shows an explicit note instead of silently
+   * cutting the report, and the path stays copyable when rendering is not
+   * possible.
+   */
+  function ReportPreviewDialog({ t, source, path: reportPath, absolutePath, onClose }) {
+    const target = typeof reportPath === 'string' && reportPath !== '' ? reportPath : typeof absolutePath === 'string' ? absolutePath : ''
+    const [state, setState] = useState({ status: 'loading', text: '', truncated: false, totalLines: null, error: '' })
+    const [copied, setCopied] = useState('')
+
+    useEffect(() => {
+      let cancelled = false
+      if (target === '' || source === undefined || typeof source.readDocument !== 'function') {
+        setState({ status: 'error', text: '', truncated: false, totalLines: null, error: t('reportPreviewUnavailable') })
+        return () => {
+          cancelled = true
+        }
+      }
+      setState({ status: 'loading', text: '', truncated: false, totalLines: null, error: '' })
+      void source
+        .readDocument(target, { offset: 1, limit: 4000 })
+        .then((page) => {
+          if (cancelled) return
+          setState(
+            page.ok === true
+              ? { status: 'ready', text: page.text, truncated: page.truncated === true, totalLines: page.totalLines, error: '' }
+              : { status: 'error', text: '', truncated: false, totalLines: null, error: page.error ?? t('readDocFailed') },
+          )
+        })
+        .catch((failure) => {
+          if (cancelled) return
+          setState({ status: 'error', text: '', truncated: false, totalLines: null, error: failure instanceof Error ? failure.message : String(failure) })
+        })
+      return () => {
+        cancelled = true
+      }
+    }, [source, target, t])
+
+    /** Copy the previewed report path; inline notice (there is no panel banner here). */
+    const copyPath = async () => {
+      const value = typeof absolutePath === 'string' && absolutePath !== '' ? absolutePath : target
+      if (value === '') return
+      const ok = await copyTextToClipboard(value)
+      setCopied(ok === true ? 'ok' : 'failed')
+    }
+
+    const shown = documentShownLines(state.text)
+
+    return h(
+      Modal,
+      {
+        t,
+        title: t('reportPreviewTitle'),
+        description: target === '' ? t('reportPreviewUnavailable') : target,
+        onClose,
+        width: 900,
+        focusCard: true,
+        footer: [
+          h(Button, { key: 'copy', variant: 'ghost', size: 'md', icon: 'file', onClick: () => void copyPath() }, t('reportCopyPath')),
+          h(Button, { key: 'close', variant: 'primary', size: 'md', onClick: onClose }, t('close')),
+        ],
+      },
+      state.status === 'loading' ? h(LoadingBody) : null,
+      state.status === 'error' ? h(Banner, { tone: 'error', wrap: true }, `${t('reportPreviewUnavailable')}：${state.error}`) : null,
+      copied === '' ? null : h(Banner, { tone: copied === 'ok' ? 'info' : 'warn', wrap: true }, copied === 'ok' ? t('reportPathCopied') : t('reportCopyFailed')),
+      state.truncated === true ? h(Banner, { tone: 'warn', wrap: true }, tx(t, 'reportPreviewTruncated', { shown })) : null,
+      h('div', { className: 'dshspec-hint' }, t('reportPreviewNote')),
+      state.status === 'ready'
+        ? h('iframe', {
+            className: 'dshspec-reportFrame',
+            sandbox: '',
+            srcDoc: state.text,
+            title: t('reportPreviewTitle'),
+          })
+        : null,
     )
   }
 
@@ -4760,7 +5682,7 @@ function createOpenSpecPlugin(require) {
     )
   }
 
-  function WorkspaceDetail({ t, row, source, align, init, onRefresh, bindings, roleBindings, modelDirectories, statusSource, run, startRole, createProgram, acceptTask, updateRoles, openSession, sessionExists }) {
+  function WorkspaceDetail({ t, row, source, align, compose, init, onRefresh, bindings, roleBindings, modelDirectories, statusSource, run, startRole, createProgram, acceptTask, updateRoles, openSession, sessionExists }) {
     const stateSource = source !== undefined ? source.hooks.state : undefined
     const state = useSyncExternalStore(
       stateSource !== undefined ? stateSource.subscribe : () => () => {},
@@ -4789,13 +5711,13 @@ function createOpenSpecPlugin(require) {
     )
 
     const report = useCallback(
-      (outcome, line) => {
+      (outcome, line, successText) => {
         if (noticeTimer.current !== null) clearTimeout(noticeTimer.current)
         const failed = outcome !== undefined && outcome !== null && outcome.ok === false
         setNotice({
           tone: failed ? 'error' : 'info',
           icon: failed ? 'alert' : 'check',
-          text: failed ? outcome?.text ?? t('commandFailed') : `${t('commandSentTo')} · ${line ?? ''}`,
+          text: failed ? outcome?.text ?? t('commandFailed') : successText ?? `${t('commandSentTo')} · ${line ?? ''}`,
         })
         noticeTimer.current = setTimeout(() => setNotice(null), NOTICE_MS)
       },
@@ -4834,6 +5756,23 @@ function createOpenSpecPlugin(require) {
         setBusyChange(typeof changeName === 'string' ? changeName : '__workspace__')
         try {
           const outcome = await run(line, changeName)
+          // Direct execution may refuse (target conversation busy/waiting, host
+          // validation, ...). Instead of leaving the click without a visible
+          // effect, hand the exact command to the workspace conversation as a
+          // draft the user sends manually — the panel's accepted fallback.
+          if (
+            outcome !== undefined &&
+            outcome !== null &&
+            outcome.ok === false &&
+            typeof compose === 'function'
+          ) {
+            const draft = await compose(row, line)
+            if (draft !== undefined && draft !== null && draft.ok === true) {
+              const drafted = { ok: true, text: line, drafted: true }
+              report(drafted, line, t('commandDrafted'))
+              return drafted
+            }
+          }
           report(outcome, line)
           if (
             outcome !== undefined &&
@@ -4854,7 +5793,7 @@ function createOpenSpecPlugin(require) {
           setBusyChange(null)
         }
       },
-      [report, run, t],
+      [compose, report, row, run, t],
     )
 
     /** Open a bound conversation from a change card chip. */
@@ -5033,33 +5972,13 @@ function createOpenSpecPlugin(require) {
       openDoc({ path: docPath, label: basenameOf(docPath) || t('taskList') }, item.line)
     }
 
-    /** Send an auto-named propose command; the description is flattened to one line. */
-    const submitPropose = async ({ description }) => {
-      setDialogBusy(true)
-      setDialogError('')
-      const line = `/opsx-propose --auto ${String(description).replace(/\s+/g, ' ').trim()}`.trim()
-      const outcome = await runNow(line)
-      setDialogBusy(false)
-      if (outcome !== undefined && outcome !== null && outcome.ok === false) {
-        setDialogError(outcome.text ?? t('commandSendFailed'))
-        return
-      }
-      setDialog(null)
-    }
-
-    /** Send an explore command (topic optional) to a fresh/bound exploration session. */
-    const submitExplore = async (topic) => {
-      setDialogBusy(true)
-      setDialogError('')
-      const line = topic === '' ? '/opsx-explore' : `/opsx-explore ${String(topic).replace(/\s+/g, ' ').trim()}`
-      const outcome = await runNow(line)
-      setDialogBusy(false)
-      if (outcome !== undefined && outcome !== null && outcome.ok === false) {
-        setDialogError(outcome.text ?? t('commandSendFailed'))
-        return
-      }
-      setDialog(null)
-    }
+    const { submitPropose, submitExplore } = createDialogSubmitters({
+      t,
+      runNow,
+      setDialogBusy,
+      setDialogError,
+      setDialog,
+    })
 
     const validationModal =
       modal !== null && modal.kind === 'validate'
@@ -5259,7 +6178,16 @@ function createOpenSpecPlugin(require) {
               { key: 'specs', title: t('capabilitySpecs'), count: specs.length, defaultOpen: true },
               h(CapabilitySection, { t, specs, openDoc, onIssues: openSpecIssues }),
             ),
-            h(ArchiveSection, { key: 'archive', t, source, archived, openDoc }),
+            h(ArchiveSection, {
+              key: 'archive',
+              t,
+              source,
+              archived,
+              openDoc,
+              cwd: row.cwd,
+              compose: (line) => (typeof compose === 'function' ? compose(row, line) : undefined),
+              onNotice: report,
+            }),
             warnings.length === 0
               ? null
               : h(
@@ -5338,7 +6266,7 @@ function createOpenSpecPlugin(require) {
   let lastSelectedWorkspace = null
 
   /** The monitoring page: workspace switcher on top, selected workspace below. */
-  function OpenspecPanel({ t, rowsSource, sourceFor, runFor, startRoleFor, createProgramFor, acceptTaskFor, updateRolesFor, alignFor, initFor, onRefreshSessions, bindings, roleBindings, modelDirectories, statusSource, openSession, sessionExists }) {
+  function OpenspecPanel({ t, rowsSource, sourceFor, runFor, composeFor, startRoleFor, createProgramFor, acceptTaskFor, updateRolesFor, alignFor, initFor, onRefreshSessions, bindings, roleBindings, modelDirectories, statusSource, openSession, sessionExists }) {
     const rows = useSyncExternalStore(rowsSource.subscribe, rowsSource.getSnapshot)
     const [selected, setSelected] = useState(() => lastSelectedWorkspace)
     const [nonce, setNonce] = useState(0)
@@ -5431,6 +6359,7 @@ function createOpenSpecPlugin(require) {
                     row: selectedRow,
                     source: sourceFor(selectedRow),
                     run: typeof runFor === 'function' ? (line, change) => runFor(selectedRow)(line, change) : undefined,
+                    compose: typeof composeFor === 'function' ? (row, line) => composeFor(row)(line) : undefined,
                     align: alignFor,
                     init: initFor,
                     onRefresh: onRefreshSessions,
@@ -5532,6 +6461,14 @@ function createOpenSpecPlugin(require) {
         setSending(false)
       }
     }
+
+    const { submitPropose, submitExplore } = createDialogSubmitters({
+      t,
+      runNow,
+      setDialogBusy,
+      setDialogError,
+      setDialog,
+    })
 
     const action = deriveNextAction(target)
     const progress = taskProgressInfo(target?.tasks)
@@ -5788,7 +6725,7 @@ function createOpenSpecPlugin(require) {
   }
 
   /** Build marker for served-bundle verification. */
-  const BUILD = '20261023-role-orchestration'
+  const BUILD = '20261023-role-orchestration-0.12.0'
 
   /**
    * Register the locale dictionaries, the monitoring page, the sidebar glyph,
@@ -5852,7 +6789,43 @@ function createOpenSpecPlugin(require) {
      * type into the editor.
      */
     const composeFor = (row) => async (line) => {
-      const fill = () => {
+      // The public conversation input API takes plain multi-line text, which a
+      // report prompt needs (the DOM `execCommand` fallback can lose line
+      // breaks). It is feature-detected: a composition without `conversation`
+      // keeps the previous editor-based behavior.
+      let conversationInput
+      try {
+        conversationInput = typeof ctx.get === 'function' ? ctx.get('conversation')?.input : undefined
+      } catch {
+        conversationInput = undefined
+      }
+      /** Fill one resolved session's draft; the DOM editor is the fallback. */
+      const fill = (sessionId) => {
+        let shell
+        try {
+          if (conversationInput !== undefined && conversationInput !== null && typeof conversationInput.shell === 'function') {
+            shell = conversationInput.shell(sessionId)
+          }
+        } catch {
+          shell = undefined
+        }
+        if (shell !== undefined && shell !== null && typeof shell.setDraft === 'function') {
+          try {
+            shell.setDraft(line)
+          } catch {
+            return fillEditor()
+          }
+          try {
+            if (typeof shell.focus === 'function') shell.focus()
+          } catch {
+            /* focusing the composer is best effort; the draft is already filled */
+          }
+          return { ok: true, text: line }
+        }
+        return fillEditor()
+      }
+      /** DOM-editor fallback: insert the line without sending it. */
+      const fillEditor = () => {
         const inserted = insertIntoComposer(line)
         return inserted === false ? { ok: false, text: t('insertFailed') } : { ok: true, text: line }
       }
@@ -5863,7 +6836,7 @@ function createOpenSpecPlugin(require) {
         ].filter((id) => typeof id === 'string')
         for (const candidate of [...new Set(existing)]) {
           if (typeof ctx.uiWorkspace?.openSession === 'function') ctx.uiWorkspace.openSession(candidate)
-          if (await waitForDock(candidate, 1800)) return fill()
+          if (await waitForDock(candidate, 1800)) return fill(candidate)
         }
         let created
         if (row.workspaceId !== undefined && typeof ctx.uiWorkspace?.connectWorkspace === 'function') {
@@ -5881,7 +6854,7 @@ function createOpenSpecPlugin(require) {
         if (typeof created !== 'string') return { ok: false, text: t('switchFailed') }
         if (typeof ctx.uiWorkspace?.openSession === 'function') ctx.uiWorkspace.openSession(created)
         await waitForDock(created, 10000)
-        return fill()
+        return fill(created)
       } catch (error) {
         return { ok: false, text: error instanceof Error ? error.message : String(error) }
       }
@@ -6557,6 +7530,7 @@ function createOpenSpecPlugin(require) {
         rowsSource,
         sourceFor,
         runFor,
+        composeFor,
         startRoleFor: (row, program, task, role) => startRoleFor(row)(program, task, role),
         createProgramFor: (row, program) => createProgramFor(row)(program),
         acceptTaskFor: (row, program, task, accepted) => acceptTaskFor(row)(program, task, accepted),

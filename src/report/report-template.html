@@ -1,0 +1,407 @@
+<!--
+  dsh-spec 人类报告模板（单文件 · 全内联样式 · 无脚本 · 可打印 · 无任何外部资源）
+  使用方式：
+  1. 保留本文件的全部 CSS 与 class，只替换正文内容与占位（<span class="ph">…</span>）。
+  2. 标有 SINGLE ONLY / RANGE ONLY 的区块只保留当前范围的一侧，删除另一侧与无用占位；
+     生成单变更报告删掉 RANGE ONLY 区块，生成时间段报告删掉 SINGLE ONLY 区块。
+  3. 页面标题与结论必须用主线语言，不要用 change 名或「修复了 bug」。
+  4. 首屏只放 00 一页速览 + 01 主线定位；细节必须在 06 的 <details> 里默认折叠。
+  5. 页脚与「归档信息」必须保留引用，并声明不替代规格真相源。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 填写：报告标题（主线语言，不要用 change 名当标题） -->
+  <title>主线视角报告 · 报告标题待填写</title>
+  <style>
+  :root{
+    --red:#C0001A; --red-dark:#8B0013; --red-soft:#FBE9EB;
+    --ink:#1C2126; --body:#3A424B; --muted:#6B7684;
+    --line:#E4E8EE; --bg:#F5F6F8; --card:#FFFFFF;
+    --gold:#B8860B; --green:#15803D; --green-soft:#E8F5ED;
+    --amber:#B45309; --amber-soft:#FEF3E2; --blue:#1D4ED8; --blue-soft:#E8EFFD;
+    --sans:system-ui,-apple-system,'Segoe UI','Microsoft YaHei','PingFang SC','Noto Sans SC',sans-serif;
+    --mono:'Cascadia Code',Consolas,'Courier New',monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--body);font-family:var(--sans);font-size:15px;line-height:1.78;-webkit-font-smoothing:antialiased}
+  a{color:var(--red);text-decoration:none}
+  b,strong{color:var(--ink);font-weight:600}
+  code{font-family:var(--mono);font-size:12.6px;background:#EEF1F5;color:#8A1020;border-radius:4px;padding:1px 5px;word-break:break-word}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 32px}
+
+  /* 页头：范围徽章 + 主线视角标题 + 元信息 */
+  .page-head{background:var(--card);border-bottom:1px solid var(--line);padding:38px 0 30px}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;color:var(--red-dark);background:var(--red-soft);border-radius:999px;padding:5px 13px}
+  .eyebrow i{width:6px;height:6px;border-radius:50%;background:var(--red);display:inline-block}
+  .page-head h1{font-size:clamp(26px,3vw,37px);line-height:1.36;color:var(--ink);font-weight:700;margin:18px 0 12px;letter-spacing:.01em}
+  .page-head .sub{font-size:15.3px;line-height:1.86;color:var(--body);max-width:860px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .meta span{font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:4px 10px}
+  .meta span b{color:var(--ink);font-weight:600}
+  .meta .src{color:var(--gold);background:#FCF8EC;border-color:#EADFC0}
+
+  /* 章节与标题 */
+  .sec{padding-top:44px}
+  .sec-head{display:flex;align-items:baseline;gap:12px;border-bottom:2px solid var(--ink);padding-bottom:9px;margin-bottom:20px}
+  .sec-num{font-family:var(--mono);font-size:12px;font-weight:700;color:#fff;background:var(--red);border-radius:4px;padding:2px 7px;letter-spacing:.06em}
+  .sec-head h2{font-size:23px;color:var(--ink);font-weight:700;letter-spacing:.01em}
+  .sec-head .en{margin-left:auto;font-family:var(--mono);font-size:10.5px;letter-spacing:.18em;color:#AEB6C0;text-transform:uppercase}
+  h3{font-size:18px;color:var(--ink);font-weight:700;margin:28px 0 10px}
+  h5{font-size:15px;color:var(--ink);font-weight:700;margin:0 0 6px;line-height:1.5}
+  .lead{font-size:15.2px;line-height:1.92;color:var(--body);margin-bottom:18px;max-width:900px}
+  p{margin:8px 0}
+  p.small{font-size:12.8px;color:var(--muted);line-height:1.7}
+  ul,ol{margin:8px 0 8px 20px}
+  li{margin:4px 0;line-height:1.78}
+  li::marker{color:var(--red)}
+
+  /* 卡片与标签 */
+  .grid{display:grid;gap:14px;margin:16px 0}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:17px 18px 15px;box-shadow:0 2px 6px rgba(28,33,38,.03)}
+  .card .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--red);text-transform:uppercase;margin-bottom:7px}
+  .card p{font-size:13.5px;line-height:1.78;margin:5px 0 0}
+  .card ul{margin:7px 0 0 17px}
+  .card li{font-size:13.5px}
+  .card.red{border-top:3px solid var(--red)}
+  .card.gold{border-top:3px solid var(--gold)}
+  .card.green{border-top:3px solid var(--green)}
+  .card.amber{border-top:3px solid var(--amber)}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.02em;border-radius:4px;padding:1px 7px;white-space:nowrap}
+  .tag.red{background:var(--red-soft);color:var(--red-dark)}
+  .tag.pass{background:var(--green-soft);color:var(--green)}
+  .tag.warn{background:var(--amber-soft);color:var(--amber)}
+  .tag.info{background:var(--blue-soft);color:var(--blue)}
+  .tag.gray{background:#EEF1F5;color:#4B5563}
+
+  /* 主线定位链：大系统 → 核心主线 → 支线 / 能力 → 本次工作 */
+  .chain{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}
+  .chain .step{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--red);border-radius:9px;padding:13px 14px}
+  .chain .step .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--red);margin-bottom:6px}
+  .chain .step p{font-size:13px;line-height:1.7;margin:4px 0 0}
+
+  /* 表格 */
+  .tbl-wrap{overflow-x:auto;margin:12px 0 6px;border:1px solid var(--line);border-radius:9px;background:var(--card)}
+  table{border-collapse:collapse;width:100%;font-size:13.1px}
+  thead th{background:#F3F5F8;color:#4B5563;font-weight:600;text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:12.2px;letter-spacing:.02em}
+  tbody td,tbody th{padding:9px 12px;border-bottom:1px solid #EEF1F5;vertical-align:top;line-height:1.65;text-align:left}
+  tbody tr:last-child td,tbody tr:last-child th{border-bottom:none}
+  tbody tr:hover{background:#FBF7F7}
+  tbody th{color:var(--ink);font-weight:600;background:#FAFBFC}
+
+  /* 提示块 */
+  .note{display:flex;gap:12px;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--red);border-radius:8px;padding:13px 15px;margin:14px 0;font-size:13.6px;line-height:1.82}
+  .note .ic{flex:0 0 auto;font-family:var(--mono);font-size:11px;letter-spacing:.08em;font-weight:700;color:var(--red);padding-top:2px}
+  .note.green{border-left-color:var(--green)} .note.green .ic{color:var(--green)}
+  .note.amber{border-left-color:var(--amber)} .note.amber .ic{color:var(--amber)}
+  .note.blue{border-left-color:var(--blue)} .note.blue .ic{color:var(--blue)}
+  .note p{margin:0}
+
+  /* 前后对照 */
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+  .ba .box{background:var(--card);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .ba .box .hd{font-family:var(--mono);font-size:11px;letter-spacing:.1em;padding:8px 12px;border-bottom:1px solid var(--line);font-weight:700}
+  .ba .box.old .hd{background:#FDECEC;color:#B91C1C}
+  .ba .box.new .hd{background:var(--green-soft);color:var(--green)}
+  .ba .box .bd{padding:11px 13px;font-size:13.2px;line-height:1.78}
+  .ba .box .bd ul{margin:2px 0 0 17px}
+
+  /* 折叠细节 */
+  details{background:var(--card);border:1px solid var(--line);border-radius:9px;margin:10px 0;overflow:hidden}
+  summary{cursor:pointer;padding:11px 14px;font-size:13.6px;font-weight:600;color:var(--ink);background:#FAFBFC;list-style:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:'+';display:inline-block;width:16px;color:var(--red);font-family:var(--mono);font-weight:700}
+  details[open] summary::before{content:'−'}
+  details[open] summary{border-bottom:1px solid var(--line)}
+  .det-body{padding:12px 15px 14px}
+  .det-body .tbl-wrap{margin:4px 0}
+
+  /* 占位高亮：替换内容后应全部消失 */
+  .ph{background:#FFF6D6;border-bottom:1px dashed var(--gold);color:#7A5C00;padding:0 2px;border-radius:2px}
+
+  /* 页脚 */
+  footer{margin-top:40px;border-top:1px solid var(--line);padding:18px 0 6px;font-size:12.5px;color:var(--muted)}
+  footer .row{display:flex;flex-wrap:wrap;gap:6px 20px}
+  footer p{margin-top:8px}
+  footer code{font-size:11.8px}
+  .foot-space{height:48px}
+
+  @media (max-width:900px){
+    .wrap{padding:0 18px}
+    .page-head{padding:28px 0 24px}
+    .grid.g2,.grid.g3,.chain,.ba{grid-template-columns:1fr}
+    .sec-head{flex-wrap:wrap}
+    .sec-head .en{margin-left:0}
+    .sec{padding-top:34px}
+  }
+
+  @media print{
+    .no-print{display:none!important}
+    body{background:#fff}
+    .wrap{max-width:none;padding:0 6mm}
+    .page-head{padding:16px 0 14px;border-bottom:1px solid var(--line)}
+    .sec{padding-top:22px}
+    .card,.tbl-wrap,.ba,.note,details,.sec-head{break-inside:avoid;page-break-inside:avoid}
+    thead{display:table-header-group}
+    tr{break-inside:avoid;page-break-inside:avoid}
+    a{color:inherit}
+    .foot-space{height:0}
+  }
+  </style>
+</head>
+<body>
+
+<header class="page-head">
+  <div class="wrap">
+    <div class="eyebrow"><i></i>
+      <!-- SINGLE ONLY -->单变更报告 · ARCHIVED CHANGE<!-- /SINGLE ONLY -->
+      <!-- RANGE ONLY -->时间段汇总报告 · PERIOD REPORT<!-- /RANGE ONLY -->
+    </div>
+    <!-- 填写：一句话主线视角标题，例如「让主线 X 的 Y 能力恢复达标」；禁止用 change 名当标题 -->
+    <h1>让主线「<span class="ph">主线名</span>」的「<span class="ph">能力名</span>」<span class="ph">达到目标状态</span></h1>
+    <p class="sub"><span class="ph">填写：2–3 句摘要，先说主线位置与价值，再说工作内容</span></p>
+    <div class="meta">
+      <!-- SINGLE ONLY -->
+      <span>schema <b>spec-driven</b></span>
+      <span>created <b>2026-01-01</b></span>
+      <span>任务 <b>0/0</b></span>
+      <span>delta <b>+0 / ~0 / −0</b></span>
+      <!-- /SINGLE ONLY -->
+      <!-- RANGE ONLY -->
+      <span>区间 <b>2026-01-01 → 2026-01-31</b></span>
+      <span>纳入 <b>0 个 change</b></span>
+      <!-- /RANGE ONLY -->
+      <span class="src">主线来源 <b>项目主线卡</b></span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <div class="note blue no-print">
+      <div class="ic">模板</div>
+      <p>使用说明：保留全部样式与 class，替换所有占位（黄色高亮）与填写注释；按当前范围只保留 SINGLE ONLY / RANGE ONLY 的一侧区块，删除另一侧及无用占位；本段说明在生成报告时删除。首屏只放主线结论，细节留在折叠层。</p>
+    </div>
+
+    <!-- 00 一页速览：30 秒层，先给结论 -->
+    <section id="brief" class="sec">
+      <div class="sec-head"><span class="sec-num">00</span><h2>一页速览</h2><span class="en">30-Second Summary</span></div>
+      <!-- 填写：一句话主线定位 -->
+      <div class="note green">
+        <div class="ic">30 秒</div>
+        <p><b>主线定位：</b><span class="ph">这项工作服务于哪条主线 / 哪条支线</span>。<b>一句话成果：</b><span class="ph">用主线语言写出最终结果</span>。</p>
+      </div>
+      <div class="grid g2">
+        <div class="card red">
+          <div class="k">主线定位</div>
+          <h5><span class="ph">大系统 → 核心主线 → 支线能力</span></h5>
+          <p><!-- 填写：这条线为什么重要，本次工作位于其哪一段 --></p>
+          <div class="tags"><span class="tag red">支线</span><span class="tag gray">能力</span><span class="tag info">阶段目标</span></div>
+        </div>
+        <div class="card gold">
+          <div class="k">对主线的变化</div>
+          <h5><span class="ph">之前 → 之后（一句话）</span></h5>
+          <p><!-- 填写：读者在 30 秒内应记住的价值 --></p>
+          <div class="tags"><span class="tag pass">已达标</span><span class="tag warn">部分验证</span><span class="tag red">依据：推断</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 01 主线定位：大系统 → 核心主线 → 支线 / 能力 → 本次工作 -->
+    <section id="mainline" class="sec">
+      <div class="sec-head"><span class="sec-num">01</span><h2>主线定位</h2><span class="en">Mainline Anchoring</span></div>
+      <p class="lead">按「大系统 → 核心主线 → 支线 / 能力 → 本次工作」逐层定位；本节的结论是后面所有章节的锚点。</p>
+      <div class="chain">
+        <div class="step"><div class="k">大系统</div><h5><span class="ph">系统名</span></h5><p><!-- 填写：最终交付物与服务对象 --></p></div>
+        <div class="step"><div class="k">核心主线</div><h5><span class="ph">当前最关键的推进线索</span></h5><p><!-- 填写：为什么是这条主线 --></p></div>
+        <div class="step"><div class="k">支线 / 能力</div><h5><span class="ph">支线与 capability</span></h5><p><!-- 填写：本次工作落在哪条支线 --></p></div>
+        <div class="step"><div class="k">本次工作</div><h5><span class="ph">本次工作一句话</span></h5><p><!-- 填写：与上一层的因果关系 --></p></div>
+      </div>
+      <div class="note amber">
+        <div class="ic">主线来源</div>
+        <p>主线来源：<b>项目主线卡</b>（<code>openspec/report-context.md</code>）。若只能推断，改为「主线来源：推断」并列出缺失信息与推断依据，不得虚构系统目标。</p>
+      </div>
+    </section>
+
+    <!-- SINGLE ONLY -->
+    <!-- 02 本次工作：单变更范围，问题 / 目的 / 改动 -->
+    <section id="work" class="sec">
+      <div class="sec-head"><span class="sec-num">02</span><h2>本次工作</h2><span class="en">What Changed</span></div>
+      <p class="lead"><span class="ph">填写：2–3 句说明问题 / 目的与范围；细节下沉到 06 折叠层</span></p>
+      <div class="grid g3">
+        <div class="card red"><div class="k">问题</div><h5><span class="ph">之前的表现 / 缺口</span></h5><p><!-- 填写：不写文件与行号 --></p></div>
+        <div class="card gold"><div class="k">目的</div><h5><span class="ph">希望达到什么</span></h5><p><!-- 填写：与主线的关系 --></p></div>
+        <div class="card green"><div class="k">改动</div><h5><span class="ph">实现了什么 / 修复了什么</span></h5><p><!-- 填写：按能力归组，不按文件罗列 --></p></div>
+      </div>
+      <h3>关键改动</h3>
+      <ul>
+        <li><b><span class="ph">能力 A</span></b>：<span class="ph">之前怎样 → 之后怎样</span>（依据：<span class="tag red">推断</span>）</li>
+        <li><b><span class="ph">能力 B</span></b>：<span class="ph">行为变化一句话</span>（依据：<span class="tag pass">原文</span>）</li>
+      </ul>
+    </section>
+    <!-- /SINGLE ONLY -->
+
+    <!-- RANGE ONLY -->
+    <!-- 02 本期变更清单：时间段范围，先归组再列清单 -->
+    <section id="period" class="sec">
+      <div class="sec-head"><span class="sec-num">02</span><h2>本期变更清单</h2><span class="en">Changes in Period</span></div>
+      <p class="lead">先按支线 / 能力归组给组内主线收益，再列全部纳入 change；同一能力被多个 change 修改时按时间线归并。</p>
+      <div class="grid g3">
+        <div class="card red"><div class="k">支线 A · <span class="ph">能力名</span></div><h5><span class="ph">组内主线收益</span></h5><p><!-- 填写：这组 change 合起来让主线前进了什么 --></p><div class="tags"><span class="tag red">3 个 change</span><span class="tag gray">已归档</span></div></div>
+        <div class="card gold"><div class="k">支线 B · <span class="ph">能力名</span></div><h5><span class="ph">组内主线收益</span></h5><p><!-- 填写 --></p><div class="tags"><span class="tag red">2 个 change</span></div></div>
+        <div class="card green"><div class="k">支线 C · <span class="ph">能力名</span></div><h5><span class="ph">组内主线收益</span></h5><p><!-- 填写 --></p><div class="tags"><span class="tag red">1 个 change</span></div></div>
+      </div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th style="width:14%">归档日期</th><th style="width:30%">change</th><th style="width:18%">支线 / 能力</th><th>一句话结果（主线语言）</th></tr></thead>
+        <tbody>
+          <tr><td>2026-01-05</td><td><code>2026-01-05-<span class="ph">change-a</span></code></td><td><span class="ph">能力 A</span></td><td><span class="ph">让主线 X 的 Y 能力恢复达标</span></td></tr>
+          <tr><td>2026-01-12</td><td><code>2026-01-12-<span class="ph">change-b</span></code></td><td><span class="ph">能力 A</span></td><td><span class="ph">补齐 Z 场景的边界行为</span></td></tr>
+          <tr><td>2026-01-20</td><td><code>2026-01-20-<span class="ph">change-c</span></code></td><td><span class="ph">能力 B</span></td><td><span class="ph">使 B 支线具备 A 能力</span></td></tr>
+        </tbody>
+      </table></div>
+      <p class="small">统计口径：按归档目录名日期前缀（含首尾）。无日期前缀的归档目录不纳入，并在「归档信息」中说明。</p>
+    </section>
+    <!-- /RANGE ONLY -->
+
+    <!-- 03 前后差异对照：只写有证据支撑的行为差异 -->
+    <section id="diff" class="sec">
+      <div class="sec-head"><span class="sec-num">03</span><h2>前后差异对照</h2><span class="en">Before / After</span></div>
+      <p class="lead">只写有证据支撑的差异；「依据」只能是原文 / 推断 / 未验证，旧文本未留存时明写，不得编造旧行为。</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th style="width:24%">场景</th><th style="width:26%">之前</th><th style="width:28%">之后</th><th>依据（原文 / 推断 / 未验证）</th></tr></thead>
+        <tbody>
+          <tr><td><span class="ph">触发场景</span></td><td><span class="ph">旧行为</span></td><td><span class="ph">新行为</span></td><td><span class="tag red">推断</span> 旧文本未留存</td></tr>
+          <tr><td><span class="ph">触发场景</span></td><td><span class="ph">旧行为</span></td><td><span class="ph">新行为</span></td><td><span class="tag pass">原文</span> <code>design.md</code></td></tr>
+          <tr><td><span class="ph">触发场景</span></td><td><span class="ph">旧行为</span></td><td><span class="ph">新行为</span></td><td><span class="tag warn">未验证</span> 归档材料中未见读数</td></tr>
+        </tbody>
+      </table></div>
+      <h3>关键场景对照</h3>
+      <div class="ba">
+        <div class="box old"><div class="hd">之前 · BEFORE</div><div class="bd"><ul><li><span class="ph">旧行为要点</span></li><li><span class="ph">旧限制</span></li></ul></div></div>
+        <div class="box new"><div class="hd">之后 · AFTER</div><div class="bd"><ul><li><span class="ph">新行为要点</span></li><li><span class="ph">被消解的限制</span></li></ul></div></div>
+      </div>
+    </section>
+
+    <!-- 04 回归主线：成果必须用主线语言 -->
+    <section id="back" class="sec">
+      <div class="sec-head"><span class="sec-num">04</span><h2>回归主线</h2><span class="en">Back to Mainline</span></div>
+      <div class="note green">
+        <div class="ic">结论</div>
+        <p><span class="ph">填写：用主线语言写成果，例如「让主线 X 的 Y 能力恢复达标」；禁止以 change 名或「修复了 bug」作结论</span></p>
+      </div>
+      <div class="grid g2">
+        <div class="card green"><div class="k">影响面</div><h5><span class="ph">受影响的能力 / 链路 / 用户</span></h5><ul><li><span class="ph">明确受益</span></li><li><span class="ph">明确不受影响</span></li></ul></div>
+        <div class="card amber"><div class="k">边界与未闭合</div><h5><span class="ph">本次没有覆盖什么</span></h5><ul><li><span class="ph">待验证项</span></li><li><span class="ph">后续工作依赖</span></li></ul></div>
+      </div>
+    </section>
+
+    <!-- 05 方法论与概念：验证方法、可复用经验、术语折叠 -->
+    <section id="method" class="sec">
+      <div class="sec-head"><span class="sec-num">05</span><h2>方法论与概念</h2><span class="en">Method &amp; Glossary</span></div>
+      <p class="lead">验证方法与可复用经验单独成节：先说明「怎么验证」，再沉淀「下次可复用什么」，术语放在折叠区。</p>
+      <div class="grid g2">
+        <div class="card"><div class="k">验证方法</div><h5><span class="ph">如何验证</span></h5><ul><li><span class="ph">测试 / 真机 / 读数来源</span></li><li><span class="ph">证据等级与未验证项</span></li></ul></div>
+        <div class="card"><div class="k">可复用经验</div><h5><span class="ph">下次可复用什么</span></h5><ul><li><span class="ph">做法 / 判断标准</span></li></ul></div>
+      </div>
+      <!-- RANGE ONLY -->
+      <div class="note amber"><div class="ic">取证方式</div><p>本次按「一 change 一事实卡」取证；若发生顺序降级（未使用并行子 agent 或分批执行），在此如实标注，不隐瞒执行方式。</p></div>
+      <!-- /RANGE ONLY -->
+      <details>
+        <summary>术语表与概念解释（展开）</summary>
+        <div class="det-body">
+          <div class="tbl-wrap"><table>
+            <thead><tr><th style="width:24%">术语</th><th>含义（读者视角，不假设读者懂内部缩写）</th></tr></thead>
+            <tbody><tr><td><span class="ph">术语</span></td><td><span class="ph">一句话解释</span></td></tr></tbody>
+          </table></div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 06 细节与证据：全部默认折叠，首屏不可见 -->
+    <section id="details" class="sec">
+      <div class="sec-head"><span class="sec-num">06</span><h2>细节与证据</h2><span class="en">Details &amp; Evidence</span></div>
+      <p class="lead">以下内容默认折叠，供核对与复查；首屏不展开任务、文件与原始读数。</p>
+      <details>
+        <summary>工件清单（proposal / design / tasks / delta / 元数据）</summary>
+        <div class="det-body"><ul><li><code>proposal.md</code> · <span class="ph">一句话作用</span></li><li><code>design.md</code> · <span class="ph">一句话作用</span></li><li><code>tasks.md</code> · <span class="ph">完成度</span></li><li><code>specs/</code> delta · <span class="ph">ADDED / MODIFIED / REMOVED 计数</span></li></ul></div>
+      </details>
+      <details>
+        <summary>任务完成度</summary>
+        <div class="det-body"><ul><li><span class="ph">任务编号</span> · <span class="ph">状态与证据</span></li></ul><p class="small">任务勾选是过程证据，不代表主线成果。</p></div>
+      </details>
+      <details>
+        <summary>文件落点</summary>
+        <div class="det-body"><div class="tbl-wrap"><table><thead><tr><th style="width:44%">文件</th><th>作用</th></tr></thead><tbody><tr><td><code><span class="ph">路径</span></code></td><td><span class="ph">本次改动</span></td></tr></tbody></table></div></div>
+      </details>
+      <details>
+        <summary>验证读数</summary>
+        <div class="det-body"><ul><li><span class="ph">命令 / 环境</span> · <span class="ph">读数</span> · <span class="ph">结论</span></li></ul><p class="small">归档材料中未见读数时明写「归档材料中未见」，不得宣称通过或给出无来源指标。</p></div>
+      </details>
+      <!-- RANGE ONLY -->
+      <h3>逐 change 事实卡（折叠）</h3>
+      <p class="small">每个 change 一个折叠块，只放事实卡级摘要与证据；不要复制单变更报告全文，也不要把多份报告按顺序拼接。</p>
+      <details>
+        <summary><code>2026-01-05-<span class="ph">change-a</span></code> · <span class="ph">一句话结果</span></summary>
+        <div class="det-body">
+          <div class="tbl-wrap"><table>
+            <tbody>
+              <tr><th style="width:22%">change</th><td><code><span class="ph">change 名</span></code></td></tr>
+              <tr><th>归档路径</th><td><code>openspec/changes/archive/<span class="ph">目录名</span></code></td></tr>
+              <tr><th>归档日期</th><td><span class="ph">YYYY-MM-DD</span></td></tr>
+              <tr><th>capabilities</th><td><span class="ph">涉及的 capability / 支线</span></td></tr>
+              <tr><th>问题 / 目的</th><td><span class="ph">真实问题与预期目的</span></td></tr>
+              <tr><th>改动</th><td><span class="ph">实现了什么 / 修复了什么</span></td></tr>
+              <tr><th>before-after</th><td><span class="ph">之前 → 之后</span>（<span class="tag red">推断</span>）</td></tr>
+              <tr><th>验证证据</th><td><span class="ph">测试 / 读数，或「归档材料中未见」</span></td></tr>
+              <tr><th>边界</th><td><span class="ph">未覆盖 / 未验证 / 依赖</span></td></tr>
+              <tr><th>主线候选</th><td><span class="ph">该 change 在主线上的位置候选</span></td></tr>
+            </tbody>
+          </table></div>
+        </div>
+      </details>
+      <details>
+        <summary><code>2026-01-12-<span class="ph">change-b</span></code> · <span class="ph">一句话结果</span></summary>
+        <div class="det-body"><p class="small">按同一字段重复填写；change 数量不固定时增删本折叠块，字段保持不变。</p></div>
+      </details>
+      <!-- /RANGE ONLY -->
+    </section>
+
+    <!-- 07 归档信息：引用保留 + 不替代规格真相源 -->
+    <section id="archive" class="sec">
+      <div class="sec-head"><span class="sec-num">07</span><h2>归档信息</h2><span class="en">Archive</span></div>
+      <div class="tbl-wrap"><table>
+        <tbody>
+          <!-- SINGLE ONLY -->
+          <tr><th style="width:24%">change</th><td><code><span class="ph">归档目录名 / change 名</span></code>（schema: <span class="ph">spec-driven</span>）</td></tr>
+          <tr><th>归档路径</th><td><code>openspec/changes/archive/<span class="ph">归档目录</span>/</code></td></tr>
+          <!-- /SINGLE ONLY -->
+          <!-- RANGE ONLY -->
+          <tr><th>时间段</th><td><code><span class="ph">from</span> → <span class="ph">to</span></code>（按归档日期，含首尾）</td></tr>
+          <tr><th>归档路径</th><td>纳入 change 的归档目录见「本期变更清单」与逐 change 折叠块</td></tr>
+          <tr><th>纳入数量</th><td><b><span class="ph">0</span></b> 个 change</td></tr>
+          <!-- /RANGE ONLY -->
+          <tr><th>主规格路径</th><td><code>openspec/specs/<span class="ph">capability</span>/spec.md</code></td></tr>
+          <tr><th>生成时间</th><td><span class="ph">YYYY-MM-DD HH:mm</span></td></tr>
+        </tbody>
+      </table></div>
+      <footer>
+        <div class="row">
+          <span><b>来源：</b><code>openspec/changes/archive/<span class="ph">…</span></code></span>
+          <span><b>模板：</b>report-template v1</span>
+          <span><b>统计口径：</b>按归档日期</span>
+        </div>
+        <p class="small">本页是变更 / 时间段的人类可读说明，<b>不替代规格真相源</b>：行为契约以主规格为准，验收读数以归档工件与原始证据为准。</p>
+      </footer>
+    </section>
+
+    <div class="foot-space"></div>
+  </div>
+</main>
+</body>
+</html>

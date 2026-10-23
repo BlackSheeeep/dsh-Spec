@@ -491,3 +491,325 @@ test('compositions without a skills service still register commands and the rout
   assert.equal(registered.length, 10)
   assert.equal(routes.length, 1)
 })
+
+// ---------------------------------------------------------------------------
+// Human report actions (`report-prompt` / `report-status`)
+// ---------------------------------------------------------------------------
+
+/** Archived fixture change used by the report tests. */
+const ARCHIVED_REL = 'openspec/changes/archive/2024-01-01-legacy-fixture'
+const ARCHIVED_NAME = 'legacy-fixture'
+
+/** Copy the committed fixture workspace into a writable temp directory. */
+function tempWorkspace() {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-spec-report-'))
+  const workspace = slashed(path.join(temp, 'workspace'))
+  fs.cpSync(WORKSPACE, workspace, { recursive: true })
+  return { temp, workspace }
+}
+
+/** Recursively snapshot one tree (kind/rel/size/mtime) to prove a read-only call wrote nothing. */
+function snapshotTree(root) {
+  const out = []
+  const walk = (dir, prefix) => {
+    const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+    for (const entry of entries) {
+      const rel = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+      const absolute = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        out.push(`d:${rel}`)
+        walk(absolute, rel)
+      } else if (entry.isFile()) {
+        const stat = fs.statSync(absolute)
+        out.push(`f:${rel}:${stat.size}:${stat.mtimeMs}`)
+      } else {
+        out.push(`o:${rel}`)
+      }
+    }
+  }
+  walk(root, '')
+  return out
+}
+
+/** Write one UTF-8 file under an absolute path, creating parents. */
+function writeFile(absolute, content) {
+  fs.mkdirSync(path.dirname(absolute), { recursive: true })
+  fs.writeFileSync(absolute, content, 'utf8')
+}
+
+/** Call one report action against a fresh route registration. */
+async function callReport(endpoint, payload) {
+  const { ctx, routes } = fakeContext()
+  apply(ctx)
+  return callRoute(routes[0], { endpoint, envelope: envelope(endpoint, payload) })
+}
+
+/** Call one report action against a fresh registration whose workspace is `workspace`. */
+async function callReportOn(workspace, endpoint, payload) {
+  const { ctx, routes } = fakeContext({ extraPaths: [workspace] })
+  apply(ctx)
+  return callRoute(routes[0], { endpoint, envelope: envelope(endpoint, payload) })
+}
+
+test('report-prompt composes the single-change prompt without writing to the workspace', async () => {
+  const before = snapshotTree(WORKSPACE)
+  const response = await callReport('report-prompt', { cwd: WORKSPACE, path: ARCHIVED_REL })
+  assert.equal(response.status, 200)
+  assert.equal(response.json.result.ok, true, JSON.stringify(response.json.result))
+  const value = response.json.result.value
+  assert.equal(value.scope, 'change')
+  assert.equal(typeof value.text, 'string')
+  assert.match(value.text, /Human report prompt — single archived change/)
+  assert.ok(value.text.includes(ARCHIVED_REL))
+  assert.ok(value.text.includes(value.report.absolutePath), 'prompt must contain the resolved output path')
+  assert.ok(value.text.includes('report-template/v1'))
+  assert.match(value.text, /主线锚定/)
+  assert.match(value.text, /证据分级/)
+  assert.equal(value.report.path, `人类文档/${ARCHIVED_NAME}/index.html`)
+  assert.equal(path.isAbsolute(value.report.absolutePath), true)
+  assert.equal(value.report.exists, false)
+  assert.equal(value.template.version, 'report-template/v1')
+  assert.equal(path.isAbsolute(value.template.path), true)
+  assert.ok(!('included' in value), 'single-change prompts carry no range inclusion list')
+
+  const after = snapshotTree(WORKSPACE)
+  assert.deepEqual(after, before, 'report-prompt must not create, modify or delete any workspace file')
+})
+
+test('report-prompt honors the archive output mode and a custom workspace-relative report root', async () => {
+  const inArchive = await callReport('report-prompt', { cwd: WORKSPACE, path: ARCHIVED_REL, inArchive: true })
+  assert.equal(inArchive.json.result.ok, true)
+  assert.equal(inArchive.json.result.value.report.path, `${ARCHIVED_REL}/report.html`)
+  assert.ok(inArchive.json.result.value.text.includes(inArchive.json.result.value.report.absolutePath))
+
+  const custom = await callReport('report-prompt', {
+    cwd: WORKSPACE,
+    name: '2024-01-01-legacy-fixture',
+    reportRoot: '报告/归档',
+  })
+  assert.equal(custom.json.result.ok, true)
+  assert.equal(custom.json.result.value.report.path, `报告/归档/${ARCHIVED_NAME}/index.html`)
+
+  // An absolute report root inside the workspace is accepted and mapped to a relative path.
+  const inside = slashed(path.join(WORKSPACE, '人类文档-abs'))
+  const absolute = await callReport('report-prompt', { cwd: WORKSPACE, path: ARCHIVED_REL, reportRoot: inside })
+  assert.equal(absolute.json.result.ok, true)
+  assert.equal(absolute.json.result.value.report.path, `人类文档-abs/${ARCHIVED_NAME}/index.html`)
+})
+
+test('report-prompt composes the period prompt with the included change list and period naming', async () => {
+  const before = snapshotTree(WORKSPACE)
+  const response = await callReport('report-prompt', {
+    cwd: WORKSPACE,
+    scope: 'range',
+    from: '2024-01-01',
+    to: '2024-01-01',
+    reportRoot: '人类文档',
+  })
+  assert.equal(response.json.result.ok, true, JSON.stringify(response.json.result))
+  const value = response.json.result.value
+  assert.equal(value.scope, 'range')
+  assert.deepEqual(value.included, [
+    { name: ARCHIVED_NAME, changePath: ARCHIVED_REL, date: '2024-01-01' },
+  ])
+  assert.equal(value.report.path, '人类文档/2024-01-01_2024-01-01/index.html')
+  assert.equal(value.report.exists, false)
+  assert.match(value.text, /Human report prompt — period report/)
+  assert.match(value.text, /From \(inclusive\): 2024-01-01/)
+  assert.match(value.text, /To \(inclusive\): 2024-01-01/)
+  assert.match(value.text, /Period name \/ output directory: 2024-01-01_2024-01-01/)
+  assert.ok(value.text.includes(ARCHIVED_NAME))
+  assert.ok(value.text.includes(ARCHIVED_REL))
+  assert.match(value.text, /## Sub-agent orchestration \(period scope only\)/)
+  assert.match(value.text, /synthesizes ONE report/)
+
+  const after = snapshotTree(WORKSPACE)
+  assert.deepEqual(after, before, 'report-prompt must not create, modify or delete any workspace file')
+})
+
+test('report-prompt injects the optional project mainline card when present', async () => {
+  const { temp, workspace } = tempWorkspace()
+  try {
+    writeFile(
+      path.join(workspace, 'openspec', 'report-context.md'),
+      '# 项目主线卡\n\nMAINLINE-CARD: 让归档变更可被人类读者快速理解。\n',
+    )
+    const response = await callReportOn(workspace, 'report-prompt', { cwd: workspace, path: ARCHIVED_REL })
+    assert.equal(response.json.result.ok, true, JSON.stringify(response.json.result))
+    const text = response.json.result.value.text
+    assert.ok(text.includes('MAINLINE-CARD: 让归档变更可被人类读者快速理解。'))
+    assert.match(text, /主线来源：项目主线卡/)
+    assert.ok(!text.includes('No project mainline card is available'))
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('report-prompt rejects active changes, outside-workspace roots and invalid period ranges', async () => {
+  const active = await callReport('report-prompt', { cwd: WORKSPACE, path: 'openspec/changes/align-native-openspec' })
+  assert.equal(active.json.result.ok, false)
+  assert.match(active.json.result.error.message, /归档路径无效/)
+
+  const traversal = await callReport('report-prompt', { cwd: WORKSPACE, path: '../../outside-change' })
+  assert.equal(traversal.json.result.ok, false)
+  assert.match(traversal.json.result.error.message, /归档路径无效/)
+
+  const outsideRoot = slashed(path.join(os.tmpdir(), 'dsh-spec-outside-reports'))
+  const outside = await callReport('report-prompt', { cwd: WORKSPACE, path: ARCHIVED_REL, reportRoot: outsideRoot })
+  assert.equal(outside.json.result.ok, false)
+  assert.match(outside.json.result.error.message, /工作区内/)
+
+  const dotdotRoot = await callReport('report-prompt', { cwd: WORKSPACE, path: ARCHIVED_REL, reportRoot: '人类文档/../../outside' })
+  assert.equal(dotdotRoot.json.result.ok, false)
+  assert.match(dotdotRoot.json.result.error.message, /不允许包含 \.\./)
+
+  for (const range of [
+    { scope: 'range' },
+    { scope: 'range', from: '2024-1-1', to: '2024-01-31' },
+    { scope: 'range', from: '2024-01-01', to: '2024/01/31' },
+    { scope: 'range', from: '2024-02-30', to: '2024-03-01' },
+    { scope: 'range', from: '2024-12-01', to: '2024-01-01' },
+  ]) {
+    const response = await callReport('report-prompt', { cwd: WORKSPACE, ...range })
+    assert.equal(response.json.result.ok, false, `range ${JSON.stringify(range)} must be rejected`)
+  }
+  const missingDate = await callReport('report-prompt', { cwd: WORKSPACE, scope: 'range', from: '2024-01-01' })
+  assert.equal(missingDate.json.result.ok, false)
+  assert.match(missingDate.json.result.error.message, /结束日期/)
+})
+
+test('report-prompt rejects empty and oversized periods', async () => {
+  const empty = await callReport('report-prompt', { cwd: WORKSPACE, scope: 'range', from: '2024-02-01', to: '2024-02-28' })
+  assert.equal(empty.json.result.ok, false)
+  assert.match(empty.json.result.error.message, /没有已归档的变更/)
+
+  const { temp, workspace } = tempWorkspace()
+  try {
+    const archiveRoot = path.join(workspace, 'openspec', 'changes', 'archive')
+    for (let index = 1; index <= 31; index += 1) {
+      fs.mkdirSync(path.join(archiveRoot, `2024-03-01-range-${String(index).padStart(2, '0')}`), { recursive: true })
+    }
+    const { ctx, routes } = fakeContext({ extraPaths: [workspace] })
+    apply(ctx)
+    const response = await callRoute(routes[0], {
+      endpoint: 'report-prompt',
+      envelope: envelope('report-prompt', { cwd: workspace, scope: 'range', from: '2024-03-01', to: '2024-03-31' }),
+    })
+    assert.equal(response.json.result.ok, false)
+    assert.match(response.json.result.error.message, /超过上限 30/)
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('report-status prefers the pointer, then the naming convention, then the archive file', async () => {
+  const { temp, workspace } = tempWorkspace()
+  try {
+    const { ctx, routes } = fakeContext({ extraPaths: [workspace] })
+    apply(ctx)
+    const status = async (payload) => {
+      const response = await callRoute(routes[0], { endpoint: 'report-status', envelope: envelope('report-status', payload) })
+      assert.equal(response.json.result.ok, true, JSON.stringify(response.json.result))
+      return response.json.result.value
+    }
+
+    // Nothing generated yet.
+    const missing = await status({ cwd: workspace, path: ARCHIVED_REL })
+    assert.equal(missing.scope, 'change')
+    assert.equal(missing.exists, false)
+    assert.equal(missing.path, null)
+
+    // Naming convention under the report root.
+    const conventionFile = path.join(workspace, '人类文档', ARCHIVED_NAME, 'index.html')
+    writeFile(conventionFile, '<html><body>report</body></html>')
+    const convention = await status({ cwd: workspace, path: ARCHIVED_REL })
+    assert.equal(convention.exists, true)
+    assert.equal(convention.source, 'convention')
+    assert.equal(convention.path, `人类文档/${ARCHIVED_NAME}/index.html`)
+    assert.equal(path.isAbsolute(convention.absolutePath), true)
+
+    // A report.json pointer next to the archived change wins over the convention.
+    const generatedAt = '2026-10-22T10:00:00.000Z'
+    writeFile(
+      path.join(workspace, ARCHIVED_REL, 'report.json'),
+      JSON.stringify({ report: `人类文档/${ARCHIVED_NAME}/index.html`, generatedAt, template: 'report-template/v1', change: ARCHIVED_NAME }),
+    )
+    const pointer = await status({ cwd: workspace, path: ARCHIVED_REL })
+    assert.equal(pointer.exists, true)
+    assert.equal(pointer.source, 'pointer')
+    assert.equal(pointer.generatedAt, generatedAt)
+    assert.equal(pointer.path, `人类文档/${ARCHIVED_NAME}/index.html`)
+
+    // A stale pointer whose target disappeared falls through to the archive-file fallback.
+    fs.rmSync(conventionFile)
+    assert.equal((await status({ cwd: workspace, path: ARCHIVED_REL })).exists, false)
+    writeFile(path.join(workspace, ARCHIVED_REL, 'report.html'), '<html><body>archived report</body></html>')
+    const archived = await status({ cwd: workspace, path: ARCHIVED_REL })
+    assert.equal(archived.exists, true)
+    assert.equal(archived.source, 'archive')
+    assert.equal(archived.path, `${ARCHIVED_REL}/report.html`)
+
+    // Pointer targets outside the workspace are returned by pointer presence only.
+    writeFile(
+      path.join(workspace, ARCHIVED_REL, 'report.json'),
+      JSON.stringify({ report: 'D:/outside-workspace/人类文档/report.html', generatedAt }),
+    )
+    const outside = await status({ cwd: workspace, path: ARCHIVED_REL })
+    assert.equal(outside.exists, true)
+    assert.equal(outside.source, 'pointer')
+    assert.equal(outside.path, 'D:/outside-workspace/人类文档/report.html')
+    assert.equal(outside.generatedAt, generatedAt)
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('report-status reads a generated period report and its range report.json', async () => {
+  const { temp, workspace } = tempWorkspace()
+  try {
+    const directory = path.join(workspace, '人类文档', '2024-01-01_2024-01-01')
+    writeFile(path.join(directory, 'index.html'), '<html><body>period report</body></html>')
+    const generatedAt = '2026-10-22T11:00:00.000Z'
+    writeFile(
+      path.join(directory, 'report.json'),
+      JSON.stringify({
+        scope: 'range',
+        from: '2024-01-01',
+        to: '2024-01-01',
+        generatedAt,
+        template: 'report-template/v1',
+        included: [{ name: ARCHIVED_NAME, changePath: ARCHIVED_REL, date: '2024-01-01' }],
+      }),
+    )
+
+    const { ctx, routes } = fakeContext({ extraPaths: [workspace] })
+    apply(ctx)
+    const response = await callRoute(routes[0], {
+      endpoint: 'report-status',
+      envelope: envelope('report-status', { cwd: workspace, scope: 'range', from: '2024-01-01', to: '2024-01-01' }),
+    })
+    assert.equal(response.json.result.ok, true, JSON.stringify(response.json.result))
+    const value = response.json.result.value
+    assert.equal(value.scope, 'range')
+    assert.equal(value.exists, true)
+    assert.equal(value.source, 'convention')
+    assert.equal(value.path, '人类文档/2024-01-01_2024-01-01/index.html')
+    assert.equal(value.generatedAt, generatedAt)
+    assert.equal(value.included, 1)
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
+})
+
+test('report-status is read-only for both scopes', async () => {
+  const before = snapshotTree(WORKSPACE)
+  const change = await callReport('report-status', { cwd: WORKSPACE, path: ARCHIVED_REL })
+  assert.equal(change.json.result.ok, true)
+  assert.equal(change.json.result.value.exists, false)
+  const range = await callReport('report-status', { cwd: WORKSPACE, scope: 'range', from: '2024-01-01', to: '2024-12-31' })
+  assert.equal(range.json.result.ok, true)
+  assert.equal(range.json.result.value.exists, false)
+  assert.equal(range.json.result.value.included, 1)
+  const after = snapshotTree(WORKSPACE)
+  assert.deepEqual(after, before, 'report-status must not create, modify or delete any workspace file')
+})

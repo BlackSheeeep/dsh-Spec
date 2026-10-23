@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.11.0
+## 0.12.0
 
 多角色任务编排：一个目标拆成多个原生 change 子任务，产品 / 设计 / 开发 / 测试各自使用独立会话与模型，按依赖工件门禁推进；角色之间只交换工件与 handoff，不共享对话。
 
@@ -12,14 +12,67 @@
 - **`/opsx-role` 命令**：Host 再次校验门禁，组合角色上下文包并提交给会话；`--force` 可显式跳过门禁。
 - **上下文包**：只包含程序目标、当前子任务、依赖任务的 proposal/specs/design、角色自己的工件与短 handoff；不包含其他角色对话。
 - **文件布局**：`openspec/orchestration/<program>/program.json`、`handoffs/<task>-<role>.md`；程序元数据是插件扩展，子任务仍是标准 OpenSpec change。
-- **测试**：`native-orchestration` 覆盖创建、依赖门禁、上下文包、验收与环检测；Host 路由与 `/opsx-role` 命令均有测试（全套 459 项）。
+- **测试**：`native-orchestration` 覆盖创建、依赖门禁、上下文包、验收与环检测；Host 路由与 `/opsx-role` 命令均有测试，并与 0.11.0 人类报告回归共存。
 
 ### Changed
 
 - Host `state` 载荷新增 `orchestration` 数组与解析警告；新增 `orchestration-create` / `orchestration-accept` / `orchestration-roles` 路由。
-- 命令注册由 9 条增至 10 条（新增 `/opsx-role`）；会话标题新增 `[产品]` / `[设计]` / `[开发]` / `[测试]` 阶段。
-- README 增补多角色协作、门禁、上下文包与命令说明。
-- 插件版本 `0.10.0` → `0.11.0`。
+- 命令注册新增 `/opsx-role`；会话标题新增 `[产品]` / `[设计]` / `[开发]` / `[测试]` 阶段。
+- README 增补多角色协作、门禁、上下文包与命令说明；保留 0.11.0 人类报告和演示视频。
+- 插件版本 `0.11.0` → `0.12.0`。
+
+## 0.11.0
+
+新增「人类报告」：对已归档变更（单个，或按时间段汇总）一键生成给人看的 HTML 报告；面板只把报告提示词填入会话输入框，不自动发送。
+
+### Added
+
+- **面板入口**：归档条目新增报告按钮；归档区新增「按时间段生成报告」入口（默认近 7 天，按归档日期含首尾统计，实时显示命中数量与清单）。对话框支持报告目录与单变更的「写入归档目录」选项；已生成报告显示生成时间/路径，可沙箱预览（禁用脚本的 `iframe`）或复制路径；报告目录按工作区保存在浏览器 `localStorage`，不写入 `openspec/`。
+- **方法论与模板资产**：`src/report/report-methodology.md` 作为单一真相源内嵌进提示词（先定位主线 → 展开本次工作 → 回归主线、渐进披露、时间段汇总、子 agent 编排、反模式、证据分级）；`src/report/report-template.html` 为自包含单文件模板（内联 CSS、无脚本/外链、可打印、`<details>` 折叠、单变更与时间段双形态），构建时镜像到 `lib/report/`。
+- **只读 Host 动作**：`/dsh-spec` 新增 `report-prompt`（组合提示词：归档事实、delta 统计、主规格、主线卡或推断标记、模板/输出路径、子 agent 编排）与 `report-status`（指针 → 命名约定 → 归档目录回退发现报告），覆盖单变更与时间段两种范围；时间段按归档日期过滤（1–30 个 change），两个动作都不写盘、不发起模型回合。
+- **主线卡**：可选 `openspec/report-context.md`（插件只读、≤50KB）存在时报告锚定真实主线/支线/目标；缺失时报告标注「主线来源：推断」并列出缺口。
+- **引用保留**：单变更报告写到归档目录之外时在归档目录留下 `report.json` 指针；时间段报告在 `<from>_<to>/report.json` 记录范围与纳入清单；报告自身「归档信息」与页脚保留引用并声明不替代规格真相源。
+- **多行提示词填入**：`composeFor` 优先使用宿主 `conversation.input.shell().setDraft()`（多行安全），DOM 插入仅作兜底；仍不自动发送。
+
+### Changed
+
+- `tools/build.mjs` 构建时镜像 `src/report/` 到 `lib/report/`；`package.json` 的 `files` 已包含 `src` 与 `lib`，无需新增 exports。
+
+### Notes
+
+- 本版 Host 半改动需重启 DSH 进程；client 半重建 `lib/client.js` 后刷新页面生效。混版运行时报告动作会以路由错误提示，其余面板功能不受影响。
+- 报告生成是 AI 在会话内的写盘行为，面板与路由均只读；归档后 `MODIFIED` / `REMOVED` 的旧文本未留存，报告按「原文 / 推断 / 未验证 / 归档材料中未见」标注。
+
+## 0.10.2
+
+修复「快捷条/hero 里的『开始提案』『探索』点击无反应」：0.10.0 把面板的对话框提交函数改成唯一实现时，快捷条（`DockBody`）里的 `submitPropose` / `submitExplore` 闭包被删掉，而 JSX 仍在调用，点击会抛 `ReferenceError` 并静默无动作。现在两个座位复用同一份提交实现，并由源码结构测试钉住这条接线。
+
+### Fixed
+
+- **快捷条「开始提案」失效**：对话页/hero 快捷条（含 `conversation.hero.options` 座位）弹出的「新建提案」对话框，点「开始提案」只会抛 `Uncaught ReferenceError: submitPropose is not defined`——对话框不关、命令不发送、也没有错误提示；面板（`WorkspaceDetail`）里的同名对话框不受影响。修复提取 `createDialogSubmitters` 共享工厂，面板与快捷条都从它取 `submitPropose` / `submitExplore`，避免再次出现「删一处、留一处」。
+- **快捷条「探索」对话框同样失效**：同一原因导致的 `submitExplore is not defined` 一并修复。
+- **面板动作失败时不再「无反应」**：`WorkspaceDetail` 的命令按钮在直接执行被拒绝（目标会话运行中/等待权限、Host 校验失败等）时，把完整命令填入目标会话的输入框（不自动发送）并提示「命令已填入输入框，请手动发送」；成功路径仍是直接执行。
+- **回归测试**：新增 `tests/client-structure.test.mjs`，从源码结构断言面板与快捷条都调用同一个 `createDialogSubmitters`，且两个对话框的提交调用都保留；全量 464 passed。
+
+### Notes
+
+- 本版只改浏览器半：`lib/client.js` 重建后刷新页面即可生效，不需要重启 DSH。
+- 面板动作的兜底只在直接执行失败时触发；若目标会话无法打开，仍显示原来的失败提示。
+
+## 0.10.1
+
+修复「长驻 DSH 进程还没重启，刷新页面后面板简略区空白」：只更新了浏览器半时，Host 的 `state` 载荷仍是旧版（0.9.x 只有 `description` / `highlights`，0.8.x 连 `summary` 都没有），面板「为什么做 / 会改什么」只能显示「尚未生成提案」。浏览器半现在会在 state 发布后按需回读 `proposal.md` 自补摘要，旧 Host 无需重启即可看到简略内容。
+
+### Fixed
+
+- **旧 Host 下简略区为空**：`createWorkspaceSource` 在每次 state 发布后，对 `summary.why` 为空的 change 通过既有的 `document` 路由读取其 `proposal.md`，按 Host 同口径提取 Why 首段与 `## What Changes` 前 4 条（Why 280 字符、每条 140 字符），只补空槽、不覆盖 Host 已给的值；回读结果按 change+文档路径缓存 10 秒，避免 2 秒轮询变成文档读取循环。
+- **混版载荷兼容**：`normalizeChangeSummary` 在缺少 `why` / `changes` 时回退到 0.9.x 的 `description` / `highlights`；`changeSummaryInfo` 再兜底 `description` → `headline`，折叠卡摘要行不再空白。
+- **测试**：`proposalSummaryDigest`（`## Why` / `## What Changes` 提取、CRLF/BOM、缺失章节、280/140 字符上限与截断标记）、`proposalDocOf` / `summaryNeedsProposalFallback` / `applyProposalDigest` 的空槽合并、`normalizeChangeSummary` 旧字段回退与「pre-0.9 Host 载荷 + proposal.md 回填」整链场景；全量 461 passed。
+
+### Notes
+
+- 本版只改浏览器半（`src/client-helpers.js` + `src/client.js`），Host 无改动；`lib/client.js` 重新构建后刷新页面即可生效，不需要重启 DSH。
+- 完整功能（如 Host 侧新增的逐文件 delta 计数、artifact `description` / `generates`）仍需在方便时重启 DSH 进程才会启用；简略区不再依赖这一步。
 
 ## 0.10.0
 

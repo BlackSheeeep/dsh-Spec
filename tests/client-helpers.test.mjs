@@ -13,6 +13,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  applyProposalDigest,
   archiveEntryDate,
   archiveEntryLabel,
   artifactLabel,
@@ -45,10 +46,21 @@ import {
   nextActionText,
   normalizeChangeSummary,
   normalizeDeltaFiles,
+  normalizeReportRoot,
+  normalizeReportSettings,
+  normalizeReportStatus,
   paginate,
   pendingAcceptanceTasks,
+  proposalDocOf,
+  proposalSummaryDigest,
+  reportArchivedInRange,
+  reportDefaultRange,
+  reportLocalDate,
+  reportOutputRelPath,
+  reportSettingsCwdKey,
   schemaSourceText,
   sortArtifacts,
+  summaryNeedsProposalFallback,
   taskChecklistView,
   taskProgressInfo,
   taskProgressText,
@@ -810,4 +822,307 @@ test('normalizeChangeSummary / normalizeDeltaFiles: native payload passes throug
   assert.deepEqual(normalizeDeltaFiles([{ path: 'specs/a/spec.md', label: 'a', ADDED: 1, MODIFIED: 2, REMOVED: 3, RENAMED: 4 }]), [
     { path: 'specs/a/spec.md', label: 'a', ADDED: 1, MODIFIED: 2, REMOVED: 3, RENAMED: 4 },
   ])
+})
+
+test('normalizeChangeSummary: a 0.9.x Host summary fills Why/What from description/highlights', () => {
+  assert.deepEqual(normalizeChangeSummary({ headline: '标题', description: '为什么段落', highlights: ['变更一', '变更二'], source: 'proposal' }), {
+    goal: null,
+    why: '为什么段落',
+    whyTruncated: false,
+    changes: ['变更一', '变更二'],
+    changesHidden: 0,
+    changesTruncated: false,
+  })
+  // The native 0.10.0 fields always win over the legacy aliases.
+  assert.deepEqual(normalizeChangeSummary({ why: 'native', changes: ['n'], description: 'legacy', highlights: ['l'] }), {
+    goal: null,
+    why: 'native',
+    whyTruncated: false,
+    changes: ['n'],
+    changesHidden: 0,
+    changesTruncated: false,
+  })
+})
+
+test('changeSummaryInfo: legacy description/headline are the last non-empty fallbacks', () => {
+  assert.deepEqual(changeSummaryInfo({ description: '说明' }), { text: '说明', source: 'description', truncated: false })
+  assert.deepEqual(changeSummaryInfo({ headline: '标题' }), { text: '标题', source: 'headline', truncated: false })
+})
+
+test('proposalSummaryDigest: Why paragraph and What Changes bullets with Host caps', () => {
+  const markdown = [
+    '# Proposal',
+    '',
+    '## Why',
+    '',
+    '第一段为什么（`code` 与 **粗体**）。',
+    '同一段第二行。',
+    '',
+    '第二段不应进入摘要。',
+    '',
+    '## What Changes',
+    '',
+    '- 变更一',
+    '  - 嵌套一（缩进条目不算一行，与 Host digest 一致）',
+    '  - 嵌套二',
+    '- **变更二**：带粗体',
+    '- 变更三',
+    '- 变更四',
+    '- 变更五',
+    '- 变更六',
+    '',
+    '## Impact',
+    '',
+    '- 影响不应进入变更列表',
+  ].join('\n')
+  assert.deepEqual(proposalSummaryDigest(markdown), {
+    why: '第一段为什么（code 与 粗体）。 同一段第二行。',
+    whyTruncated: false,
+    changes: ['变更一', '变更二：带粗体', '变更三', '变更四'],
+    changesHidden: 2,
+    changesTruncated: false,
+  })
+})
+
+test('proposalSummaryDigest: CRLF/BOM, missing Why, no What Changes, empty document', () => {
+  const crlf = '\uFEFF# Proposal\r\n\r\n## Why\r\n\r\nWindows 换行也要正确。\r\n'
+  assert.deepEqual(proposalSummaryDigest(crlf), {
+    why: 'Windows 换行也要正确。',
+    whyTruncated: false,
+    changes: [],
+    changesHidden: 0,
+    changesTruncated: false,
+  })
+  // No `## Why`: the first prose paragraph after the title is the fallback.
+  assert.equal(proposalSummaryDigest('# T\n\n简介段落。\n').why, '简介段落。')
+  // Nothing usable at all.
+  assert.equal(proposalSummaryDigest(''), null)
+  assert.equal(proposalSummaryDigest('   \n\n'), null)
+  assert.equal(proposalSummaryDigest('## Why\n\n'), null)
+})
+
+test('proposalSummaryDigest: caps at 280/140 chars and flags truncation', () => {
+  const longWhy = '为'.repeat(400)
+  const longChange = '变'.repeat(200)
+  const digest = proposalSummaryDigest(`## Why\n\n${longWhy}\n\n## What Changes\n\n- ${longChange}\n`)
+  assert.equal(digest.whyTruncated, true)
+  assert.equal(digest.why.length, 280)
+  assert.equal(digest.why.endsWith('…'), true)
+  assert.equal(digest.changesTruncated, true)
+  assert.equal(digest.changes[0].length, 140)
+  assert.equal(digest.changes[0].endsWith('…'), true)
+})
+
+test('proposalDocOf / summaryNeedsProposalFallback: locate the proposal row and detect a missing Why', () => {
+  const change = {
+    docs: [
+      { path: 'openspec/changes/c/specs/a/spec.md', artifactId: 'specs', kind: 'delta' },
+      { path: 'openspec/changes/c/proposal.md', artifactId: 'proposal', kind: 'artifact' },
+    ],
+  }
+  assert.equal(proposalDocOf(change).path, 'openspec/changes/c/proposal.md')
+  assert.equal(proposalDocOf({ docs: [{ path: 'openspec/changes/c/proposal.md', artifactId: 'docs' }] }).path, 'openspec/changes/c/proposal.md')
+  assert.equal(
+    proposalDocOf({ docs: [{ path: 'openspec/changes/c/specs/a/spec.md', artifactId: 'specs', kind: 'delta' }] }),
+    null,
+  )
+  assert.equal(proposalDocOf(undefined), null)
+  assert.equal(summaryNeedsProposalFallback({ why: null }), true)
+  assert.equal(summaryNeedsProposalFallback({ why: '  ' }), true)
+  assert.equal(summaryNeedsProposalFallback({ why: '为什么' }), false)
+})
+
+test('applyProposalDigest: fills only the missing slots and never overwrites Host text', () => {
+  const digest = { why: '本地 Why', whyTruncated: true, changes: ['本地变更'], changesHidden: 1, changesTruncated: false }
+  assert.deepEqual(applyProposalDigest({ why: null, changes: [] }, digest), {
+    why: '本地 Why',
+    whyTruncated: true,
+    changes: ['本地变更'],
+    changesHidden: 1,
+    changesTruncated: false,
+    source: 'proposal',
+  })
+  assert.deepEqual(applyProposalDigest({ why: 'Host', changes: ['H'], whyTruncated: true, source: 'proposal' }, digest), {
+    why: 'Host',
+    changes: ['H'],
+    whyTruncated: true,
+    changesHidden: 0,
+    changesTruncated: false,
+    source: 'proposal',
+  })
+  assert.deepEqual(applyProposalDigest(undefined, null), {})
+})
+
+test('mixed-version repro: a pre-0.9 Host payload is filled from proposal.md', () => {
+  // 0.8.0 Host: the change payload has no `summary` at all, but docs still list proposal.md.
+  const change = {
+    name: 'job-cost-observability',
+    summary: undefined,
+    docs: [{ path: 'openspec/changes/x/proposal.md', artifactId: 'proposal', kind: 'artifact' }],
+  }
+  assert.equal(summaryNeedsProposalFallback(normalizeChangeSummary(change.summary)), true)
+  const digest = proposalSummaryDigest('## Why\n\n动机。\n\n## What Changes\n\n- 一\n- 二\n')
+  const merged = normalizeChangeSummary(applyProposalDigest(change.summary, digest))
+  assert.equal(merged.why, '动机。')
+  assert.deepEqual(merged.changes, ['一', '二'])
+  assert.equal(changeSummaryInfo(merged).text, '动机。')
+  assert.deepEqual(changeDigestTotals(merged), { shown: 2, total: 2, truncated: false })
+})
+
+test('reportLocalDate: local calendar date as YYYY-MM-DD', () => {
+  assert.equal(reportLocalDate(new Date(2026, 9, 22, 16, 30)), '2026-10-22')
+  assert.equal(reportLocalDate(new Date(2026, 0, 1, 0, 0, 0, 0).getTime()), '2026-01-01')
+  assert.equal(reportLocalDate(new Date(2025, 11, 31, 23, 59, 59)), '2025-12-31')
+  // Invalid input falls back to "now" but still returns a local date, never NaN.
+  assert.match(reportLocalDate(Number.NaN), /^\d{4}-\d{2}-\d{2}$/)
+  assert.match(reportLocalDate(undefined), /^\d{4}-\d{2}-\d{2}$/)
+})
+
+test('reportDefaultRange: today plus the previous six local days', () => {
+  assert.deepEqual(reportDefaultRange(new Date(2026, 9, 22, 12)), { from: '2026-10-16', to: '2026-10-22' })
+  // Month boundary (February has 28 days in 2026).
+  assert.deepEqual(reportDefaultRange(new Date(2026, 2, 3, 12)), { from: '2026-02-25', to: '2026-03-03' })
+  // Year boundary.
+  assert.deepEqual(reportDefaultRange(new Date(2026, 0, 3, 12)), { from: '2025-12-28', to: '2026-01-03' })
+})
+
+test('reportArchivedInRange: inclusive archive dates, null dates excluded, report order', () => {
+  const archived = [
+    { name: '2026-10-10-b-change', changeName: 'b-change', date: '2026-10-10' },
+    { name: '2026-10-01-a-change', changeName: 'a-change', date: '2026-10-01' },
+    { name: '2026-10-10-a-change', changeName: 'a-change', date: '2026-10-10' },
+    { name: 'legacy-change', changeName: 'legacy-change', date: null },
+    { name: '2026-10-22-c-change', changeName: 'c-change', date: '2026-10-22' },
+    { name: '2026-09-30-before', changeName: 'before', date: '2026-09-30' },
+  ]
+  assert.deepEqual(
+    reportArchivedInRange(archived, '2026-10-01', '2026-10-22').map((entry) => entry.name),
+    ['2026-10-01-a-change', '2026-10-10-a-change', '2026-10-10-b-change', '2026-10-22-c-change'],
+  )
+  // from == to includes exactly that one local day, sorted by change name.
+  assert.deepEqual(
+    reportArchivedInRange(archived, '2026-10-10', '2026-10-10').map((entry) => entry.changeName),
+    ['a-change', 'b-change'],
+  )
+  // The date is derived from the archive directory name when `date` is absent.
+  assert.equal(reportArchivedInRange([{ name: '2026-10-05-from-name' }], '2026-10-05', '2026-10-05').length, 1)
+  // Undated and malformed rows never enter a period report.
+  const wide = reportArchivedInRange(archived, '2026-01-01', '2026-12-31')
+  assert.equal(wide.some((entry) => entry.changeName === 'legacy-change'), false)
+  assert.deepEqual(reportArchivedInRange([{ name: 'x', date: 'not-a-date' }, { name: 'y', date: null }], '', ''), [])
+  // from > to matches nothing; missing bounds are tolerated as unbounded.
+  assert.deepEqual(reportArchivedInRange(archived, '2026-10-22', '2026-10-01'), [])
+  assert.equal(reportArchivedInRange(archived, '', '2026-10-01').length, 2)
+  assert.deepEqual(reportArchivedInRange(undefined, '2026-10-01', '2026-10-22'), [])
+})
+
+test('normalizeReportRoot: trim, POSIX separators, no trailing slash, default', () => {
+  assert.equal(normalizeReportRoot(undefined), '人类文档')
+  assert.equal(normalizeReportRoot(null), '人类文档')
+  assert.equal(normalizeReportRoot('   '), '人类文档')
+  assert.equal(normalizeReportRoot('  人类文档/  '), '人类文档')
+  assert.equal(normalizeReportRoot('reports\\human\\'), 'reports/human')
+  assert.equal(normalizeReportRoot('D:\\AUTO周报\\人类文档\\'), 'D:/AUTO周报/人类文档')
+  assert.equal(normalizeReportRoot('docs//'), 'docs')
+})
+
+test('reportOutputRelPath: single-change and period naming', () => {
+  assert.equal(
+    reportOutputRelPath({ scope: 'change', root: '人类文档', changeName: 'add-dark-mode' }),
+    '人类文档/add-dark-mode/index.html',
+  )
+  assert.equal(reportOutputRelPath({ scope: 'change', root: ' 报告/ ', changeName: 'x' }), '报告/x/index.html')
+  assert.equal(
+    reportOutputRelPath({ scope: 'range', root: '人类文档/', from: '2026-10-01', to: '2026-10-22' }),
+    '人类文档/2026-10-01_2026-10-22/index.html',
+  )
+  assert.equal(reportOutputRelPath({ scope: 'change', changeName: '' }), '人类文档/index.html')
+  assert.equal(
+    reportOutputRelPath({ scope: 'range', from: '2026-10-01', to: '2026-10-22' }),
+    '人类文档/2026-10-01_2026-10-22/index.html',
+  )
+  // Absolute roots are preserved (the dialog warns about the DSH file policy).
+  assert.equal(
+    reportOutputRelPath({ scope: 'change', root: 'D:/reports', changeName: 'add-dark-mode' }),
+    'D:/reports/add-dark-mode/index.html',
+  )
+})
+
+test('reportSettingsCwdKey: normalized workspace key', () => {
+  assert.equal(reportSettingsCwdKey('D:\\DSHarness\\dsh-Spec\\'), 'D:/DSHarness/dsh-Spec')
+  assert.equal(reportSettingsCwdKey('D:/DSHarness/dsh-Spec'), 'D:/DSHarness/dsh-Spec')
+  assert.equal(reportSettingsCwdKey(''), '')
+  assert.equal(reportSettingsCwdKey(undefined), '')
+})
+
+test('normalizeReportSettings: tolerant per-workspace shape', () => {
+  assert.deepEqual(normalizeReportSettings(undefined), { version: 1, workspaces: {} })
+  assert.deepEqual(normalizeReportSettings(null), { version: 1, workspaces: {} })
+  assert.deepEqual(normalizeReportSettings({ version: 99, workspaces: 'nope' }), { version: 1, workspaces: {} })
+  const settings = normalizeReportSettings({
+    version: 1,
+    workspaces: {
+      'D:\\DSHarness\\dsh-Spec\\': { root: ' 报告\\ ', mode: 'archive' },
+      'D:/other/': { root: '', mode: 'weird' },
+      '': { root: 'ignored' },
+      'D:/broken/': null,
+    },
+  })
+  assert.equal(settings.version, 1)
+  assert.deepEqual(settings.workspaces['D:/DSHarness/dsh-Spec'], { root: '报告', mode: 'archive' })
+  assert.deepEqual(settings.workspaces['D:/other'], { root: '人类文档', mode: 'root' })
+  assert.equal(settings.workspaces[''], undefined)
+  assert.deepEqual(settings.workspaces['D:/broken'], { root: '人类文档', mode: 'root' })
+})
+
+test('normalizeReportStatus: defensive change/range status', () => {
+  assert.deepEqual(normalizeReportStatus(undefined, 'change'), {
+    scope: 'change',
+    exists: false,
+    path: null,
+    absolutePath: null,
+    generatedAt: null,
+    source: '',
+    included: [],
+    includedCount: 0,
+  })
+  const ready = normalizeReportStatus(
+    {
+      scope: 'range',
+      exists: true,
+      path: '人类文档/2026-10-01_2026-10-22/index.html',
+      absolutePath: 'D:/ws/人类文档/2026-10-01_2026-10-22/index.html',
+      generatedAt: '2026-10-22T09:30:00+08:00',
+      source: 'convention',
+      included: [
+        { name: 'a-change', changePath: 'openspec/changes/archive/2026-10-02-a-change', date: '2026-10-02' },
+        { name: '', changePath: '' },
+        null,
+        { name: 'b-change', date: 42 },
+      ],
+    },
+    'range',
+  )
+  assert.equal(ready.scope, 'range')
+  assert.equal(ready.exists, true)
+  assert.equal(ready.path, '人类文档/2026-10-01_2026-10-22/index.html')
+  assert.equal(ready.absolutePath, 'D:/ws/人类文档/2026-10-01_2026-10-22/index.html')
+  assert.equal(ready.generatedAt, '2026-10-22T09:30:00+08:00')
+  assert.equal(ready.source, 'convention')
+  assert.deepEqual(ready.included, [
+    { name: 'a-change', changePath: 'openspec/changes/archive/2026-10-02-a-change', date: '2026-10-02' },
+    { name: 'b-change', changePath: '', date: null },
+  ])
+  assert.equal(ready.includedCount, 2)
+  // `report-status` reports a period's included count as a number.
+  const counted = normalizeReportStatus({ exists: true, path: '人类文档/a_b/index.html', included: 3 }, 'range')
+  assert.deepEqual(counted.included, [])
+  assert.equal(counted.includedCount, 3)
+  // `exists` without a previewable path is normalized to "not generated".
+  const noPath = normalizeReportStatus({ exists: true, path: '' }, 'change')
+  assert.equal(noPath.exists, false)
+  assert.equal(noPath.path, null)
+  // The requested scope wins; the payload scope is only a fallback.
+  assert.equal(normalizeReportStatus({ scope: 'range' }, 'change').scope, 'change')
+  assert.equal(normalizeReportStatus({ scope: 'range' }).scope, 'range')
 })
