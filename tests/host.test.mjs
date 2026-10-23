@@ -98,7 +98,7 @@ test('plugin metadata declares the injected services', () => {
   }
 })
 
-test('apply registers the eleven native commands', () => {
+test('apply registers the twelve native commands', () => {
   const { ctx, registered } = fakeContext()
   apply(ctx)
   const names = registered.map((definition) => definition.name).sort()
@@ -108,6 +108,7 @@ test('apply registers the eleven native commands', () => {
     'opsx-archive',
     'opsx-explore',
     'opsx-plan',
+    'opsx-pm',
     'opsx-propose',
     'opsx-role',
     'opsx-status',
@@ -459,6 +460,14 @@ test('orchestration routes create a program and expose evaluated state', async (
   })
   assert.equal(roles.json.result.ok, true)
 
+  const autoOff = await callRoute(route, {
+    endpoint: 'orchestration-auto',
+    envelope: envelope('orchestration-auto', { cwd, program: 'skills', auto: false }),
+  })
+  assert.equal(autoOff.json.result.ok, true)
+  const paused = await callRoute(route, { endpoint: 'state', envelope: envelope('state', { cwd }) })
+  assert.equal(paused.json.result.value.orchestration[0].auto, false)
+
   const early = await callRoute(route, {
     endpoint: 'orchestration-accept',
     envelope: envelope('orchestration-accept', { cwd, program: 'skills', task: 'fireball', accepted: true }),
@@ -544,7 +553,7 @@ test('orchestration draft/plan routes support AI task splitting', async () => {
 test('compositions without a skills service still register commands and the route', () => {
   const { ctx, registered, routes } = fakeContext()
   apply(ctx)
-  assert.equal(registered.length, 11)
+  assert.equal(registered.length, 12)
   assert.equal(routes.length, 1)
 })
 

@@ -8,7 +8,7 @@
  * run inside a session and can be confirmed before touching disk.
  *
  * Contributions:
- * - eleven `/opsx-*` / `/openspec-init` commands (`registerCommands`);
+ * - twelve `/opsx-*` / `/openspec-init` commands (`registerCommands`);
  * - the `/dsh-spec` route used by the panel and the quick bar:
  *   `state`, `validate`, `instructions`, `sync-preview`, `document`,
  *   `archive-detail`, `task-toggle`, `orchestration-create`,
@@ -32,11 +32,13 @@ import { planSync, previewSyncPlan } from './native/merge.js'
 import { formatLocalDate, readChangeMetadata, resolveSchemaName } from './native/metadata.js'
 import {
   acceptTask,
+  buildPmPrompt,
   createProgram,
   evaluateProgram,
   readPlan,
   readProgram,
   readPrograms,
+  updateProgramAuto,
   updateProgramRoles,
   writePlanDraft,
 } from './native/orchestration.js'
@@ -471,6 +473,15 @@ async function methodOrchestrationAccept(ctx, payload) {
   return { ok: true }
 }
 
+/** `orchestration-auto`: pause or resume the PM auto-driver. */
+async function methodOrchestrationAuto(ctx, payload) {
+  const cwd = await resolveWorkspacePath(ctx, payload.cwd)
+  const program = typeof payload.program === 'string' ? payload.program.trim() : ''
+  if (program === '') throw new Error('缺少 program')
+  await updateProgramAuto(cwd, program, payload.auto === true)
+  return { ok: true }
+}
+
 /** `orchestration-roles`: update role provider/model assignments. */
 async function methodOrchestrationRoles(ctx, payload) {
   const cwd = await resolveWorkspacePath(ctx, payload.cwd)
@@ -893,6 +904,7 @@ function registerRoute(ctx) {
     'orchestration-plan': methodOrchestrationPlan,
     'orchestration-create': methodOrchestrationCreate,
     'orchestration-accept': methodOrchestrationAccept,
+    'orchestration-auto': methodOrchestrationAuto,
     'orchestration-roles': methodOrchestrationRoles,
     init: methodInit,
   }

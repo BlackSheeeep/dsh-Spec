@@ -12,6 +12,7 @@ import { computeWorkspaceState } from '../src/native/state.js'
 import {
   acceptTask,
   buildPlanPrompt,
+  buildPmPrompt,
   buildRolePrompt,
   createProgram,
   evaluateProgram,
@@ -64,6 +65,8 @@ test('createProgram scaffolds child changes and evaluates dependency gates', asy
   const cwd = makeWorkspace()
   const program = await createProgram(cwd, baseProgram())
   assert.equal(program.id, 'skills')
+  assert.equal(program.auto, true)
+  assert.equal(program.roles.pm.label, 'PM')
   assert.ok(fs.existsSync(path.join(cwd, 'openspec/changes/skill-core/.openspec.yaml')))
   assert.ok(fs.existsSync(path.join(cwd, 'openspec/changes/skill-fireball/.openspec.yaml')))
   assert.ok(fs.existsSync(path.join(cwd, 'openspec/orchestration/skills/program.json')))
@@ -132,6 +135,21 @@ test('plan draft and planner prompt describe the single JSON contract', async ()
   assert.match(prompt, /1–8/)
   assert.match(prompt, /不要创建/)
   assert.match(prompt, /"id": "core"/)
+})
+
+test('PM prompt and status report are part of the program state', async () => {
+  const cwd = makeWorkspace()
+  await createProgram(cwd, baseProgram())
+  completeProduct(cwd, 'skill-core')
+  const evaluated = await readPrograms(cwd, await computeWorkspaceState(cwd))
+  const program = evaluated.programs[0]
+  const prompt = await buildPmPrompt(cwd, program)
+  assert.match(prompt, /项目经理/)
+  assert.match(prompt, /pm\/status\.md/)
+  assert.match(prompt, /技能核心/)
+  write(cwd, 'openspec/orchestration/skills/pm/status.md', '当前阶段：规格评审。\n')
+  const withStatus = await readPrograms(cwd, await computeWorkspaceState(cwd))
+  assert.match(withStatus.programs[0].pmStatus, /规格评审/)
 })
 
 test('acceptTask records the user gate and normalizeProgram rejects cycles', async () => {

@@ -27,6 +27,7 @@ export const PHASE_LABELS = {
   dev: '开发',
   test: '测试',
   plan: '规划',
+  pm: 'PM',
 }
 
 /**

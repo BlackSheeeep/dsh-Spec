@@ -353,6 +353,15 @@ function createOpenSpecPlugin(require) {
       orchestrationTasksHint: '每行：change | 标题 | 描述 | 依赖1,依赖2',
       orchestrationRoles: '角色模型',
       orchestrationModelHint: '留空跟随会话默认；格式 provider/model',
+      orchestrationAutoOn: '自动推进中',
+      orchestrationAutoOff: '自动推进',
+      orchestrationAutoPause: '暂停自动',
+      orchestrationAutoHint: 'PM 按门禁自动启动已就绪角色；用户验收仍由你完成。',
+      orchestrationPm: 'PM 巡检',
+      orchestrationPmRunning: 'PM 巡检中…',
+      orchestrationPmSent: 'PM 巡检任务已发送。',
+      orchestrationPmStatus: 'PM 巡检报告',
+      orchestrationPmNone: 'PM 还没有巡检报告。',
       orchestrationModels: '模型',
       orchestrationSave: '保存',
       orchestrationSaved: '角色模型已保存',
@@ -711,6 +720,15 @@ function createOpenSpecPlugin(require) {
       orchestrationTasksHint: 'One per line: change | title | description | deps',
       orchestrationRoles: 'Role models',
       orchestrationModelHint: 'Empty follows the session default; format provider/model',
+      orchestrationAutoOn: 'Auto running',
+      orchestrationAutoOff: 'Auto advance',
+      orchestrationAutoPause: 'Pause auto',
+      orchestrationAutoHint: 'The PM starts ready roles through the gates; final acceptance stays with you.',
+      orchestrationPm: 'PM review',
+      orchestrationPmRunning: 'PM reviewing…',
+      orchestrationPmSent: 'PM review sent.',
+      orchestrationPmStatus: 'PM status',
+      orchestrationPmNone: 'The PM has not written a status report yet.',
       orchestrationModels: 'Models',
       orchestrationSave: 'Save',
       orchestrationSaved: 'Role models saved',
@@ -1147,6 +1165,9 @@ function createOpenSpecPlugin(require) {
 .dshspec-orchGoal{font-size:12px;line-height:17px;color:var(--dsw-alias-label-tertiary);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .dshspec-orchMeta{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .dshspec-orchPill{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:11px;white-space:nowrap}
+.dshspec-orchPm{margin-top:6px;font-size:11.5px;color:var(--dsw-alias-label-secondary)}
+.dshspec-orchPm summary{cursor:pointer;color:var(--dsw-alias-label-tertiary)}
+.dshspec-orchPmText{white-space:pre-wrap;font:inherit;margin:5px 0 0;max-height:160px;overflow:auto;color:var(--dsw-alias-label-secondary)}
 .dshspec-orchTableWrap{overflow-x:auto;border-top:.5px solid var(--dsw-alias-border-l1);padding-top:10px}
 .dshspec-orchTable{width:100%;min-width:640px;border-collapse:collapse;font-size:12px}
 .dshspec-orchTable th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:5px 8px;white-space:nowrap}
@@ -5160,7 +5181,8 @@ function createOpenSpecPlugin(require) {
    * ------------------------------------------------------------------ */
 
   const ORCHESTRATION_ROLE_ORDER = ['product', 'design', 'dev', 'test']
-  const ORCHESTRATION_ROLE_LABELS = { product: '产品', design: '设计', dev: '开发', test: '测试' }
+  const ORCHESTRATION_MODEL_ROLES = ['pm', ...ORCHESTRATION_ROLE_ORDER]
+  const ORCHESTRATION_ROLE_LABELS = { pm: 'PM', product: '产品', design: '设计', dev: '开发', test: '测试' }
 
   /** Parse a `provider/model` model reference; empty means the session default. */
   function parseModelRef(value) {
@@ -5178,7 +5200,7 @@ function createOpenSpecPlugin(require) {
       'div',
       { className: 'dshspec-field' },
       h('label', { className: 'dshspec-fieldLabel' }, t('orchestrationRoles')),
-      ...ORCHESTRATION_ROLE_ORDER.map((role) =>
+      ...ORCHESTRATION_MODEL_ROLES.map((role) =>
         h(
           'div',
           { key: role, className: 'dshspec-orchFormRole' },
@@ -5211,7 +5233,7 @@ function createOpenSpecPlugin(require) {
   /** Create one multi-role program: goal + role models, everything else by AI. */
   function ProgramDialog({ t, busy, error: externalError, modelOptions, onClose, onSubmit }) {
     const [goal, setGoal] = useState('')
-    const [roles, setRoles] = useState({ product: '', design: '', dev: '', test: '' })
+    const [roles, setRoles] = useState({ pm: '', product: '', design: '', dev: '', test: '' })
     const [error, setError] = useState('')
 
     const submit = () => {
@@ -5225,7 +5247,7 @@ function createOpenSpecPlugin(require) {
       onSubmit({
         goal: cleanGoal,
         roles: Object.fromEntries(
-          ORCHESTRATION_ROLE_ORDER.map((role) => [role, parseModelRef(roles[role])]),
+          ORCHESTRATION_MODEL_ROLES.map((role) => [role, parseModelRef(roles[role])]),
         ),
       })
     }
@@ -5278,7 +5300,7 @@ function createOpenSpecPlugin(require) {
   function ProgramModelsDialog({ t, program, busy, error: externalError, modelOptions, onClose, onSubmit }) {
     const [roles, setRoles] = useState(() =>
       Object.fromEntries(
-        ORCHESTRATION_ROLE_ORDER.map((role) => {
+        ORCHESTRATION_MODEL_ROLES.map((role) => {
           const model = program.roles?.[role]
           return [role, model?.provider && model?.model ? `${model.provider}/${model.model}` : '']
         }),
@@ -5290,7 +5312,7 @@ function createOpenSpecPlugin(require) {
       setError('')
       onSubmit(
         Object.fromEntries(
-          ORCHESTRATION_ROLE_ORDER.map((role) => [role, parseModelRef(roles[role])]),
+          ORCHESTRATION_MODEL_ROLES.map((role) => [role, parseModelRef(roles[role])]),
         ),
       )
     }
@@ -5385,6 +5407,8 @@ function createOpenSpecPlugin(require) {
     onStartRole,
     onAccept,
     onUpdateRoles,
+    onSetAuto,
+    onPmReview,
     onOpenSession,
   }) {
     const roleSnapshot = useRoleBindings(roleBindings)
@@ -5395,6 +5419,10 @@ function createOpenSpecPlugin(require) {
     const [busyKey, setBusyKey] = useState(null)
     const [error, setError] = useState('')
     const [notice, setNotice] = useState('')
+    const autoInFlight = useRef(new Set())
+    const autoAttempted = useRef(new Map())
+    const startRef = useRef(onStartRole)
+    startRef.current = onStartRole
     const modelOptions =
       modelCatalog?.value?.groups?.flatMap((group) => {
         const providerLabel = typeof group.name === 'string' && group.name !== '' ? group.name : group.id
@@ -5466,6 +5494,76 @@ function createOpenSpecPlugin(require) {
       }
     }
 
+    const toggleAuto = async (program, auto) => {
+      setBusyKey(`${program.id}/auto`)
+      setError('')
+      try {
+        const outcome = await onSetAuto(program, auto)
+        if (outcome?.ok === false) setError(outcome.text ?? t('commandFailed'))
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : String(failure))
+      } finally {
+        setBusyKey(null)
+      }
+    }
+
+    const pmRun = async (program) => {
+      setBusyKey(`${program.id}/pm`)
+      setError('')
+      try {
+        const outcome = await onPmReview(program)
+        if (outcome?.ok === false) setError(outcome.text ?? t('commandFailed'))
+        else setNotice(t('orchestrationPmSent'))
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : String(failure))
+      } finally {
+        setBusyKey(null)
+      }
+    }
+
+    // PM auto-driver: start at most two ready roles per tick. The 2-minute
+    // cooldown gives a started role time to write artifacts; a completed role
+    // (gate.done) is never retried.
+    useEffect(() => {
+      if (typeof startRef.current !== 'function') return
+      let started = 0
+      for (const program of programs) {
+        if (program.auto !== true) continue
+        for (const task of program.tasks) {
+          if (task.accepted === true) continue
+          for (const role of ORCHESTRATION_ROLE_ORDER) {
+            const gate = task.roles?.[role]
+            if (gate === undefined || gate.done === true || gate.ready !== true) continue
+            const key = `${program.id}/${task.id}/${role}`
+            if (autoInFlight.current.has(key)) continue
+            const binding = roleBindings?.get?.(cwd, program.id, task.id, role) ?? null
+            if (binding !== null) {
+              const live = statuses?.get?.(binding.sessionId)
+              if (
+                live?.running === true ||
+                (live?.pendingInteraction !== undefined && live?.pendingInteraction !== null)
+              ) {
+                autoAttempted.current.set(key, Date.now())
+                continue
+              }
+            }
+            const last = autoAttempted.current.get(key) ?? 0
+            if (Date.now() - last < 2 * 60 * 1000) continue
+            autoAttempted.current.set(key, Date.now())
+            autoInFlight.current.add(key)
+            started += 1
+            Promise.resolve(startRef.current(program, task, role))
+              .then((outcome) => {
+                if (outcome?.ok === false) setError(outcome.text ?? t('orchestrationStartFailed'))
+              })
+              .catch((failure) => setError(failure instanceof Error ? failure.message : String(failure)))
+              .finally(() => autoInFlight.current.delete(key))
+            if (started >= 2) return
+          }
+        }
+      }
+    }, [programs, statuses, roleBindings, cwd, t])
+
     return h(
       Section,
       {
@@ -5505,11 +5603,20 @@ function createOpenSpecPlugin(require) {
                     { style: { minWidth: 0 } },
                     h('div', { className: 'dshspec-orchTitle' }, program.title),
                     program.goal === '' ? null : h('div', { className: 'dshspec-orchGoal' }, program.goal),
+                    program.auto === true ? h('div', { className: 'dshspec-hint' }, t('orchestrationAutoHint')) : null,
+                    program.pmStatus === '' || program.pmStatus === undefined
+                      ? null
+                      : h(
+                          'details',
+                          { className: 'dshspec-orchPm' },
+                          h('summary', null, t('orchestrationPmStatus')),
+                          h('pre', { className: 'dshspec-orchPmText' }, program.pmStatus),
+                        ),
                     h(
                       'div',
                       { className: 'dshspec-orchMeta' },
                       h('span', { className: 'dshspec-orchPill' }, `${program.progress?.accepted ?? 0}/${program.tasks.length} ${t('orchestrationAccepted')}`),
-                      ...ORCHESTRATION_ROLE_ORDER.map((role) => {
+                      ...ORCHESTRATION_MODEL_ROLES.map((role) => {
                         const model = program.roles?.[role]
                         const value = model?.provider !== '' && model?.model !== '' ? `${model.provider}/${model.model}` : t('orchestrationNoModel')
                         return h('span', { key: role, className: 'dshspec-orchPill' }, `${ORCHESTRATION_ROLE_LABELS[role]} · ${value}`)
@@ -5519,6 +5626,28 @@ function createOpenSpecPlugin(require) {
                   h(
                     'div',
                     { style: { display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' } },
+                    h(
+                      Button,
+                      {
+                        variant: program.auto === true ? 'primary' : 'outline',
+                        size: 'sm',
+                        icon: 'activity',
+                        disabled: busyKey === `${program.id}/auto`,
+                        onClick: () => toggleAuto(program, program.auto !== true),
+                      },
+                      program.auto === true ? t('orchestrationAutoPause') : t('orchestrationAutoOff'),
+                    ),
+                    h(
+                      Button,
+                      {
+                        variant: 'ghost',
+                        size: 'sm',
+                        icon: 'users',
+                        disabled: busyKey === `${program.id}/pm`,
+                        onClick: () => pmRun(program),
+                      },
+                      busyKey === `${program.id}/pm` ? t('orchestrationPmRunning') : t('orchestrationPm'),
+                    ),
                     h(
                       Button,
                       { variant: 'ghost', size: 'sm', icon: 'users', onClick: () => setModelsProgram(program) },
@@ -5641,7 +5770,7 @@ function createOpenSpecPlugin(require) {
     )
   }
 
-  function WorkspaceDetail({ t, row, source, align, compose, init, onRefresh, bindings, roleBindings, modelDirectories, statusSource, run, startRole, planProgram, acceptTask, updateRoles, openSession, sessionExists }) {
+  function WorkspaceDetail({ t, row, source, align, compose, init, onRefresh, bindings, roleBindings, modelDirectories, statusSource, run, startRole, planProgram, acceptTask, updateRoles, setAuto, pmReview, openSession, sessionExists }) {
     const stateSource = source !== undefined ? source.hooks.state : undefined
     const state = useSyncExternalStore(
       stateSource !== undefined ? stateSource.subscribe : () => () => {},
@@ -6062,6 +6191,8 @@ function createOpenSpecPlugin(require) {
               onStartRole: startRole,
               onAccept: acceptTask,
               onUpdateRoles: updateRoles,
+              onSetAuto: setAuto,
+              onPmReview: pmReview,
               onOpenSession: openSession,
             }),
             h(PendingAcceptanceSection, {
@@ -6225,7 +6356,7 @@ function createOpenSpecPlugin(require) {
   let lastSelectedWorkspace = null
 
   /** The monitoring page: workspace switcher on top, selected workspace below. */
-  function OpenspecPanel({ t, rowsSource, sourceFor, runFor, composeFor, startRoleFor, planProgramFor, acceptTaskFor, updateRolesFor, alignFor, initFor, onRefreshSessions, bindings, roleBindings, modelDirectories, statusSource, openSession, sessionExists }) {
+  function OpenspecPanel({ t, rowsSource, sourceFor, runFor, composeFor, startRoleFor, planProgramFor, acceptTaskFor, updateRolesFor, setAutoFor, pmReviewFor, alignFor, initFor, onRefreshSessions, bindings, roleBindings, modelDirectories, statusSource, openSession, sessionExists }) {
     const rows = useSyncExternalStore(rowsSource.subscribe, rowsSource.getSnapshot)
     const [selected, setSelected] = useState(() => lastSelectedWorkspace)
     const [nonce, setNonce] = useState(0)
@@ -6329,6 +6460,8 @@ function createOpenSpecPlugin(require) {
                     planProgram: typeof planProgramFor === 'function' ? (payload) => planProgramFor(selectedRow, payload) : undefined,
                     acceptTask: typeof acceptTaskFor === 'function' ? (program, task, accepted) => acceptTaskFor(selectedRow, program, task, accepted) : undefined,
                     updateRoles: typeof updateRolesFor === 'function' ? (program, roles) => updateRolesFor(selectedRow, program, roles) : undefined,
+                    setAuto: typeof setAutoFor === 'function' ? (program, auto) => setAutoFor(selectedRow, program, auto) : undefined,
+                    pmReview: typeof pmReviewFor === 'function' ? (program) => pmReviewFor(selectedRow, program) : undefined,
                     statusSource,
                     openSession,
                     sessionExists,
@@ -6870,14 +7003,13 @@ function createOpenSpecPlugin(require) {
       throw new Error(t('switchFailed'))
     }
 
-    /** Always create a fresh conversation for a role; roles must not share one window. */
-    const createRoleSession = async (row) => {
-      if (row.workspaceId !== undefined && typeof ctx.sessions?.create === 'function') {
-        const id = sessionIdOf(await ctx.sessions.create({ workspaceId: row.workspaceId }))
-        if (typeof id === 'string') return id
-      }
-      return createSessionFor(row)
-    }
+    /**
+     * Create a role conversation through the normal workspace path. The
+     * low-level `sessions.create` result is not guaranteed to be initialized in
+     * the UI; `createSessionFor` uses `uiWorkspace.connectWorkspace` (or the
+     * Host fallback) exactly like ordinary panel actions.
+     */
+    const createRoleSession = async (row) => createSessionFor(row)
 
     /** Focus one conversation without blocking the command transaction. */
     const openSessionById = (sessionId) => {
@@ -7310,16 +7442,11 @@ function createOpenSpecPlugin(require) {
         } else if (model?.provider || model?.model) {
           return { ok: false, text: '角色模型配置不完整，请填写 provider/model' }
         }
-        if (inFlightCommands.has(sessionId)) return { ok: false, text: t('statusRunHint') }
-        inFlightCommands.add(sessionId)
-        try {
-          await new Promise((resolve) => setTimeout(resolve, 50))
-          const outcome = await executeCommand(sessionId, `/opsx-role ${program.id} ${task.id} ${role}`)
-          if (outcome.ok === true) void sourceFor(row).refresh()
-          return outcome
-        } finally {
-          inFlightCommands.delete(sessionId)
-        }
+        // Reuse the ordinary command transaction: it opens the target session,
+        // applies the 50ms navigation delay, and routes the slash command.
+        const outcome = await runFor(row, sessionId)(`/opsx-role ${program.id} ${task.id} ${role}`)
+        if (outcome.ok === true) void sourceFor(row).refresh()
+        return outcome
       } catch (failure) {
         return { ok: false, text: failure instanceof Error ? failure.message : String(failure) }
       }
@@ -7407,6 +7534,33 @@ function createOpenSpecPlugin(require) {
               ? t('orchestrationPlanTimeout')
               : `${t('orchestrationPlanFailed')}：${lastError}`,
         }
+      } catch (failure) {
+        return { ok: false, text: failure instanceof Error ? failure.message : String(failure) }
+      }
+    }
+
+    /** Toggle the PM auto-driver for one program. */
+    const setAutoFor = (row) => async (program, auto) => {
+      try {
+        await callRoute(
+          ctx,
+          'orchestration-auto',
+          { cwd: row.cwd, program: program.id, auto: auto === true },
+          '切换自动推进',
+        )
+        await sourceFor(row).refresh()
+        return { ok: true }
+      } catch (failure) {
+        return { ok: false, text: failure instanceof Error ? failure.message : String(failure) }
+      }
+    }
+
+    /** Run one PM oversight turn in the current planner/conversation path. */
+    const pmReviewFor = (row) => async (program) => {
+      try {
+        const outcome = await runFor(row)(`/opsx-pm ${program.id}`)
+        if (outcome?.ok !== false) await sourceFor(row).refresh()
+        return outcome
       } catch (failure) {
         return { ok: false, text: failure instanceof Error ? failure.message : String(failure) }
       }
@@ -7546,6 +7700,8 @@ function createOpenSpecPlugin(require) {
         planProgramFor: (row, payload) => planProgramFor(row)(payload),
         acceptTaskFor: (row, program, task, accepted) => acceptTaskFor(row)(program, task, accepted),
         updateRolesFor: (row, program, roles) => updateRolesFor(row)(program, roles),
+        setAutoFor: (row, program, auto) => setAutoFor(row)(program, auto),
+        pmReviewFor: (row, program) => pmReviewFor(row)(program),
         alignFor,
         initFor,
         onRefreshSessions: refreshAll,

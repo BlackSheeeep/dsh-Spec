@@ -228,11 +228,13 @@ export async function evaluateProgram(cwd, program, workspaceState) // -> gates 
 export async function buildRolePrompt(cwd, program, task, role, workspaceState)
 export async function acceptTask(cwd, program, task, accepted)
 export async function updateProgramRoles(cwd, program, roles)
+export async function updateProgramAuto(cwd, program, auto)
 export async function writePlanDraft(cwd, { id, goal, roles }) // -> draft; writes .drafts/<id>.json
 export async function readPlanDraft(cwd, id)
 export async function readPlan(cwd, id)          // -> { title, tasks } | null
 export async function buildPlanPrompt(cwd, draft) // planner writes .plans/<id>.json only
-export function normalizeRoles(rawRoles)
+export async function buildPmPrompt(cwd, evaluatedProgram) // PM writes pm/status.md only
+export function normalizeRoles(rawRoles)          // pm + four work roles
 ```
 Layout: `openspec/orchestration/<program>/program.json` and
 `openspec/orchestration/<program>/handoffs/<task>-<role>.md`. A program has `roles` (product /
@@ -332,7 +334,8 @@ without network.
 ```js
 ProgramState = {
   id, title, goal, created,
-  roles: { product|design|dev|test: { provider, model, label } },
+  roles: { pm|product|design|dev|test: { provider, model, label } },
+  auto, pmStatus,
   progress: { accepted, done, total },
   tasks: [{ id, change, title, description, dependsOn, roles: [role], accepted,
             changeExists, summary, progress: { done, total },
@@ -400,6 +403,7 @@ request cap. Route methods (Lead, `src/host.js`):
 | `orchestration-plan` | `{ cwd, id }` | `{ ok, plan: { title, tasks } | null, error? }` |
 | `orchestration-create` | `{ cwd, program }` | `{ ok, id }` |
 | `orchestration-accept` | `{ cwd, program, task, accepted }` | `{ ok }` |
+| `orchestration-auto` | `{ cwd, program, auto }` | `{ ok }` |
 | `orchestration-roles` | `{ cwd, program, roles }` | `{ ok }` |
 | `init` | `{ cwd }` | `{ ok: true, text, created }` |
 
@@ -588,9 +592,9 @@ directly with no model message.
   once with per-file operation counts, metadata group last), only non-empty validation blocks
   rendered, expansion state kept in memory only; aggregate “waiting for acceptance” section that
   groups unchecked tasks into manual (`[人工验收]`) and other, with direct ticks and tasks.md links;
-  multi-role section: create program (goal + four role models; AI plans tasks), task × role matrix with
-  done/ready/waiting/running states, dependency reasons, start/continue role, model settings,
-  and user acceptance; project config + schema view (project vs builtin source); capability specs view (Purpose,
+  multi-role section: create program (goal + PM/four role models; AI plans tasks), auto-advance toggle,
+  PM review/status, task × role matrix with done/ready/waiting/running states, dependency reasons,
+  start/continue role, model settings, and user acceptance; project config + schema view (project vs builtin source); capability specs view (Purpose,
   requirement/scenario counts, nested grouping); archive view grouped by local date with on-demand
   artifacts/tasks/metadata; pagination/“+N more” instead of silent truncation, document reader
   truncation notice, bound-session live status and manual task toggles; quick bar with native
