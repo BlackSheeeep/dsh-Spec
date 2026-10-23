@@ -98,7 +98,7 @@ test('plugin metadata declares the injected services', () => {
   }
 })
 
-test('apply registers the ten native commands', () => {
+test('apply registers the eleven native commands', () => {
   const { ctx, registered } = fakeContext()
   apply(ctx)
   const names = registered.map((definition) => definition.name).sort()
@@ -107,6 +107,7 @@ test('apply registers the ten native commands', () => {
     'opsx-apply',
     'opsx-archive',
     'opsx-explore',
+    'opsx-plan',
     'opsx-propose',
     'opsx-role',
     'opsx-status',
@@ -485,10 +486,65 @@ test('orchestration routes create a program and expose evaluated state', async (
   fs.rmSync(cwd, { recursive: true, force: true })
 })
 
+test('orchestration draft/plan routes support AI task splitting', async () => {
+  const cwd = slashed(fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-spec-host-plan-')))
+  fs.mkdirSync(path.join(cwd, 'openspec'), { recursive: true })
+  fs.writeFileSync(path.join(cwd, 'openspec', 'config.yaml'), 'schema: spec-driven\n')
+  const { ctx, routes } = fakeContext({ extraPaths: [cwd] })
+  apply(ctx)
+  const route = routes[0]
+  const roles = {
+    product: { provider: 'openai', model: 'gpt-5' },
+    design: { provider: 'moonshot', model: 'kimi-k2' },
+    dev: { provider: 'deepseek', model: 'deepseek-v3' },
+    test: { provider: 'deepseek', model: 'deepseek-v3' },
+  }
+  const draft = await callRoute(route, {
+    endpoint: 'orchestration-draft',
+    envelope: envelope('orchestration-draft', { cwd, draft: { id: 'auto-test', goal: '做一套技能系统', roles } }),
+  })
+  assert.equal(draft.json.result.ok, true)
+
+  const pending = await callRoute(route, {
+    endpoint: 'orchestration-plan',
+    envelope: envelope('orchestration-plan', { cwd, id: 'auto-test' }),
+  })
+  assert.equal(pending.json.result.value.plan, null)
+
+  const planRel = path.join(cwd, 'openspec', 'orchestration', '.plans', 'auto-test.json')
+  fs.mkdirSync(path.dirname(planRel), { recursive: true })
+  fs.writeFileSync(
+    planRel,
+    JSON.stringify({
+      title: '技能系统',
+      tasks: [
+        { id: 'core', change: 'skill-core', title: '技能核心', description: '共享结构', dependsOn: [] },
+        { id: 'fireball', change: 'skill-fireball', title: '火球术', description: '火球技能', dependsOn: ['core'] },
+      ],
+    }),
+  )
+  const plan = await callRoute(route, {
+    endpoint: 'orchestration-plan',
+    envelope: envelope('orchestration-plan', { cwd, id: 'auto-test' }),
+  })
+  assert.equal(plan.json.result.value.plan.title, '技能系统')
+  assert.equal(plan.json.result.value.plan.tasks.length, 2)
+
+  const created = await callRoute(route, {
+    endpoint: 'orchestration-create',
+    envelope: envelope('orchestration-create', {
+      cwd,
+      program: { id: 'auto-test', title: '技能系统', goal: '做一套技能系统', roles, tasks: plan.json.result.value.plan.tasks },
+    }),
+  })
+  assert.equal(created.json.result.ok, true)
+  fs.rmSync(cwd, { recursive: true, force: true })
+})
+
 test('compositions without a skills service still register commands and the route', () => {
   const { ctx, registered, routes } = fakeContext()
   apply(ctx)
-  assert.equal(registered.length, 10)
+  assert.equal(registered.length, 11)
   assert.equal(routes.length, 1)
 })
 

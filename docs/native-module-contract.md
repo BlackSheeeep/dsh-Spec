@@ -228,6 +228,11 @@ export async function evaluateProgram(cwd, program, workspaceState) // -> gates 
 export async function buildRolePrompt(cwd, program, task, role, workspaceState)
 export async function acceptTask(cwd, program, task, accepted)
 export async function updateProgramRoles(cwd, program, roles)
+export async function writePlanDraft(cwd, { id, goal, roles }) // -> draft; writes .drafts/<id>.json
+export async function readPlanDraft(cwd, id)
+export async function readPlan(cwd, id)          // -> { title, tasks } | null
+export async function buildPlanPrompt(cwd, draft) // planner writes .plans/<id>.json only
+export function normalizeRoles(rawRoles)
 ```
 Layout: `openspec/orchestration/<program>/program.json` and
 `openspec/orchestration/<program>/handoffs/<task>-<role>.md`. A program has `roles` (product /
@@ -237,6 +242,9 @@ artifacts (`proposal/specs/tasks`, `design.md`, all task checkboxes, `qa/report.
 `ready` from the gate + dependency contracts. `buildRolePrompt` reads only the program goal, the
 task, dependency proposal/spec/design/handoff and the role's own artifacts; it never includes
 another role's conversation. Invalid ids, duplicate changes and dependency cycles are rejected.
+The create flow stores only the goal + role models in `.drafts/<id>.json`; `/opsx-plan` asks
+the planner model to write `.plans/<id>.json` (1–8 tasks + dependencies), and the Host creates the
+program and change scaffolds only after `readPlan` validates that file.
 
 `computeWorkspaceState`: read config, project schemas, bundled schemas, list `openspec/changes/*`
 (skip `archive`), compute each change (metadata, resolved schema, artifact states, tasks, docs,
@@ -388,13 +396,17 @@ request cap. Route methods (Lead, `src/host.js`):
 | `report-prompt` | `{ cwd, scope?: 'change'\|'range', path?, name?, from?, to?, reportRoot?, inArchive? }` | `{ text, scope, report: { path, absolutePath, exists }, template: { path, version }, included? }` |
 | `report-status` | same payload shape as `report-prompt` | `{ scope, exists, path, absolutePath?, generatedAt?, source?, included? }` |
 | `task-toggle` | `{ cwd, change, line, done }` | `{ ok, change, path, line, done, manual, task }` |
+| `orchestration-draft` | `{ cwd, draft: { id, goal, roles } }` | `{ ok, id }` |
+| `orchestration-plan` | `{ cwd, id }` | `{ ok, plan: { title, tasks } | null, error? }` |
 | `orchestration-create` | `{ cwd, program }` | `{ ok, id }` |
 | `orchestration-accept` | `{ cwd, program, task, accepted }` | `{ ok }` |
 | `orchestration-roles` | `{ cwd, program, roles }` | `{ ok }` |
 | `init` | `{ cwd }` | `{ ok: true, text, created }` |
 
 `cwd` must be an absolute path accepted by `ctx.workspaceRegistry.resolveByPath`; otherwise reject.
-Only `init`, `task-toggle` and the three `orchestration-*` methods write. `orchestration-create`
+Only `init`, `task-toggle` and the `orchestration-*` methods write. `orchestration-draft` writes
+the goal/role draft and creates the `.plans/` directory; `orchestration-plan` is read-only;
+`orchestration-create`
 refuses to overwrite an existing program or child change; `orchestration-accept` only flips the
 user's final acceptance flag; `orchestration-roles` only updates role provider/model. `task-toggle`
 validates the change name, resolves the schema's
@@ -576,7 +588,7 @@ directly with no model message.
   once with per-file operation counts, metadata group last), only non-empty validation blocks
   rendered, expansion state kept in memory only; aggregate “waiting for acceptance” section that
   groups unchecked tasks into manual (`[人工验收]`) and other, with direct ticks and tasks.md links;
-  multi-role section: create program (tasks + four role models), task × role matrix with
+  multi-role section: create program (goal + four role models; AI plans tasks), task × role matrix with
   done/ready/waiting/running states, dependency reasons, start/continue role, model settings,
   and user acceptance; project config + schema view (project vs builtin source); capability specs view (Purpose,
   requirement/scenario counts, nested grouping); archive view grouped by local date with on-demand

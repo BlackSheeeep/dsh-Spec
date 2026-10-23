@@ -43,18 +43,19 @@ OpenSpec 的核心机制，是将变更的规划与执行状态外化为仓库�
 
 ### 创建
 
-面板「多角色任务」→「新建多角色任务」：
+面板「多角色任务」→「新建多角色任务」，只需要填写两样东西：
 
-- 填写程序标题、英文 ID、最终目标；
-- 每行一个子任务：`change | 标题 | 描述 | 依赖1,依赖2`；
-- 为产品 / 设计 / 开发 / 测试分别填写 `provider/model`，留空则跟随会话默认。
+- **最终目标**：例如“为游戏新增一套技能系统，包含火球术、治疗术、冰盾，并接入现有战斗流程”；
+- **四个角色模型**：产品 / 设计 / 开发 / 测试的 `provider/model`，留空则跟随会话默认。
 
-创建后会生成：
+提交后会打开一个规划会话：AI 只写任务拆分文件 `openspec/orchestration/.plans/<id>.json`（1–8 个子任务、标题、change 名、依赖），Host 校验后再创建：
 
 ```text
 openspec/orchestration/<program>/program.json
 openspec/changes/<change>/          # 每个子任务一个原生 change
 ```
+
+程序标题、ID、子任务和 change 名都由 AI 生成，用户不需要手填。规划超过 5 分钟会超时并提示检查规划会话；规划文件不合法时会在面板显示错误，不会创建半成品。
 
 ### 门禁
 
@@ -83,10 +84,11 @@ openspec/changes/<change>/          # 每个子任务一个原生 change
 面板按钮最终执行：
 
 ```text
-/opsx-role <program> <task> <product|design|dev|test>
+/opsx-plan <draft-id>                         # AI 拆分最终目标
+/opsx-role <program> <task> <role>            # 启动某个角色
 ```
 
-Host 会再次校验门禁；需要强制执行时加 `--force`。角色会话模型由面板在启动时通过 DSH 的 per-session model selection 选择，之后可在「模型」中修改。
+`/opsx-role` 由 Host 再次校验门禁；需要强制执行时加 `--force`。角色会话模型由面板在启动时通过 DSH 的 per-session model selection 选择，之后可在「模型」中修改。
 
 ## 快速开始
 
@@ -217,6 +219,7 @@ DSH 命令名不能带冒号，原生 `/opsx:*` 映射为 kebab-case：
 | `opsx:archive` | `/opsx-archive [name] [--yes\|--dry-run\|--skip-specs]` | 默认 AI 工作流；`--yes` 确定性归档，`--skip-specs` 只移动 |
 | — | `/opsx-validate [name]` | 直接输出原生分级校验结果 |
 | — | `/opsx-status` | 直接输出进行中变更、工件状态、任务进度与归档数量 |
+| — | `/opsx-plan <draft-id>` | 让规划模型把最终目标拆成子任务，只写规划文件（插件扩展，无原生对应） |
 | — | `/opsx-role <program> <task> <role>` | 向多角色任务的一个角色发送只含依赖工件的上下文包（插件扩展，无原生对应） |
 | — | `/openspec-init` | 幂等创建原生骨架 |
 
@@ -248,7 +251,7 @@ artifact 状态仅由文件决定：
 
 ```text
 src/host.js            Host 半：命令族、/dsh-spec 路由、fallback skills provider
-src/commands.js        十条命令：变更选择、propose 脚手架、AI sync/archive、确定性路径、直出、/opsx-role
+src/commands.js        十一条命令：变更选择、propose 脚手架、AI sync/archive、确定性路径、直出、/opsx-plan、/opsx-role
 src/session-titles.js  阶段会话标题组合与幂等写入
 src/prompts.js         阶段提示词、OPSX sync/archive 提示词、AI 自动命名提示词、报告提示词
 src/report/            报告方法论（内嵌进提示词）与自包含 HTML 模板（构建镜像到 lib/report/）

@@ -3,7 +3,7 @@
  *
  * Every handler is exercised with fake dependencies (memory fs, fake engine,
  * fake prompt builders) so no test writes a real file or calls the real engine.
- * The harness registers the ten commands on a fake `ctx.commands` and runs the
+ * The harness registers the eleven commands on a fake `ctx.commands` and runs the
  * registered handler with a fake agent that records `followup()` messages.
  */
 
@@ -15,12 +15,13 @@ import { registerCommands, collectWorkflowFacts, selectChange } from '../src/com
 /** Fake absolute workspace root. */
 const CWD = 'C:/workspace'
 
-/** All ten command ids registered by `registerCommands`. */
+/** All eleven command ids registered by `registerCommands`. */
 const COMMAND_IDS = [
   'openspec-init',
   'opsx-apply',
   'opsx-archive',
   'opsx-explore',
+  'opsx-plan',
   'opsx-propose',
   'opsx-role',
   'opsx-status',
@@ -280,6 +281,14 @@ function createHarness(overrides = {}, options = {}) {
         calls.role = { ...(calls.role ?? {}), task: task.id, role }
         return 'ROLE_PROMPT'
       },
+      readPlanDraft: async (cwd, id) => {
+        calls.planDraft = id
+        return { id, goal: '技能系统', roles: {}, created: '2026-10-23' }
+      },
+      buildPlanPrompt: async (cwd, draft) => {
+        calls.plan = draft
+        return 'PLAN_PROMPT'
+      },
     },
     prompts: {
       slugify: (raw) =>
@@ -361,7 +370,7 @@ function createHarness(overrides = {}, options = {}) {
   return { calls, deps, ctx, registry, agent, run }
 }
 
-test('registers the ten command family with kebab-case mapping in descriptions', () => {
+test('registers the eleven command family with kebab-case mapping in descriptions', () => {
   const { registry } = createHarness()
   assert.deepEqual([...registry.keys()].sort(), COMMAND_IDS)
 
@@ -369,8 +378,10 @@ test('registers the ten command family with kebab-case mapping in descriptions',
     const spec = registry.get(name)
     assert.equal(typeof spec.handler, 'function')
     assert.match(spec.description, /OpenSpec/)
-    // `opsx-role` is a plugin-only orchestration command, not a native mapping.
-    if (name.startsWith('opsx-') && name !== 'opsx-role') assert.match(spec.description, /不能含冒号/)
+    // `opsx-role` / `opsx-plan` are plugin-only orchestration commands.
+    if (name.startsWith('opsx-') && name !== 'opsx-role' && name !== 'opsx-plan') {
+      assert.match(spec.description, /不能含冒号/)
+    }
   }
 
   // Every native `/opsx:*` core command maps to a kebab-case DSH name.
@@ -402,6 +413,16 @@ test('opsx-role refuses a waiting role gate unless --force is given', async () =
   const forced = await h.run('opsx-role', 'skills fireball design --force')
   assert.equal(forced.kind, 'success')
   assert.equal(h.agent.messages.length, 1)
+})
+
+test('opsx-plan submits the planner prompt for a saved draft', async () => {
+  const h = createHarness()
+  const result = await h.run('opsx-plan', 'auto-abc')
+  assert.equal(result.kind, 'success')
+  assert.equal(h.calls.planDraft, 'auto-abc')
+  assert.equal(h.agent.messages.length, 1)
+  assert.equal(h.agent.messages[0].content[0].text, 'PLAN_PROMPT')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[规划] 技能系统' }])
 })
 
 test('openspec-init is direct and reports only newly created items', async () => {

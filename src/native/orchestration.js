@@ -28,6 +28,10 @@ import {
 /** Directory that holds all programs. */
 export const ORCHESTRATION_DIR = 'openspec/orchestration'
 
+/** Draft and plan files used by the AI task-splitting flow. */
+export const PLAN_DRAFT_DIR = 'openspec/orchestration/.drafts'
+export const PLAN_DIR = 'openspec/orchestration/.plans'
+
 /** Roles that participate in a task, in workflow order. */
 export const ROLE_IDS = ['product', 'design', 'dev', 'test']
 
@@ -94,6 +98,23 @@ export function programRel(id) {
 }
 
 /**
+ * Normalize the four role assignments shared by programs and planning drafts.
+ * @param {any} rawRoles
+ * @returns {Record<string, RoleModel>}
+ */
+export function normalizeRoles(rawRoles) {
+  /** @type {Record<string, RoleModel>} */
+  const roles = {}
+  for (const role of ROLE_IDS) {
+    const value = rawRoles !== null && typeof rawRoles === 'object' ? rawRoles[role] : undefined
+    const provider = value !== null && typeof value === 'object' && typeof value.provider === 'string' ? value.provider.trim() : ''
+    const model = value !== null && typeof value === 'object' && typeof value.model === 'string' ? value.model.trim() : ''
+    roles[role] = { provider, model, label: ROLE_DEFINITIONS[role].label }
+  }
+  return roles
+}
+
+/**
  * Normalize a raw manifest into the stable shape used by the panel.
  *
  * Invalid references are rejected rather than silently rewritten: a wrong
@@ -111,15 +132,7 @@ export function normalizeProgram(raw) {
   const title = typeof raw.title === 'string' && raw.title.trim() !== '' ? raw.title.trim() : id
   const goal = typeof raw.goal === 'string' ? raw.goal.trim() : ''
   const created = typeof raw.created === 'string' && raw.created.trim() !== '' ? raw.created.trim() : formatLocalDate()
-
-  /** @type {Record<string, RoleModel>} */
-  const roles = {}
-  for (const role of ROLE_IDS) {
-    const value = raw.roles !== null && typeof raw.roles === 'object' ? raw.roles[role] : undefined
-    const provider = value !== null && typeof value === 'object' && typeof value.provider === 'string' ? value.provider.trim() : ''
-    const model = value !== null && typeof value === 'object' && typeof value.model === 'string' ? value.model.trim() : ''
-    roles[role] = { provider, model, label: ROLE_DEFINITIONS[role].label }
-  }
+  const roles = normalizeRoles(raw.roles)
 
   if (!Array.isArray(raw.tasks) || raw.tasks.length === 0) throw new Error('program 至少需要一个子任务')
   const tasks = []
@@ -194,6 +207,152 @@ export async function readProgram(cwd, id) {
 }
 
 /**
+ * Persist the user's goal + role models while the planner model splits it.
+ * @param {string} cwd
+ * @param {any} input
+ * @param {{date?: string}} [options]
+ * @returns {Promise<{id:string,goal:string,roles:Record<string,RoleModel>,created:string}>}
+ */
+export async function writePlanDraft(cwd, input, { date = formatLocalDate() } = {}) {
+  if (input === null || typeof input !== 'object') throw new Error('缺少规划草稿')
+  const id = typeof input.id === 'string' ? input.id.trim() : ''
+  if (!isValidId(id)) throw new Error('规划草稿 id 无效')
+  const goal = typeof input.goal === 'string' ? input.goal.trim() : ''
+  if (goal === '') throw new Error('最终目标不能为空')
+  if (goal.length > 20_000) throw new Error('最终目标过长（最多 20000 字）')
+  const draft = { id, goal, roles: normalizeRoles(input.roles), created: date }
+  await writeText(cwd, joinRel(PLAN_DRAFT_DIR, `${id}.json`), `${JSON.stringify(draft, null, 2)}\n`)
+  // Give the planner an existing directory to write into.
+  await writeText(cwd, joinRel(PLAN_DIR, '.gitkeep'), '')
+  return draft
+}
+
+/**
+ * Read a planning draft.
+ * @param {string} cwd
+ * @param {string} id
+ * @returns {Promise<{id:string,goal:string,roles:Record<string,RoleModel>,created:string}>}
+ */
+export async function readPlanDraft(cwd, id) {
+  if (!isValidId(id)) throw new Error('规划草稿 id 无效')
+  const text = await readTextOrNull(cwd, joinRel(PLAN_DRAFT_DIR, `${id}.json`))
+  if (text === null) throw new Error(`找不到规划草稿：${id}`)
+  let raw
+  try {
+    raw = JSON.parse(text)
+  } catch (error) {
+    throw new Error(`规划草稿解析失败：${error.message}`)
+  }
+  const goal = typeof raw.goal === 'string' ? raw.goal.trim() : ''
+  if (goal === '') throw new Error(`规划草稿 ${id} 缺少最终目标`)
+  return { id, goal, roles: normalizeRoles(raw.roles), created: typeof raw.created === 'string' ? raw.created : formatLocalDate() }
+}
+
+/**
+ * Read the planner's proposed task split. Null means the planner has not
+ * written it yet; malformed JSON / invalid tasks throw and the caller can show
+ * a retryable error.
+ *
+ * @param {string} cwd
+ * @param {string} id
+ * @returns {Promise<{title:string,tasks:Task[]}|null>}
+ */
+export async function readPlan(cwd, id) {
+  if (!isValidId(id)) throw new Error('规划 id 无效')
+  const text = await readTextOrNull(cwd, joinRel(PLAN_DIR, `${id}.json`))
+  if (text === null) return null
+  let raw
+  try {
+    raw = JSON.parse(text)
+  } catch (error) {
+    throw new Error(`规划文件还不是合法 JSON：${error.message}`)
+  }
+  const draft = await readPlanDraft(cwd, id)
+  const program = normalizeProgram({
+    id,
+    title: typeof raw.title === 'string' && raw.title.trim() !== '' ? raw.title : draft.goal.slice(0, 80),
+    goal: draft.goal,
+    created: draft.created,
+    roles: draft.roles,
+    tasks: raw.tasks,
+  })
+  return { title: program.title, tasks: program.tasks }
+}
+
+/**
+ * Build the planner prompt. The planner writes exactly one JSON file; the Host
+ * remains responsible for creating `.openspec.yaml` and the change directories.
+ *
+ * @param {string} cwd
+ * @param {{id:string,goal:string,roles:Record<string,RoleModel>}} draft
+ * @returns {Promise<string>}
+ */
+export async function buildPlanPrompt(cwd, draft) {
+  const planPath = joinRel(PLAN_DIR, `${draft.id}.json`)
+  const roleLines = ROLE_IDS.map((role) => {
+    const model = draft.roles?.[role]
+    const value = model?.provider && model?.model ? `${model.provider}/${model.model}` : '会话默认'
+    return `- ${role}（${ROLE_DEFINITIONS[role].label}）：${value}`
+  })
+  return [
+    '你在为 OpenSpec 多角色任务做**任务拆分规划**，不写业务代码，也不创建 change。',
+    '',
+    '## 最终目标',
+    '',
+    draft.goal,
+    '',
+    '## 角色与模型',
+    '',
+    ...roleLines,
+    '',
+    '## 任务',
+    '',
+    `把目标拆成 1–8 个子任务，写入唯一文件：\`${planPath}\`。`,
+    'Host 拿到这个文件后才会创建每个子任务的 change、`.openspec.yaml` 和程序清单；你不要创建 `openspec/changes/**` 或 `program.json`。',
+    '',
+    '文件必须是合法 JSON，结构如下：',
+    '',
+    '```json',
+    JSON.stringify(
+      {
+        title: '简短的中文程序标题',
+        tasks: [
+          {
+            id: 'core',
+            change: 'skill-core',
+            title: '技能核心',
+            description: '共享数据结构、接口与验收基线',
+            dependsOn: [],
+          },
+          {
+            id: 'fireball',
+            change: 'skill-fireball',
+            title: '火球术',
+            description: '在核心之上新增火球术技能与视觉',
+            dependsOn: ['core'],
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    '```',
+    '',
+    '规则：',
+    '',
+    '- `id` 与 `change` 必须是小写 ASCII kebab-case，唯一，且不要带路径；',
+    '- `title` / `description` 使用与最终目标相同的语言；',
+    '- `dependsOn` 只能引用本文件中已经出现的任务 id，且不能成环；',
+    '- 任务按可交付的子能力拆分，不要按“写代码 / 写测试”机械拆分；',
+    '- 有共享基础时，先放一个 core 任务，其余任务依赖它；',
+    '- 每个子任务都会由产品 / 设计 / 开发 / 测试四个角色参与，不需要在 JSON 里重复角色字段；',
+    '- 只写规划文件，不要写任何代码、proposal、specs、design 或 tasks。',
+    '',
+    '写完后用一句话说明拆分结果，不要粘贴 JSON 全文。',
+  ].join('\n')
+}
+
+/**
  * Read and evaluate every program.
  *
  * @param {string} cwd
@@ -205,7 +364,7 @@ export async function readPrograms(cwd, workspaceState) {
   const entries = await listDir(cwd, ORCHESTRATION_DIR).catch(() => [])
   const programs = []
   for (const entry of entries) {
-    if (entry.type !== 'directory') continue
+    if (entry.type !== 'directory' || entry.name.startsWith('.')) continue
     try {
       const program = await readProgram(cwd, entry.name)
       programs.push(await evaluateProgram(cwd, program, workspaceState))

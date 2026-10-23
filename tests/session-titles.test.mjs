@@ -23,6 +23,7 @@ test('every phase key maps to its visible Chinese label', () => {
     'design',
     'dev',
     'explore',
+    'plan',
     'product',
     'propose',
     'sync',
@@ -42,6 +43,7 @@ test('every phase key maps to its visible Chinese label', () => {
   assert.equal(PHASE_LABELS.design, '设计')
   assert.equal(PHASE_LABELS.dev, '开发')
   assert.equal(PHASE_LABELS.test, '测试')
+  assert.equal(PHASE_LABELS.plan, '规划')
 })
 
 test('composes a bracket-prefixed title for every phase', () => {

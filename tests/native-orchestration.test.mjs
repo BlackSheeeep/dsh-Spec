@@ -11,11 +11,14 @@ import test from 'node:test'
 import { computeWorkspaceState } from '../src/native/state.js'
 import {
   acceptTask,
+  buildPlanPrompt,
   buildRolePrompt,
   createProgram,
   evaluateProgram,
   normalizeProgram,
+  readPlan,
   readPrograms,
+  writePlanDraft,
 } from '../src/native/orchestration.js'
 
 function makeWorkspace() {
@@ -112,6 +115,23 @@ test('role prompt is built from dependency artifacts, not another role transcrip
   // Dependencies are contracts: the child product prompt sees the core spec/design.
   assert.match(prompt, /依赖任务：技能核心/)
   assert.match(prompt, /Blue orb/)
+})
+
+test('plan draft and planner prompt describe the single JSON contract', async () => {
+  const cwd = makeWorkspace()
+  const draft = await writePlanDraft(cwd, {
+    id: 'auto-test',
+    goal: '为游戏新增技能系统',
+    roles: baseProgram().roles,
+  })
+  assert.equal(draft.id, 'auto-test')
+  assert.ok(fs.existsSync(path.join(cwd, 'openspec/orchestration/.plans/.gitkeep')))
+  assert.equal(await readPlan(cwd, 'auto-test'), null)
+  const prompt = await buildPlanPrompt(cwd, draft)
+  assert.match(prompt, /openspec\/orchestration\/\.plans\/auto-test\.json/)
+  assert.match(prompt, /1–8/)
+  assert.match(prompt, /不要创建/)
+  assert.match(prompt, /"id": "core"/)
 })
 
 test('acceptTask records the user gate and normalizeProgram rejects cycles', async () => {
