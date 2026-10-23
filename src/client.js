@@ -1164,6 +1164,7 @@ function createOpenSpecPlugin(require) {
 .dshspec-orchFormRole{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;align-items:center}
 .dshspec-orchFormRoleLabel{font-size:12px;color:var(--dsw-alias-label-secondary)}
 .dshspec-orchFormRole .dshspec-input{height:32px;font-size:12px}
+.dshspec-select{appearance:auto;cursor:pointer;padding-right:8px}
 
 .dshspec-banner{display:flex;align-items:flex-start;gap:8px;padding:9px 12px;border-radius:12px;font-size:12.5px;line-height:18px}
 .dshspec-bannerInfo{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
@@ -5170,6 +5171,7 @@ function createOpenSpecPlugin(require) {
 
   /** Role/model editor used by both create and settings dialogs. */
   function RoleModelFields({ t, roles, modelOptions, onChange }) {
+    const hasOptions = Array.isArray(modelOptions) && modelOptions.length > 0
     return h(
       'div',
       { className: 'dshspec-field' },
@@ -5179,19 +5181,26 @@ function createOpenSpecPlugin(require) {
           'div',
           { key: role, className: 'dshspec-orchFormRole' },
           h('span', { className: 'dshspec-orchFormRoleLabel' }, ORCHESTRATION_ROLE_LABELS[role] ?? role),
-          h('input', {
-            className: 'dshspec-input',
-            list: 'dshspec-model-options',
-            value: roles[role] ?? '',
-            placeholder: t('orchestrationModelHint'),
-            onChange: (event) => onChange(role, event.target.value),
-          }),
+          hasOptions
+            ? h(
+                'select',
+                {
+                  className: 'dshspec-input dshspec-select',
+                  value: roles[role] ?? '',
+                  onChange: (event) => onChange(role, event.target.value),
+                },
+                h('option', { value: '' }, t('orchestrationNoModel')),
+                ...modelOptions.map((option) =>
+                  h('option', { key: option.value, value: option.value }, option.label),
+                ),
+              )
+            : h('input', {
+                className: 'dshspec-input',
+                value: roles[role] ?? '',
+                placeholder: t('orchestrationModelHint'),
+                onChange: (event) => onChange(role, event.target.value),
+              }),
         ),
-      ),
-      h(
-        'datalist',
-        { id: 'dshspec-model-options' },
-        ...modelOptions.map((option) => h('option', { key: option, value: option })),
       ),
       h('div', { className: 'dshspec-hint' }, t('orchestrationModelHint')),
     )
@@ -5384,9 +5393,13 @@ function createOpenSpecPlugin(require) {
     const [error, setError] = useState('')
     const [notice, setNotice] = useState('')
     const modelOptions =
-      modelCatalog?.value?.groups?.flatMap((group) =>
-        (group.models ?? []).map((model) => `${group.id}/${model.id}`),
-      ) ?? []
+      modelCatalog?.value?.groups?.flatMap((group) => {
+        const providerLabel = typeof group.name === 'string' && group.name !== '' ? group.name : group.id
+        return (group.models ?? []).map((model) => ({
+          value: `${group.id}/${model.id}`,
+          label: `${providerLabel} / ${typeof model.name === 'string' && model.name !== '' ? model.name : model.id}`,
+        }))
+      }) ?? []
 
     const create = async (payload) => {
       setBusyKey('create')
@@ -6685,7 +6698,8 @@ function createOpenSpecPlugin(require) {
     /** One (program, task, role) ↔ conversation map for multi-role tasks. */
     const roleBindings = createRoleBindingStore()
     /** Shared provider/model catalog used by the role model picker. */
-    const modelDirectories = typeof ctx.get === 'function' ? ctx.get('modelDirectories') : undefined
+    const modelDirectories =
+      ctx.modelDirectories ?? (typeof ctx.get === 'function' ? ctx.get('modelDirectories') : undefined)
     const uiSession = typeof ctx.get === 'function' ? ctx.get('uiSession') : ctx.uiSession
     const statusSource = uiSession?.sessionStatus
 
@@ -7620,7 +7634,7 @@ function createOpenSpecPlugin(require) {
     }, QuickBar))
   }
 
-  return { inject: ['slots', 'locale', 'remote', 'remote.workspaceFiles', 'remote.commands', 'sessions', 'workspaces', 'uiSession', 'uiWorkspace', 'connection', 'layout'], apply }
+  return { inject: ['slots', 'locale', 'remote', 'remote.workspaceFiles', 'remote.commands', 'sessions', 'workspaces', 'uiSession', 'uiWorkspace', 'connection', 'layout', 'modelDirectories'], apply }
 }
 
 window.__ModuleLoader__.load({
