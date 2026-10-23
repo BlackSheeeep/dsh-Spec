@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.11.0
+
+多角色任务编排：一个目标拆成多个原生 change 子任务，产品 / 设计 / 开发 / 测试各自使用独立会话与模型，按依赖工件门禁推进；角色之间只交换工件与 handoff，不共享对话。
+
+### Added
+
+- **多角色任务面板**：新建程序时可填写标题、英文 ID、最终目标、多个子任务（`change | 标题 | 描述 | 依赖`）以及四个角色的 `provider/model`；每个子任务生成一个原生 change 骨架。
+- **角色会话与模型**：每个 `(program, task, role)` 绑定独立会话；启动角色时通过 `ctx.sessions.selectModel` 应用该角色的 provider/model，支持之后在「模型」对话框中修改。
+- **依赖门禁**：产品完成后设计/开发可开始；设计完成后 UI 开发才具备完整上下文；测试需设计 + 开发任务全部完成；用户验收需测试报告。面板显示每个角色的完成 / 可开始 / 等待 / 运行中状态与缺失原因。
+- **`/opsx-role` 命令**：Host 再次校验门禁，组合角色上下文包并提交给会话；`--force` 可显式跳过门禁。
+- **上下文包**：只包含程序目标、当前子任务、依赖任务的 proposal/specs/design、角色自己的工件与短 handoff；不包含其他角色对话。
+- **文件布局**：`openspec/orchestration/<program>/program.json`、`handoffs/<task>-<role>.md`；程序元数据是插件扩展，子任务仍是标准 OpenSpec change。
+- **测试**：`native-orchestration` 覆盖创建、依赖门禁、上下文包、验收与环检测；Host 路由与 `/opsx-role` 命令均有测试（全套 459 项）。
+
+### Changed
+
+- Host `state` 载荷新增 `orchestration` 数组与解析警告；新增 `orchestration-create` / `orchestration-accept` / `orchestration-roles` 路由。
+- 命令注册由 9 条增至 10 条（新增 `/opsx-role`）；会话标题新增 `[产品]` / `[设计]` / `[开发]` / `[测试]` 阶段。
+- README 增补多角色协作、门禁、上下文包与命令说明。
+- 插件版本 `0.10.0` → `0.11.0`。
+
 ## 0.10.0
 
 面板 change 详情改为渐进式披露：折叠卡新增一行摘要，展开先给概览，文档按 artifact 分组且默认收起，Delta 文档只列一次并带逐文件操作计数；0 校验问题与空区块不再占位，展开状态只存在于内存。0.9.2 的变更卡片 headline 由本版本的摘要行与 L1 概览取代（`summary.headline` 仍保留在 Host 载荷中供旧客户端降级读取）。

@@ -3,7 +3,7 @@
  *
  * Every handler is exercised with fake dependencies (memory fs, fake engine,
  * fake prompt builders) so no test writes a real file or calls the real engine.
- * The harness registers the nine commands on a fake `ctx.commands` and runs the
+ * The harness registers the ten commands on a fake `ctx.commands` and runs the
  * registered handler with a fake agent that records `followup()` messages.
  */
 
@@ -15,13 +15,14 @@ import { registerCommands, collectWorkflowFacts, selectChange } from '../src/com
 /** Fake absolute workspace root. */
 const CWD = 'C:/workspace'
 
-/** All nine command ids registered by `registerCommands`. */
+/** All ten command ids registered by `registerCommands`. */
 const COMMAND_IDS = [
   'openspec-init',
   'opsx-apply',
   'opsx-archive',
   'opsx-explore',
   'opsx-propose',
+  'opsx-role',
   'opsx-status',
   'opsx-sync',
   'opsx-update',
@@ -252,6 +253,34 @@ function createHarness(overrides = {}, options = {}) {
         return { moved: true, target: 'openspec/changes/archive/2026-10-20-add-x' }
       },
     },
+    orchestration: {
+      readProgram: async (cwd, id) => {
+        calls.role = { program: id }
+        return {
+          id,
+          title: '技能系统',
+          goal: '新增技能',
+          roles: {},
+          tasks: [{ id: 'fireball', change: 'add-fireball', title: '火球术', dependsOn: [] }],
+        }
+      },
+      evaluateProgram: async (cwd, program) => ({
+        ...program,
+        tasks: program.tasks.map((task) => ({
+          ...task,
+          roles: {
+            product: { done: false, ready: true, missing: [] },
+            design: { done: false, ready: false, missing: ['等待产品规格'] },
+            dev: { done: false, ready: false, missing: ['等待产品规格'] },
+            test: { done: false, ready: false, missing: ['等待开发完成全部 tasks'] },
+          },
+        })),
+      }),
+      buildRolePrompt: async (cwd, program, task, role) => {
+        calls.role = { ...(calls.role ?? {}), task: task.id, role }
+        return 'ROLE_PROMPT'
+      },
+    },
     prompts: {
       slugify: (raw) =>
         String(raw ?? '')
@@ -332,7 +361,7 @@ function createHarness(overrides = {}, options = {}) {
   return { calls, deps, ctx, registry, agent, run }
 }
 
-test('registers the nine native command family with kebab-case mapping in descriptions', () => {
+test('registers the ten command family with kebab-case mapping in descriptions', () => {
   const { registry } = createHarness()
   assert.deepEqual([...registry.keys()].sort(), COMMAND_IDS)
 
@@ -340,7 +369,8 @@ test('registers the nine native command family with kebab-case mapping in descri
     const spec = registry.get(name)
     assert.equal(typeof spec.handler, 'function')
     assert.match(spec.description, /OpenSpec/)
-    if (name.startsWith('opsx-')) assert.match(spec.description, /不能含冒号/)
+    // `opsx-role` is a plugin-only orchestration command, not a native mapping.
+    if (name.startsWith('opsx-') && name !== 'opsx-role') assert.match(spec.description, /不能含冒号/)
   }
 
   // Every native `/opsx:*` core command maps to a kebab-case DSH name.
@@ -350,6 +380,28 @@ test('registers the nine native command family with kebab-case mapping in descri
     assert.match(description, new RegExp(`/opsx-${phase}`))
   }
   assert.match(registry.get('openspec-init').description, /openspec init/)
+})
+
+test('opsx-role submits a ready role prompt and titles the role session', async () => {
+  const h = createHarness()
+  const result = await h.run('opsx-role', 'skills fireball product')
+  assert.equal(result.kind, 'success')
+  assert.equal(h.agent.messages.length, 1)
+  assert.equal(h.agent.messages[0].content[0].text, 'ROLE_PROMPT')
+  assert.deepEqual(h.calls.titles, [{ sessionId: 'session-test', title: '[产品] 火球术' }])
+})
+
+test('opsx-role refuses a waiting role gate unless --force is given', async () => {
+  const h = createHarness()
+  const refused = await h.run('opsx-role', 'skills fireball design')
+  assert.equal(refused.kind, 'error')
+  assert.match(refused.text, /尚未就绪/)
+  assert.match(refused.text, /等待产品规格/)
+  assert.equal(h.agent.messages.length, 0)
+
+  const forced = await h.run('opsx-role', 'skills fireball design --force')
+  assert.equal(forced.kind, 'success')
+  assert.equal(h.agent.messages.length, 1)
 })
 
 test('openspec-init is direct and reports only newly created items', async () => {
