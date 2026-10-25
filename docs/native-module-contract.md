@@ -334,7 +334,7 @@ without network.
 ```js
 ProgramState = {
   id, title, goal, created,
-  roles: { pm|product|design|dev|test: { provider, model, label } },
+  roles: { pm|product|design|dev|test: { provider, model, label, skills: [name] } },
   auto, pmStatus,
   progress: { accepted, done, total },
   tasks: [{ id, change, title, description, dependsOn, roles: [role], accepted,
@@ -404,6 +404,9 @@ request cap. Route methods (Lead, `src/host.js`):
 | `orchestration-create` | `{ cwd, program }` | `{ ok, id }` |
 | `orchestration-accept` | `{ cwd, program, task, accepted }` | `{ ok }` |
 | `orchestration-auto` | `{ cwd, program, auto }` | `{ ok }` |
+| `orchestration-context` | `{ cwd, program, contexts }` | `{ ok }` |
+| `openspec_read_file` (tool) | `{ cwd, program, task, role, path }` | `{ path, exists, content, sha256 }` |
+| `openspec_write_file` (tool) | `{ cwd, program, task, role, path, content, expectedSha256? }` | `{ path, sha256, bytes }` |
 | `orchestration-roles` | `{ cwd, program, roles }` | `{ ok }` |
 | `init` | `{ cwd }` | `{ ok: true, text, created }` |
 

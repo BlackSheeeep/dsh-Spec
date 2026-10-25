@@ -98,7 +98,7 @@ test('plugin metadata declares the injected services', () => {
   }
 })
 
-test('apply registers the twelve native commands', () => {
+test('apply registers the nine native commands', () => {
   const { ctx, registered } = fakeContext()
   apply(ctx)
   const names = registered.map((definition) => definition.name).sort()
@@ -107,10 +107,7 @@ test('apply registers the twelve native commands', () => {
     'opsx-apply',
     'opsx-archive',
     'opsx-explore',
-    'opsx-plan',
-    'opsx-pm',
     'opsx-propose',
-    'opsx-role',
     'opsx-status',
     'opsx-sync',
     'opsx-update',
@@ -448,14 +445,14 @@ test('orchestration routes create a program and expose evaluated state', async (
   const value = state.json.result.value
   assert.equal(value.orchestration.length, 1)
   assert.equal(value.orchestration[0].id, 'skills')
-  assert.equal(value.orchestration[0].tasks[0].roles.product.status, 'ready')
+  assert.equal(value.orchestration[0].tasks[0].roles.dev.status, 'ready')
 
   const roles = await callRoute(route, {
     endpoint: 'orchestration-roles',
     envelope: envelope('orchestration-roles', {
       cwd,
       program: 'skills',
-      roles: { product: { provider: 'openai', model: 'gpt-5-mini' } },
+      roles: { dev: { provider: 'openai', model: 'gpt-5-mini' } },
     }),
   })
   assert.equal(roles.json.result.ok, true)
@@ -473,7 +470,7 @@ test('orchestration routes create a program and expose evaluated state', async (
     envelope: envelope('orchestration-accept', { cwd, program: 'skills', task: 'fireball', accepted: true }),
   })
   assert.equal(early.json.result.ok, false)
-  assert.match(early.json.result.error.message, /测试尚未完成/)
+  assert.match(early.json.result.error.message, /开发尚未标记完成/)
 
   const changeDir = path.join(cwd, 'openspec', 'changes', 'skill-fireball')
   fs.mkdirSync(path.join(changeDir, 'specs', 'skill-fireball'), { recursive: true })
@@ -482,7 +479,7 @@ test('orchestration routes create a program and expose evaluated state', async (
   fs.writeFileSync(path.join(changeDir, 'specs', 'skill-fireball', 'spec.md'), '## ADDED Requirements\n\n### Requirement: Fireball\n\nThe system SHALL cast a fireball.\n\n#### Scenario: cast\n\n- **WHEN** cast\n- **THEN** it works\n')
   fs.writeFileSync(path.join(changeDir, 'design.md'), '# Design\n\nBlue orb.\n')
   fs.writeFileSync(path.join(changeDir, 'tasks.md'), '- [x] 1.1 implement fireball\n')
-  fs.writeFileSync(path.join(changeDir, 'qa', 'report.md'), '# QA\n\nPASS\n')
+  fs.writeFileSync(path.join(changeDir, 'qa', 'dev-done.md'), '# Dev done\n\nImplemented.\n')
 
   const accepted = await callRoute(route, {
     endpoint: 'orchestration-accept',
@@ -491,7 +488,7 @@ test('orchestration routes create a program and expose evaluated state', async (
   assert.equal(accepted.json.result.ok, true)
   const after = await callRoute(route, { endpoint: 'state', envelope: envelope('state', { cwd }) })
   assert.equal(after.json.result.value.orchestration[0].tasks[0].accepted, true)
-  assert.equal(after.json.result.value.orchestration[0].roles.product.model, 'gpt-5-mini')
+  assert.equal(after.json.result.value.orchestration[0].roles.dev.model, 'gpt-5-mini')
   fs.rmSync(cwd, { recursive: true, force: true })
 })
 
@@ -553,7 +550,7 @@ test('orchestration draft/plan routes support AI task splitting', async () => {
 test('compositions without a skills service still register commands and the route', () => {
   const { ctx, registered, routes } = fakeContext()
   apply(ctx)
-  assert.equal(registered.length, 12)
+  assert.equal(registered.length, 9)
   assert.equal(routes.length, 1)
 })
 

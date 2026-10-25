@@ -2,7 +2,7 @@
 
 在 DeepSeek Harness 中管理 OpenSpec 项目：以 `openspec/` 文件为唯一状态源，提供变更面板、会话绑定与 `/opsx-*` 命令，不依赖 openspec CLI。
 
-当前版本 **0.12.0**：在 0.11.0 的人类报告与 0.10.x 渐进式详情之上新增**多角色任务编排**——用户只填最终目标、PM 和四个角色模型，AI 自动拆分子任务并生成程序 / change；PM 按工件门禁自动推进，产品 / 设计 / 开发 / 测试分别使用不同模型会话，按依赖推进；每个角色只收到目标、依赖工件与 handoff，不共享其他角色的对话。0.9.x 的会话绑定、实时状态、等待验收、AI 自动命名与人工验收勾选保持不变。
+当前版本 **0.11.0**：原生 OpenSpec 变更面板、会话绑定、AI 提案/实施/同步/归档、人工验收与人类报告。PM/多角色编排已移除，回到普通 OpenSpec 提案流程。
 
 ## 为什么是 SDD
 
@@ -33,74 +33,10 @@ OpenSpec 的核心机制，是将变更的规划与执行状态外化为仓库�
 - **操作直达**：面板按钮直接执行 `/opsx-*`，无需填写命令后再按一次回车；直接执行失败（如目标会话运行中）时自动把命令填入该会话输入框，由你手动发送。
 - **运行态可见**：会话运行或等待权限时禁用主操作；完成后通知并恢复。
 - **等待验收**：汇总所有未勾选任务，按「人工验收 / 其他待办」分组，可勾选或打开 `tasks.md`。
+- **清理未完成提案**：每张未完成的 change 卡片直接提供「清理」按钮，连续点两次确认后只删除该 change 的 `openspec/changes` 目录；archive 不受影响。
+- **上下文守护**：监听 change 绑定会话的上下文占用；80% 尝试 `/compact`，compact 失败或达到 90% 时自动新建会话、重绑该 change 并继续实施，不依赖旧会话上下文。
 - **AI 总结命名**：提案只需描述；AI 概括要点、选择 change 名并创建工件。
-- **多角色协作**：一个目标拆成多个子 change，PM 自动推进，产品 / 设计 / 开发 / 测试各自绑定模型会话；角色之间只交换工件与 handoff。
 - **原生兼容**：优先使用项目已有的 OpenSpec skills；缺失时提供内置 OPSX 工作流。
-
-## 多角色协作
-
-适合“一个目标需要多个专业角色 + 多个子任务”的场景，例如一套游戏技能拆成「技能核心 / 火球术 / 治疗术」。
-
-### 创建
-
-面板「多角色任务」→「新建多角色任务」，只需要填写两样东西：
-
-- **最终目标**：例如“为游戏新增一套技能系统，包含火球术、治疗术、冰盾，并接入现有战斗流程”；
-- **五个模型**：PM / 产品 / 设计 / 开发 / 测试的 `provider/model`，留空则跟随会话默认；PM 留空时由自动调度器承担协调。
-
-提交后会打开一个规划会话：AI 只写任务拆分文件 `openspec/orchestration/.plans/<id>.json`（1–8 个子任务、标题、change 名、依赖），Host 校验后再创建：
-
-```text
-openspec/orchestration/<program>/program.json
-openspec/changes/<change>/          # 每个子任务一个原生 change
-```
-
-程序标题、ID、子任务和 change 名都由 AI 生成，用户不需要手填。规划超过 5 分钟会超时并提示检查规划会话；规划文件不合法时会在面板显示错误，不会创建半成品。
-
-### PM 自动推进
-
-程序默认开启 **自动推进**：
-
-- PM 调度器每轮最多启动 2 个已就绪角色，按门禁自动推进；
-- 角色完成并写入工件后，下一角色自动开始；
-- 同一角色失败或空闲后 2 分钟内不重复启动，避免刷模型；
-- 用户验收仍然停在最后一步，不会由 PM 代替。
-
-PM 还可以手动「PM 巡检」：PM 模型读取任务 × 角色矩阵和 handoff，写 `openspec/orchestration/<program>/pm/status.md`，指出阻塞、风险和下一步；报告显示在程序卡片上。PM 不写业务代码，也不修改 `program.json`。
-
-### 门禁
-
-| 角色 | 何时可以开始 | 完成条件 |
-|---|---|---|
-| 产品 | 依赖任务的产品 + 设计契约完成 | `proposal.md` + delta specs + `tasks.md` |
-| 设计 | 产品完成 | `design.md` |
-| 开发 | 产品完成；UI 任务等待设计 | `tasks.md` 全部完成 |
-| 测试 | 设计 + 开发完成 | `qa/report.md` |
-| 用户 | 测试完成 | 面板中手动验收 |
-
-开发可以先做不依赖视觉的逻辑任务；`design.md` 出现后点「继续」再做 UI。测试不会代替用户勾选 `[人工验收]` 任务。
-
-### 上下文
-
-角色会话收到的是：
-
-- 最终目标与当前子任务；
-- 依赖任务的 proposal / specs / design / handoff；
-- 自己的规格、设计、任务清单与验收标准。
-
-不包含其他角色的对话历史。每个角色完成后写一份不超过 200 字的 handoff 到 `openspec/orchestration/<program>/handoffs/<task>-<role>.md`，下一角色只读这份摘要与工件。
-
-### 命令
-
-面板按钮最终执行：
-
-```text
-/opsx-plan <draft-id>                         # AI 拆分最终目标
-/opsx-role <program> <task> <role>            # 启动某个角色
-/opsx-pm <program>                            # PM 巡检并写 pm/status.md
-```
-
-`/opsx-role` 由 Host 再次校验门禁；需要强制执行时加 `--force`。角色会话模型由面板在启动时通过 DSH 的 per-session model selection 选择，之后可在「模型」中修改。
 
 ## 快速开始
 
@@ -231,9 +167,7 @@ DSH 命令名不能带冒号，原生 `/opsx:*` 映射为 kebab-case：
 | `opsx:archive` | `/opsx-archive [name] [--yes\|--dry-run\|--skip-specs]` | 默认 AI 工作流；`--yes` 确定性归档，`--skip-specs` 只移动 |
 | — | `/opsx-validate [name]` | 直接输出原生分级校验结果 |
 | — | `/opsx-status` | 直接输出进行中变更、工件状态、任务进度与归档数量 |
-| — | `/opsx-plan <draft-id>` | 让规划模型把最终目标拆成子任务，只写规划文件（插件扩展，无原生对应） |
-| — | `/opsx-pm <program>` | PM 巡检项目进度与阻塞，写 `pm/status.md`（插件扩展，无原生对应） |
-| — | `/opsx-role <program> <task> <role>` | 向多角色任务的一个角色发送只含依赖工件的上下文包（插件扩展，无原生对应） |
+
 | — | `/openspec-init` | 幂等创建原生骨架 |
 
 ### 命令细节
@@ -264,7 +198,7 @@ artifact 状态仅由文件决定：
 
 ```text
 src/host.js            Host 半：命令族、/dsh-spec 路由、fallback skills provider
-src/commands.js        十二条命令：变更选择、propose 脚手架、AI sync/archive、确定性路径、直出、/opsx-plan、/opsx-role、/opsx-pm
+src/commands.js        九条命令：变更选择、propose 脚手架、AI sync/archive、确定性路径、直出
 src/session-titles.js  阶段会话标题组合与幂等写入
 src/prompts.js         阶段提示词、OPSX sync/archive 提示词、AI 自动命名提示词、报告提示词
 src/report/            报告方法论（内嵌进提示词）与自包含 HTML 模板（构建镜像到 lib/report/）
@@ -298,11 +232,10 @@ tests/                 node:test 单元与集成测试
 - **面板失败兜底**：面板动作优先直接执行；被拒绝或执行失败时回退为「把命令填入目标会话输入框」而不自动发送，因此失败不再表现为点击无反应，最终发送仍由用户确认。
 - **写操作范围**：面板只通过 `task-toggle`、`orchestration-*` 路由写任务勾选、编排元数据与子 change 骨架；sync / archive 仍由命令触发（默认 AI 工作流不写盘，`--yes` 才确定性写盘）。
 - **expanded 命令族**：new / continue / ff / verify / bulk-archive / onboard 只通过内置 OPSX skills（文件语义）提供，不提供对应 `/opsx-*` 命令。
-- **多角色门禁是工件级而非语义级**：门禁检查 proposal / specs / design / tasks / qa 报告是否存在、任务是否全部完成，不判断规格或代码质量；最终质量仍由用户验收。
-- **自动推进是浏览器端调度器**：面板打开且程序开启自动推进时，每轮最多启动 2 个已就绪角色；页面关闭后不会在后台继续启动新角色。同一角色失败/空闲后 2 分钟内不重复启动；用户验收始终手动。
-- **PM 是监督角色而非最终裁决**：PM 巡检写 `pm/status.md`，指出阻塞与下一步；真正启动角色的是确定性门禁调度器，PM 不会绕过门禁或代替用户验收。
-- **UI 等待设计是提示词级门禁**：开发角色可在产品规格完成后启动，提示词要求先做不依赖视觉的任务；逐条 UI 任务不会在引擎层被硬阻断，测试门禁仍要求 `design.md` 存在。
-- **模型绑定依赖 DSH 目录**：`provider/model` 必须是当前 DSH 已配置的模型；模型选择失败时该角色不会启动，也不会偷偷回退到默认模型。
+- **开发完成是工件级信号**：`qa/dev-done.md`、面板「开发完成」或 tasks.md 全部完成都算开发完成；不判断代码语义质量，最终质量仍由用户验收。
+- **自动推进是浏览器端调度器**：面板打开且程序开启自动推进时，每个任务只自动启动一次开发；页面关闭后不会在后台继续启动。用户验收始终手动。
+- **PM/多角色编排已移除**：面板和命令回到普通 OpenSpec 提案/实施/验收流程。
+- **模型绑定依赖 DSH 目录**：`provider/model` 必须是当前 DSH 已配置的模型；模型选择失败时开发会话不会启动，也不会偷偷回退到默认模型。
 - **编排元数据不是 OpenSpec 原生 schema**：`openspec/orchestration/<program>/program.json` 与 handoffs 是插件扩展；每个子任务仍是标准原生 change。
 
 ## License

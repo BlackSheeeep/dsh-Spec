@@ -9,6 +9,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { computeWorkspaceState } from '../src/native/state.js'
+import { readForRole, writeForRole } from '../src/native/write-coordinator.js'
 import {
   acceptTask,
   buildPlanPrompt,
@@ -19,6 +20,8 @@ import {
   normalizeProgram,
   readPlan,
   readPrograms,
+  updateProgramRoles,
+  writePmContext,
   writePlanDraft,
 } from '../src/native/orchestration.js'
 
@@ -76,28 +79,18 @@ test('createProgram scaffolds child changes and evaluates dependency gates', asy
   assert.equal(first.programs.length, 1)
   const core = first.programs[0].tasks.find((task) => task.id === 'core')
   const fireball = first.programs[0].tasks.find((task) => task.id === 'fireball')
-  assert.equal(core.roles.product.status, 'ready')
-  assert.equal(core.roles.design.status, 'waiting')
-  assert.equal(fireball.roles.product.status, 'waiting')
-  assert.match(fireball.roles.product.missing.join('；'), /技能核心/)
+  assert.deepEqual(core.roles.dev.status, 'ready')
+  assert.equal(fireball.roles.dev.status, 'waiting')
+  assert.match(fireball.roles.dev.missing.join('；'), /技能核心/)
 
   completeProduct(cwd, 'skill-core')
-  const afterProduct = await readPrograms(cwd, await computeWorkspaceState(cwd))
-  const core2 = afterProduct.programs[0].tasks.find((task) => task.id === 'core')
-  const fireball2 = afterProduct.programs[0].tasks.find((task) => task.id === 'fireball')
-  assert.equal(core2.roles.product.done, true)
-  assert.equal(core2.roles.design.ready, true)
-  assert.equal(core2.roles.dev.ready, true)
-  assert.match(core2.roles.dev.note, /UI 任务等待设计/)
-  assert.equal(core2.roles.test.ready, false)
-  // Dependents wait for both the product and design contracts of the parent.
-  assert.equal(fireball2.roles.product.status, 'waiting')
-
-  write(cwd, 'openspec/changes/skill-core/design.md', '# Design\n\n## Visual\n\nUse a blue orb.\n')
-  const afterDesign = await readPrograms(cwd, await computeWorkspaceState(cwd))
-  const fireball3 = afterDesign.programs[0].tasks.find((task) => task.id === 'fireball')
-  assert.equal(fireball3.roles.product.ready, true)
-  assert.equal(fireball3.roles.design.status, 'waiting')
+  write(cwd, 'openspec/changes/skill-core/tasks.md', '- [x] implement core\n')
+  write(cwd, 'openspec/changes/skill-core/qa/dev-done.md', '# Dev done\n\nCore implemented.\n')
+  const afterDev = await readPrograms(cwd, await computeWorkspaceState(cwd))
+  const core2 = afterDev.programs[0].tasks.find((task) => task.id === 'core')
+  const fireball2 = afterDev.programs[0].tasks.find((task) => task.id === 'fireball')
+  assert.equal(core2.roles.dev.done, true)
+  assert.equal(fireball2.roles.dev.ready, true)
 })
 
 test('role prompt is built from dependency artifacts, not another role transcript', async () => {
@@ -105,19 +98,17 @@ test('role prompt is built from dependency artifacts, not another role transcrip
   await createProgram(cwd, baseProgram())
   completeProduct(cwd, 'skill-core')
   write(cwd, 'openspec/changes/skill-core/design.md', '# Design\n\nBlue orb.\n')
-  write(cwd, 'openspec/orchestration/skills/handoffs/core-product.md', '产品交接：规格已就绪。\n')
-
   const evaluated = await readPrograms(cwd, await computeWorkspaceState(cwd))
   const program = evaluated.programs[0]
   const task = program.tasks.find((entry) => entry.id === 'fireball')
-  const prompt = await buildRolePrompt(cwd, program, task, 'product', await computeWorkspaceState(cwd))
+  const prompt = await buildRolePrompt(cwd, program, task, 'dev', await computeWorkspaceState(cwd))
   assert.match(prompt, /火球术/)
   assert.match(prompt, /为游戏新增技能系统/)
-  assert.match(prompt, /不能读取|不读取其他角色的对话|不读取其他角色/)
-  assert.match(prompt, /handoffs\/fireball-product\.md/)
-  // Dependencies are contracts: the child product prompt sees the core spec/design.
+  assert.match(prompt, /openspec_write_file/)
+  // Dependencies are contracts by path; the prompt must not inline the spec body.
   assert.match(prompt, /依赖任务：技能核心/)
-  assert.match(prompt, /Blue orb/)
+  assert.match(prompt, /openspec\/changes\/skill-core\/design\.md/)
+  assert.doesNotMatch(prompt, /Blue orb/)
 })
 
 test('plan draft and planner prompt describe the single JSON contract', async () => {
@@ -150,6 +141,122 @@ test('PM prompt and status report are part of the program state', async () => {
   write(cwd, 'openspec/orchestration/skills/pm/status.md', '当前阶段：规格评审。\n')
   const withStatus = await readPrograms(cwd, await computeWorkspaceState(cwd))
   assert.match(withStatus.programs[0].pmStatus, /规格评审/)
+})
+
+test('a logic-only task can skip the optional design role', async () => {
+  const cwd = makeWorkspace()
+  await createProgram(cwd, {
+    ...baseProgram(),
+    tasks: [
+      {
+        id: 'api',
+        change: 'add-api',
+        title: 'API',
+        description: 'pure logic',
+        dependsOn: [],
+        roles: ['product', 'dev'],
+      },
+    ],
+  })
+  completeProduct(cwd, 'add-api')
+  write(cwd, 'openspec/changes/add-api/tasks.md', '- [x] implement the API\n')
+  write(cwd, 'openspec/changes/add-api/qa/dev-done.md', '# Dev done\n\nImplemented.\n')
+  const evaluated = await readPrograms(cwd, await computeWorkspaceState(cwd))
+  const task = evaluated.programs[0].tasks[0]
+  assert.equal(task.roles.design, undefined)
+  assert.equal(task.roles.test, undefined)
+  assert.equal(task.roles.dev.done, true)
+})
+
+test('role skill allowlists are normalized, saved, and rendered in the role prompt', async () => {
+  const cwd = makeWorkspace()
+  await createProgram(cwd, {
+    ...baseProgram(),
+    roles: {
+      ...baseProgram().roles,
+      dev: { provider: 'deepseek', model: 'deepseek-v3', skills: ['office', 'pdf-image-extractor', 'office'] },
+    },
+  })
+  const evaluated = await readPrograms(cwd, await computeWorkspaceState(cwd))
+  assert.deepEqual(evaluated.programs[0].roles.dev.skills, ['office', 'pdf-image-extractor'])
+  const task = evaluated.programs[0].tasks[0]
+  const prompt = await buildRolePrompt(cwd, evaluated.programs[0], task, 'dev', await computeWorkspaceState(cwd))
+  assert.match(prompt, /office/)
+  assert.match(prompt, /pdf-image-extractor/)
+  assert.match(prompt, /建议优先使用以下 agent skills/)
+
+  const updated = await updateProgramRoles(cwd, 'skills', { dev: { skills: ['openspec-apply-change'] } })
+  assert.deepEqual(updated.roles.dev.skills, ['openspec-apply-change'])
+  assert.equal(updated.roles.dev.provider, 'deepseek')
+  assert.equal(updated.roles.dev.model, 'deepseek-v3')
+})
+
+test('PM prompt includes role context occupancy and the compact threshold', async () => {
+  const cwd = makeWorkspace()
+  await createProgram(cwd, baseProgram())
+  const evaluated = await readPrograms(cwd, await computeWorkspaceState(cwd))
+  await writePmContext(cwd, 'skills', [
+    { task: 'core', role: 'dev', sessionId: 's1', usedTokens: 850, contextWindow: 1000, percent: 85 },
+  ])
+  const prompt = await buildPmPrompt(cwd, evaluated.programs[0])
+  assert.match(prompt, /角色会话上下文用量/)
+  assert.match(prompt, /core \/ dev：85%/)
+  assert.match(prompt, /\/compact/)
+})
+
+test('write coordinator serializes hashes and reports stale writes', async () => {
+  const cwd = makeWorkspace()
+  await createProgram(cwd, baseProgram())
+  const file = 'openspec/changes/skill-core/notes.md'
+  const first = await readForRole(cwd, { program: 'skills', task: 'core', role: 'dev', path: file })
+  assert.equal(first.exists, false)
+  await writeForRole(cwd, { program: 'skills', task: 'core', role: 'dev', path: file, content: 'one\n' })
+  const second = await readForRole(cwd, { program: 'skills', task: 'core', role: 'dev', path: file })
+  assert.equal(second.content, 'one\n')
+  await writeForRole(cwd, {
+    program: 'skills',
+    task: 'core',
+    role: 'dev',
+    path: file,
+    content: 'two\n',
+    expectedSha256: second.sha256,
+  })
+  await assert.rejects(
+    writeForRole(cwd, {
+      program: 'skills',
+      task: 'core',
+      role: 'dev',
+      path: file,
+      content: 'stale\n',
+      expectedSha256: second.sha256,
+    }),
+    /写入冲突/,
+  )
+  const conflicts = fs.readFileSync(
+    path.join(cwd, 'openspec/orchestration/skills/pm/conflicts.md'),
+    'utf8',
+  )
+  assert.match(conflicts, /版本哈希不匹配/)
+  completeProduct(cwd, 'skill-core')
+  write(cwd, 'openspec/changes/skill-core/design.md', '# Design\n\nBlue orb.\n')
+  await writeForRole(cwd, {
+    program: 'skills',
+    task: 'core',
+    role: 'dev',
+    path: 'src/game/skill.ts',
+    content: 'export const skill = true\n',
+  })
+  assert.equal(fs.readFileSync(path.join(cwd, 'src/game/skill.ts'), 'utf8'), 'export const skill = true\n')
+  await assert.rejects(
+    writeForRole(cwd, {
+      program: 'skills',
+      task: 'core',
+      role: 'dev',
+      path: 'openspec/changes/skill-fireball/outside.md',
+      content: 'x',
+    }),
+    /写入越界/,
+  )
 })
 
 test('acceptTask records the user gate and normalizeProgram rejects cycles', async () => {
