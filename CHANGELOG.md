@@ -12,8 +12,9 @@
 
 ### Added
 
-- **清理未完成提案**：每张未完成 change 卡片直接绑定「清理」按钮，连续点两次确认后删除该 `openspec/changes/<name>/`；archive 不动。
+- **从面板移除变更**：每张 change 卡片可本地隐藏并尝试删除 `openspec/changes/<name>/`；删除失败自动移入 `.trash` 或写 tombstone，archive 不动。
 - **上下文守护**：监听 change 绑定会话；80% 尝试 `/compact`，失败或 ≥90% 时自动新建会话、重绑 change 并继续实施。
+- **自动提交开关**：面板顶部开关；开启后定时检测安全改动，指纹稳定后机械生成摘要并 commit。过滤 node_modules、构建产物、临时/日志/密钥/大文件，只暂存安全路径。
 
 ### Kept
 
