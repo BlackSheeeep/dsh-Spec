@@ -100,6 +100,10 @@ function createOpenSpecPlugin(require) {
       newSessionForChange: '绑定新对话',
       newSessionForChangeHint: '上下文满了或会话卡住时，新建一个空对话并绑定当前 change，不切换窗口',
       newSessionForChangeBound: '已绑定新对话到当前 change',
+      autoCommitConfirmTitle: '开启自动提交？',
+      autoCommitConfirmDesc: '开启后会在文件稳定时自动创建 Git commit。',
+      autoCommitConfirmBody: '每 15 秒检查一次，连续两次改动指纹一致才提交。会跳过依赖、构建产物、临时文件、日志、密钥和大于 5MB 的文件；但 commit 仍会写入当前仓库。请确认你接受自动提交。',
+      autoCommitConfirmAction: '开启自动提交',
       autoCommitEnabled: '自动提交：开',
       autoCommitDisabled: '自动提交：关',
       autoCommitOn: '自动提交已开启：检测到稳定改动后自动 commit',
@@ -520,6 +524,10 @@ function createOpenSpecPlugin(require) {
       newSessionForChange: 'Bind new chat',
       newSessionForChangeHint: 'Create a fresh chat and bind it to this change without switching the view',
       newSessionForChangeBound: 'Bound a new chat to this change',
+      autoCommitConfirmTitle: 'Enable auto commit?',
+      autoCommitConfirmDesc: 'When enabled, stable changes are committed to Git automatically.',
+      autoCommitConfirmBody: 'Checks every 15 seconds and commits only after the same change fingerprint appears twice. Dependencies, build output, temp files, logs, secrets and files over 5MB are skipped; commits still land in this repository. Confirm that you accept automatic commits.',
+      autoCommitConfirmAction: 'Enable auto commit',
       autoCommitEnabled: 'Auto commit: on',
       autoCommitDisabled: 'Auto commit: off',
       autoCommitOn: 'Auto commit enabled: stable safe changes are committed automatically',
@@ -6523,6 +6531,25 @@ function createOpenSpecPlugin(require) {
     )
   }
 
+  /** Confirm enabling the automatic commit watcher. */
+  function AutoCommitConfirmModal({ t, onClose, onConfirm }) {
+    return h(
+      Modal,
+      {
+        t,
+        title: t('autoCommitConfirmTitle'),
+        description: t('autoCommitConfirmDesc'),
+        onClose,
+        width: 520,
+        footer: [
+          h(Button, { key: 'cancel', variant: 'ghost', size: 'md', onClick: onClose }, t('dialogCancel')),
+          h(Button, { key: 'on', variant: 'primary', size: 'md', icon: 'check', onClick: onConfirm }, t('autoCommitConfirmAction')),
+        ],
+      },
+      h('div', { className: 'dshspec-hint' }, t('autoCommitConfirmBody')),
+    )
+  }
+
   /** Confirm permanent deletion of unfinished active changes. */
   function ClearIncompleteModal({ t, candidates, busy, error, onClose, onConfirm }) {
     const [selected, setSelected] = useState(() => new Set(candidates.map((entry) => entry.name)))
@@ -6645,6 +6672,26 @@ function createOpenSpecPlugin(require) {
         return false
       }
     })
+    const [autoCommitConfirmOpen, setAutoCommitConfirmOpen] = useState(false)
+    const enableAutoCommit = () => {
+      setAutoCommitEnabled(true)
+      setAutoCommitConfirmOpen(false)
+      try {
+        localStorage.setItem(`dsh-spec.auto-commit.v1:${row.cwd}`, '1')
+      } catch {
+        /* panel-only preference */
+      }
+      setNotice(t('autoCommitOn'))
+    }
+    const disableAutoCommit = () => {
+      setAutoCommitEnabled(false)
+      try {
+        localStorage.setItem(`dsh-spec.auto-commit.v1:${row.cwd}`, '0')
+      } catch {
+        /* panel-only preference */
+      }
+      setNotice(t('autoCommitOff'))
+    }
     const contextTried = useRef(new Map())
     const contextBusy = useRef(new Set())
     const contextRestarted = useRef(new Map())
@@ -7205,14 +7252,8 @@ function createOpenSpecPlugin(require) {
                   size: 'sm',
                   icon: 'check',
                   onClick: () => {
-                    const next = !autoCommitEnabled
-                    setAutoCommitEnabled(next)
-                    try {
-                      localStorage.setItem(`dsh-spec.auto-commit.v1:${row.cwd}`, next ? '1' : '0')
-                    } catch {
-                      /* panel-only preference */
-                    }
-                    setNotice(next ? t('autoCommitOn') : t('autoCommitOff'))
+                    if (autoCommitEnabled) disableAutoCommit()
+                    else setAutoCommitConfirmOpen(true)
                   },
                 },
                 autoCommitEnabled ? t('autoCommitEnabled') : t('autoCommitDisabled'),
@@ -7335,6 +7376,13 @@ function createOpenSpecPlugin(require) {
             error: clearError,
             onClose: () => setClearOpen(false),
             onConfirm: (names) => void confirmClear(names),
+          })
+        : null,
+      autoCommitConfirmOpen
+        ? h(AutoCommitConfirmModal, {
+            t,
+            onClose: () => setAutoCommitConfirmOpen(false),
+            onConfirm: enableAutoCommit,
           })
         : null,
       dialog !== null && dialog.kind === 'propose'
